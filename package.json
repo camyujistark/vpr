@@ -1,0 +1,15 @@
+{
+  "name": "vpr",
+  "version": "0.1.0",
+  "description": "Virtual Pull Request manager — group atomic commits into PR chains, then render and push",
+  "type": "module",
+  "bin": {
+    "vpr": "./bin/vpr.mjs"
+  },
+  "scripts": {
+    "start": "node bin/vpr.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": ["git", "pr", "pull-request", "tui", "virtual", "branch-chain"],
+  "license": "MIT"
+}
