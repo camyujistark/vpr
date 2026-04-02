@@ -282,7 +282,7 @@ function render() {
   if (dirty) out += `  ${YELLOW}●${RESET}`;
   if (picked !== null) out += `  ${MAGENTA}[MOVING: ${commits[pickedCi].sha.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  n new  g merge  r rename  t title  d desc  w workitem  R refresh  s save  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  space move  n new  g merge  r rename  w ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll left panel
@@ -847,66 +847,55 @@ process.stdin.on('keypress', (str, key) => {
       return;
     }
 
-    case 't': {
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
-      const vprForTitle = items[cursor].vpr;
-      const meta = vprMeta[vprForTitle.tp] || {};
-      const currentTitle = meta.prTitle || meta.wiTitle || meta.title || vprForTitle.title || '';
-      startInput('PR title: ', currentTitle, (title) => {
-        vprMeta[vprForTitle.tp] = { ...vprMeta[vprForTitle.tp], prTitle: title };
-        saveMeta(vprMeta);
-        message = `${GREEN}PR title set for ${vprForTitle.tp}${RESET}`;
-      });
-      return;
-    }
-
-    case 'd': {
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
-      const vprForDesc = items[cursor].vpr;
-      const descMeta = vprMeta[vprForDesc.tp] || {};
-      const existing = descMeta.prDesc || descMeta.wiDescription || '';
-      startInput(`PR description (${vprForDesc.tp})`, existing, (desc) => {
-        vprMeta[vprForDesc.tp] = { ...vprMeta[vprForDesc.tp], prDesc: desc };
-        saveMeta(vprMeta);
-        message = `${GREEN}PR description set for ${vprForDesc.tp}${RESET}`;
-      }, true); // multiline
-      return;
-    }
-
     case 'w': {
-      // Create or link work item
+      // Edit ticket (title + description in one popup)
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForWi = items[cursor].vpr;
-      const existingWi = vprMeta[vprForWi.tp]?.wi;
-      if (existingWi) {
-        vprMeta[vprForWi.tp].wiSynced = false;
-        syncWi(vprForWi.tp);
-        message = `${GREEN}Synced WI #${existingWi}${RESET}`;
-        render();
-        break;
-      }
-      if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
-      const wiTitle = vprMeta[vprForWi.tp]?.prTitle || vprMeta[vprForWi.tp]?.title || vprForWi.title;
-      startInput(`Create WI "${wiTitle}"? (y/n): `, '', (answer) => {
-        if (answer !== 'y') { message = `${DIM}Cancelled${RESET}`; return; }
-        try {
-          const result = provider.createWorkItem(wiTitle);
-          const wi = result.then ? null : result; // sync providers return directly
-          if (wi) {
-            vprMeta[vprForWi.tp] = {
-              ...vprMeta[vprForWi.tp],
-              wi: wi.id,
-              wiTitle: wiTitle,
-              wiState: 'New',
-              wiSynced: true,
-            };
-            saveMeta(vprMeta);
-            message = `${GREEN}Created WI #${wi.id}${RESET}`;
-          }
-        } catch {
-          message = `${RED}Failed to create WI${RESET}`;
+      const wiMeta = vprMeta[vprForWi.tp] || {};
+      const wiTitle = wiMeta.wiTitle || wiMeta.title || vprForWi.title || '';
+      const wiDesc = wiMeta.wiDescription || '';
+      const existing = `${wiTitle}\n\n${wiDesc}`;
+      startInput(`Ticket (${vprForWi.tp}) — line 1: title, rest: description`, existing.trim(), (val) => {
+        const lines = val.split('\n');
+        const title = lines[0].trim();
+        const desc = lines.slice(1).join('\n').trim();
+        vprMeta[vprForWi.tp] = {
+          ...vprMeta[vprForWi.tp],
+          wiTitle: title,
+          wiDescription: desc,
+          title: title,
+        };
+        // Update Azure DevOps if WI exists
+        if (wiMeta.wi && provider) {
+          try { provider.updateWorkItem(wiMeta.wi, { title, description: desc }); } catch {}
         }
-      });
+        saveMeta(vprMeta);
+        message = `${GREEN}Ticket updated for ${vprForWi.tp}${RESET}`;
+        buildVprs();
+      }, true);
+      return;
+    }
+
+    case 'p': {
+      // Edit PR draft (title + description in one popup)
+      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
+      const vprForPr = items[cursor].vpr;
+      const prMeta = vprMeta[vprForPr.tp] || {};
+      const prTitle = prMeta.prTitle || prMeta.wiTitle || prMeta.title || vprForPr.title || '';
+      const prDesc = prMeta.prDesc || prMeta.wiDescription || '';
+      const existing = `${prTitle}\n\n${prDesc}`;
+      startInput(`PR Draft (${vprForPr.tp}) — line 1: title, rest: body`, existing.trim(), (val) => {
+        const lines = val.split('\n');
+        const title = lines[0].trim();
+        const body = lines.slice(1).join('\n').trim();
+        vprMeta[vprForPr.tp] = {
+          ...vprMeta[vprForPr.tp],
+          prTitle: title,
+          prDesc: body,
+        };
+        saveMeta(vprMeta);
+        message = `${GREEN}PR draft updated for ${vprForPr.tp}${RESET}`;
+      }, true);
       return;
     }
 
