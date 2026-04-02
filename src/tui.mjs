@@ -589,14 +589,23 @@ let inputPrompt = '';
 let inputCallback = null;
 
 /**
- * Centered popup input box — lazygit style.
- * Draws a bordered box over the main UI with a title and input field.
+ * Centered popup input — lazygit style.
+ * Single-line: one input row. Multi-line: multiple rows, Enter adds newline, Ctrl+S saves.
  */
-function startInput(prompt, defaultVal, callback) {
+let inputMultiline = false;
+let inputCursorLine = 0;
+
+function startInput(prompt, defaultVal, callback, multiline = false) {
   mode = 'input';
   inputPrompt = prompt;
-  inputBuffer = defaultVal || '';
+  inputMultiline = multiline;
   inputCallback = callback;
+  if (multiline) {
+    inputBuffer = defaultVal || '';
+    inputCursorLine = inputBuffer.split('\n').length - 1;
+  } else {
+    inputBuffer = defaultVal || '';
+  }
   renderPopup();
 }
 
@@ -604,47 +613,73 @@ function renderPopup() {
   const cols = process.stdout.columns || 120;
   const rows = process.stdout.rows || 40;
 
-  const boxW = Math.min(60, cols - 4);
-  const boxH = 5;
+  const boxW = Math.min(70, cols - 4);
+  const innerW = boxW - 4;
+  const lines = inputMultiline ? inputBuffer.split('\n') : [inputBuffer];
+  const contentH = inputMultiline ? Math.max(lines.length, 3) : 1;
+  const boxH = contentH + 4; // border + padding + help + border
   const startCol = Math.floor((cols - boxW) / 2);
-  const startRow = Math.floor((rows - boxH) / 2);
+  const startRow = Math.max(1, Math.floor((rows - boxH) / 2));
 
-  // Title centered in top border
   const title = ` ${inputPrompt} `;
   const titlePad = Math.max(0, Math.floor((boxW - 2 - title.length) / 2));
 
   let out = '';
 
-  // Top border with title
+  // Top border
   out += `${ESC}${startRow};${startCol}H`;
   out += `${CYAN}╭${'─'.repeat(titlePad)}${BOLD}${title}${RESET}${CYAN}${'─'.repeat(Math.max(0, boxW - 2 - titlePad - title.length))}╮${RESET}`;
 
-  // Empty line
-  out += `${ESC}${startRow + 1};${startCol}H`;
-  out += `${CYAN}│${RESET}${' '.repeat(boxW - 2)}${CYAN}│${RESET}`;
+  // Content lines
+  for (let i = 0; i < contentH; i++) {
+    const line = (lines[i] || '').slice(0, innerW);
+    const pad = inputMultiline && i === lines.length
+      ? '░'.repeat(Math.max(0, innerW - line.length))
+      : ' '.repeat(Math.max(0, innerW - line.length));
+    out += `${ESC}${startRow + 1 + i};${startCol}H`;
+    out += `${CYAN}│${RESET} ${line}${i < lines.length ? '░'.repeat(Math.max(0, innerW - line.length)) : pad} ${CYAN}│${RESET}`;
+  }
 
-  // Input line
-  const inputDisplay = inputBuffer.slice(-(boxW - 6));
-  out += `${ESC}${startRow + 2};${startCol}H`;
-  out += `${CYAN}│${RESET} ${inputDisplay}${'░'.repeat(Math.max(0, boxW - 4 - inputDisplay.length))} ${CYAN}│${RESET}`;
-
-  // Empty line
-  out += `${ESC}${startRow + 3};${startCol}H`;
-  out += `${CYAN}│${RESET}${DIM}  Enter to confirm · Esc to cancel${' '.repeat(Math.max(0, boxW - 2 - 34))}${RESET}${CYAN}│${RESET}`;
+  // Help line
+  const helpText = inputMultiline
+    ? '  Ctrl+S save · Esc cancel · Enter newline'
+    : '  Enter confirm · Esc cancel';
+  out += `${ESC}${startRow + 1 + contentH};${startCol}H`;
+  out += `${CYAN}│${RESET}${DIM}${helpText}${' '.repeat(Math.max(0, boxW - 2 - helpText.length))}${RESET}${CYAN}│${RESET}`;
 
   // Bottom border
-  out += `${ESC}${startRow + 4};${startCol}H`;
+  out += `${ESC}${startRow + 2 + contentH};${startCol}H`;
   out += `${CYAN}╰${'─'.repeat(boxW - 2)}╯${RESET}`;
 
-  // Position cursor at end of input
-  const cursorCol = startCol + 2 + inputDisplay.length;
-  out += `${ESC}${startRow + 2};${cursorCol}H${SHOW_CURSOR}`;
+  // Position cursor
+  const cursorLineIdx = inputMultiline ? Math.min(inputCursorLine, lines.length - 1) : 0;
+  const cursorLineText = lines[cursorLineIdx] || '';
+  const cursorCol = startCol + 2 + cursorLineText.length;
+  out += `${ESC}${startRow + 1 + cursorLineIdx};${cursorCol}H${SHOW_CURSOR}`;
 
   process.stdout.write(out);
 }
 
 function handleInputKey(str, key) {
-  if (key.name === 'return') {
+  if (!inputMultiline && key.name === 'return') {
+    // Single-line: Enter confirms
+    mode = 'normal';
+    process.stdout.write(HIDE_CURSOR);
+    const val = inputBuffer.trim();
+    inputBuffer = '';
+    if (val && inputCallback) inputCallback(val);
+    render();
+    return;
+  }
+  if (inputMultiline && key.name === 'return') {
+    // Multi-line: Enter adds newline
+    inputBuffer += '\n';
+    inputCursorLine++;
+    renderPopup();
+    return;
+  }
+  if (inputMultiline && key.name === 's' && key.ctrl) {
+    // Multi-line: Ctrl+S saves
     mode = 'normal';
     process.stdout.write(HIDE_CURSOR);
     const val = inputBuffer.trim();
@@ -661,7 +696,10 @@ function handleInputKey(str, key) {
     return;
   }
   if (key.name === 'backspace') {
-    inputBuffer = inputBuffer.slice(0, -1);
+    if (inputBuffer.length > 0) {
+      if (inputBuffer.endsWith('\n')) inputCursorLine = Math.max(0, inputCursorLine - 1);
+      inputBuffer = inputBuffer.slice(0, -1);
+    }
     renderPopup();
     return;
   }
@@ -822,12 +860,11 @@ process.stdin.on('keypress', (str, key) => {
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForDesc = items[cursor].vpr;
       const existing = vprMeta[vprForDesc.tp]?.prDesc || '';
-      openEditor(existing, (desc) => {
-        if (!desc) return;
+      startInput(`PR description (${vprForDesc.tp})`, existing, (desc) => {
         vprMeta[vprForDesc.tp] = { ...vprMeta[vprForDesc.tp], prDesc: desc };
         saveMeta(vprMeta);
         message = `${GREEN}PR description set for ${vprForDesc.tp}${RESET}`;
-      });
+      }, true); // multiline
       return;
     }
 
