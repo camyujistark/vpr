@@ -583,18 +583,80 @@ fi
 }
 
 // ── Input mode state ───────────────────────────────────────────────────
-let mode = 'normal'; // normal, merge, newvpr, rename
+let mode = 'normal'; // normal, merge, input
+let inputBuffer = '';
+let inputPrompt = '';
+let inputCallback = null;
 
-function promptLine(prompt, callback) {
-  process.stdin.setRawMode(false);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  process.stdout.write(`\n${CYAN}${prompt}${RESET}`);
-  rl.once('line', (answer) => {
-    rl.close();
-    process.stdin.setRawMode(true);
-    callback(answer.trim());
+/**
+ * Inline input box — draws at the bottom of the screen, captures keystrokes
+ * in raw mode. No readline, no mode switching.
+ */
+function startInput(prompt, defaultVal, callback) {
+  mode = 'input';
+  inputPrompt = prompt;
+  inputBuffer = defaultVal || '';
+  inputCallback = callback;
+  renderInputLine();
+}
+
+function renderInputLine() {
+  const rows = process.stdout.rows || 40;
+  process.stdout.write(`${ESC}${rows};1H${ESC}2K${CYAN}${inputPrompt}${RESET}${inputBuffer}${ESC}?25h`);
+}
+
+function handleInputKey(str, key) {
+  if (key.name === 'return') {
+    mode = 'normal';
+    process.stdout.write(HIDE_CURSOR);
+    const val = inputBuffer.trim();
+    inputBuffer = '';
+    if (val && inputCallback) inputCallback(val);
     render();
-  });
+    return;
+  }
+  if (key.name === 'escape') {
+    mode = 'normal';
+    inputBuffer = '';
+    process.stdout.write(HIDE_CURSOR);
+    render();
+    return;
+  }
+  if (key.name === 'backspace') {
+    inputBuffer = inputBuffer.slice(0, -1);
+    renderInputLine();
+    return;
+  }
+  if (str && !key.ctrl && str.length === 1) {
+    inputBuffer += str;
+    renderInputLine();
+  }
+}
+
+/**
+ * Open $EDITOR for multi-line input (like lazygit for commit messages).
+ */
+function openEditor(initialContent, callback) {
+  const editor = process.env.EDITOR || process.env.VISUAL || 'nano';
+  const tmpFile = path.join(os.tmpdir(), `vpr-edit-${Date.now()}.md`);
+  fs.writeFileSync(tmpFile, initialContent || '');
+
+  // Restore terminal for editor
+  process.stdout.write(SHOW_CURSOR + CLEAR);
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+
+  try {
+    execSync(`${editor} "${tmpFile}"`, { stdio: 'inherit' });
+    const result = fs.readFileSync(tmpFile, 'utf-8').trim();
+    callback(result);
+  } catch {
+    message = `${RED}Editor failed${RESET}`;
+  } finally {
+    fs.rmSync(tmpFile, { force: true });
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdout.write(HIDE_CURSOR);
+    render();
+  }
 }
 
 // ── Main ───────────────────────────────────────────────────────────────
@@ -619,6 +681,12 @@ export function startTui(config, baseArg) {
 process.stdin.on('keypress', (str, key) => {
   if (!key) return;
   const items = buildItems();
+
+  // Input mode: inline text entry
+  if (mode === 'input') {
+    handleInputKey(str, key);
+    return;
+  }
 
   // Merge mode: waiting for number input
   if (mode === 'merge') {
@@ -662,24 +730,23 @@ process.stdin.on('keypress', (str, key) => {
       }
       break;
 
-    case 'n':
-      promptLine('New VPR title: ', (title) => {
-        if (!title) return;
-        const tp = nextTp();
-        const item = items[cursor];
+    case 'n': {
+      const tp = nextTp();
+      startInput(`New VPR (${tp}) title: `, '', (title) => {
+        const item = buildItems()[cursor];
         if (item && (item.type === 'commit' || item.type === 'ungrouped')) {
           commits[item.ci].tp = tp;
           dirty = true;
           message = `${GREEN}Created ${tp} and moved commit${RESET}`;
         } else {
-          message = `${DIM}Created ${tp}: ${title} — select a commit and press space to move it here${RESET}`;
+          message = `${DIM}Created ${tp}: ${title}${RESET}`;
         }
-        // Store VPR title in metadata
         vprMeta[tp] = { ...vprMeta[tp], title };
         saveMeta(vprMeta);
         buildVprs();
       });
       return;
+    }
 
     case 'g':
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header to merge${RESET}`; break; }
@@ -688,11 +755,10 @@ process.stdin.on('keypress', (str, key) => {
         vprs.map((v, i) => `  ${i + 1}) ${v.tp}: ${v.title}`).join('\n');
       break;
 
-    case 'r':
+    case 'r': {
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header to rename${RESET}`; break; }
       const vprToRename = items[cursor].vpr;
-      promptLine(`Rename ${vprToRename.tp}: `, (title) => {
-        if (!title) return;
+      startInput(`Rename ${vprToRename.tp}: `, vprToRename.title, (title) => {
         vprToRename.title = title;
         vprMeta[vprToRename.tp] = { ...vprMeta[vprToRename.tp], title };
         saveMeta(vprMeta);
@@ -700,14 +766,13 @@ process.stdin.on('keypress', (str, key) => {
         buildVprs();
       });
       return;
+    }
 
     case 't': {
-      // Edit PR title
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForTitle = items[cursor].vpr;
       const currentTitle = vprMeta[vprForTitle.tp]?.prTitle || vprMeta[vprForTitle.tp]?.title || '';
-      promptLine(`PR title [${currentTitle}]: `, (title) => {
-        if (!title) return;
+      startInput('PR title: ', currentTitle, (title) => {
         vprMeta[vprForTitle.tp] = { ...vprMeta[vprForTitle.tp], prTitle: title };
         saveMeta(vprMeta);
         message = `${GREEN}PR title set for ${vprForTitle.tp}${RESET}`;
@@ -716,10 +781,10 @@ process.stdin.on('keypress', (str, key) => {
     }
 
     case 'd': {
-      // Edit PR description
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForDesc = items[cursor].vpr;
-      promptLine(`PR description for ${vprForDesc.tp}: `, (desc) => {
+      const existing = vprMeta[vprForDesc.tp]?.prDesc || '';
+      openEditor(existing, (desc) => {
         if (!desc) return;
         vprMeta[vprForDesc.tp] = { ...vprMeta[vprForDesc.tp], prDesc: desc };
         saveMeta(vprMeta);
@@ -742,7 +807,7 @@ process.stdin.on('keypress', (str, key) => {
       }
       if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
       const wiTitle = vprMeta[vprForWi.tp]?.prTitle || vprMeta[vprForWi.tp]?.title || vprForWi.title;
-      promptLine(`Create WI titled "${wiTitle}"? (y/n): `, (answer) => {
+      startInput(`Create WI "${wiTitle}"? (y/n): `, '', (answer) => {
         if (answer !== 'y') { message = `${DIM}Cancelled${RESET}`; return; }
         try {
           const result = provider.createWorkItem(wiTitle);
