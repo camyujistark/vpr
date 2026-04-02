@@ -847,7 +847,8 @@ process.stdin.on('keypress', (str, key) => {
     case 't': {
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForTitle = items[cursor].vpr;
-      const currentTitle = vprMeta[vprForTitle.tp]?.prTitle || vprMeta[vprForTitle.tp]?.title || '';
+      const meta = vprMeta[vprForTitle.tp] || {};
+      const currentTitle = meta.prTitle || meta.wiTitle || meta.title || vprForTitle.title || '';
       startInput('PR title: ', currentTitle, (title) => {
         vprMeta[vprForTitle.tp] = { ...vprMeta[vprForTitle.tp], prTitle: title };
         saveMeta(vprMeta);
@@ -859,7 +860,8 @@ process.stdin.on('keypress', (str, key) => {
     case 'd': {
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForDesc = items[cursor].vpr;
-      const existing = vprMeta[vprForDesc.tp]?.prDesc || '';
+      const descMeta = vprMeta[vprForDesc.tp] || {};
+      const existing = descMeta.prDesc || descMeta.wiDescription || '';
       startInput(`PR description (${vprForDesc.tp})`, existing, (desc) => {
         vprMeta[vprForDesc.tp] = { ...vprMeta[vprForDesc.tp], prDesc: desc };
         saveMeta(vprMeta);
