@@ -23,12 +23,14 @@ switch (cmd) {
   case 'list': {
     // TODO: non-interactive list (like virtual-chain.sh --md)
     console.log('Not yet implemented — use the TUI for now');
+    process.exit(0);
     break;
   }
 
   case 'render': {
     // TODO: materialize VPRs into real branch chain
     console.log('Not yet implemented');
+    process.exit(0);
     break;
   }
 

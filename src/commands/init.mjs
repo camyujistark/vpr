@@ -88,4 +88,5 @@ export async function init() {
   console.log(`\nInitialized VPR with ${provider} provider (prefix: ${template.prefix})`);
   console.log(`Config saved to .vpr/config.json`);
   console.log(`\nNext: make commits and run \`vpr\` to manage virtual PRs`);
+  process.exit(0);
 }
