@@ -589,20 +589,58 @@ let inputPrompt = '';
 let inputCallback = null;
 
 /**
- * Inline input box — draws at the bottom of the screen, captures keystrokes
- * in raw mode. No readline, no mode switching.
+ * Centered popup input box — lazygit style.
+ * Draws a bordered box over the main UI with a title and input field.
  */
 function startInput(prompt, defaultVal, callback) {
   mode = 'input';
   inputPrompt = prompt;
   inputBuffer = defaultVal || '';
   inputCallback = callback;
-  renderInputLine();
+  renderPopup();
 }
 
-function renderInputLine() {
+function renderPopup() {
+  const cols = process.stdout.columns || 120;
   const rows = process.stdout.rows || 40;
-  process.stdout.write(`${ESC}${rows};1H${ESC}2K${CYAN}${inputPrompt}${RESET}${inputBuffer}${ESC}?25h`);
+
+  const boxW = Math.min(60, cols - 4);
+  const boxH = 5;
+  const startCol = Math.floor((cols - boxW) / 2);
+  const startRow = Math.floor((rows - boxH) / 2);
+
+  // Title centered in top border
+  const title = ` ${inputPrompt} `;
+  const titlePad = Math.max(0, Math.floor((boxW - 2 - title.length) / 2));
+
+  let out = '';
+
+  // Top border with title
+  out += `${ESC}${startRow};${startCol}H`;
+  out += `${CYAN}╭${'─'.repeat(titlePad)}${BOLD}${title}${RESET}${CYAN}${'─'.repeat(Math.max(0, boxW - 2 - titlePad - title.length))}╮${RESET}`;
+
+  // Empty line
+  out += `${ESC}${startRow + 1};${startCol}H`;
+  out += `${CYAN}│${RESET}${' '.repeat(boxW - 2)}${CYAN}│${RESET}`;
+
+  // Input line
+  const inputDisplay = inputBuffer.slice(-(boxW - 6));
+  out += `${ESC}${startRow + 2};${startCol}H`;
+  out += `${CYAN}│${RESET} ${inputDisplay}${'░'.repeat(Math.max(0, boxW - 4 - inputDisplay.length))} ${CYAN}│${RESET}`;
+
+  // Empty line
+  out += `${ESC}${startRow + 3};${startCol}H`;
+  out += `${CYAN}│${RESET}${DIM}  Enter to confirm · Esc to cancel${' '.repeat(Math.max(0, boxW - 2 - 34))}${RESET}${CYAN}│${RESET}`;
+
+  // Bottom border
+  out += `${ESC}${startRow + 4};${startCol}H`;
+  out += `${CYAN}╰${'─'.repeat(boxW - 2)}╯${RESET}`;
+
+  // Position cursor at end of input
+  const cursorCol = startCol + 2 + inputDisplay.length;
+  out += `${ESC}${startRow + 2};${cursorCol}H${SHOW_CURSOR}`;
+
+  process.stdout.write(out);
 }
 
 function handleInputKey(str, key) {
@@ -624,12 +662,12 @@ function handleInputKey(str, key) {
   }
   if (key.name === 'backspace') {
     inputBuffer = inputBuffer.slice(0, -1);
-    renderInputLine();
+    renderPopup();
     return;
   }
   if (str && !key.ctrl && str.length === 1) {
     inputBuffer += str;
-    renderInputLine();
+    renderPopup();
   }
 }
 
