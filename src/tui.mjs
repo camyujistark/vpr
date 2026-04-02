@@ -77,22 +77,25 @@ function getVprSummaryLines(vpr) {
   // Work item
   if (meta.wi) {
     syncWi(vpr.tp);
-    lines.push(`│  WI:      #${meta.wi} [${meta.wiState || '?'}]`);
-    if (meta.wiTitle) lines.push(`│  Title:   ${meta.wiTitle}`);
-    if (meta.branch) lines.push(`│  Branch:  ${meta.branch}`);
+    lines.push(`│  WI:       #${meta.wi} [${meta.wiState || '?'}]`);
+    if (meta.wiTitle) lines.push(`│  Title:    ${meta.wiTitle}`);
+    if (meta.wiDescription) {
+      lines.push('│  Desc:');
+      for (const l of meta.wiDescription.split('\n')) lines.push(`│    ${l}`);
+    }
+    if (meta.branch) lines.push(`│  Branch:   ${meta.branch}`);
   } else {
-    lines.push('│  WI:      (press w to create)');
+    lines.push('│  WI:       (press w to create)');
   }
   lines.push('│');
-
-  // PR draft
-  lines.push(`│  PR Title: ${meta.prTitle || meta.title || '(press t to set)'}`);
+  lines.push('│  ─── PR Draft ───');
   lines.push('│');
+  lines.push(`│  Title:    ${meta.prTitle || meta.wiTitle || meta.title || '(press t to set)'}`);
   if (meta.prDesc) {
-    lines.push('│  PR Description:');
+    lines.push('│  Body:');
     for (const l of meta.prDesc.split('\n')) lines.push(`│    ${l}`);
   } else {
-    lines.push('│  PR Desc:  (press d to write)');
+    lines.push(`│  Body:     (press d to write)`);
   }
   lines.push('│');
 
