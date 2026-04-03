@@ -28,11 +28,16 @@ function loadCommits(base) {
 
   // Build lookup: which change IDs belong to which group
   const groups = vprMeta.groups || {};
-  const changeToGroup = new Map();
-  for (const [tp, group] of Object.entries(groups)) {
-    for (const cid of (group.commits || [])) {
-      changeToGroup.set(cid, tp);
+
+  // Build prefix lookup: map short change ID prefixes to group TP
+  function findGroup(changeId) {
+    for (const [tp, group] of Object.entries(groups)) {
+      for (const cid of (group.commits || [])) {
+        // Prefix match — meta may have shorter IDs than jj returns
+        if (changeId.startsWith(cid) || cid.startsWith(changeId)) return tp;
+      }
     }
+    return null;
   }
 
   const lines = raw.split('\n').filter(Boolean);
@@ -43,7 +48,7 @@ function loadCommits(base) {
     const sha = parts[1]?.trim();
     const subject = parts[2]?.trim();
     if (!sha || !subject) continue;
-    const tp = changeToGroup.get(changeId) || null;
+    const tp = findGroup(changeId);
     const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
     all.push({
       sha, changeId, subject, tp,
@@ -516,7 +521,7 @@ function pickOrDrop() {
 
     // Remove from source group
     if (c.tp && groups[c.tp]) {
-      groups[c.tp].commits = (groups[c.tp].commits || []).filter(id => id !== changeId);
+      groups[c.tp].commits = (groups[c.tp].commits || []).filter(id => !changeId.startsWith(id) && !id.startsWith(changeId));
     }
 
     // Add to target group
