@@ -599,12 +599,19 @@ export function startTui(config, baseArg) {
             fs.appendFileSync('/tmp/vpr-debug.log', `DROP: picked=${picked} pickedBm=${pickedEntry?.bookmark} pickedGroup=${pickedGroup} target=${targetChangeId} targetBm=${targetEntry?.bookmark} targetGroup=${targetGroup} sameGroup=${pickedGroup === targetGroup} flag=${rebaseFlag}\n`);
 
             if (pickedEntry?.bookmark && pickedGroup && pickedGroup === targetGroup) {
-              // Within-group tip swap: move target to be the new tip, move bookmark to target
-              // [1, 2, 3(tip)] picking 3 dropping on 2 → [1, 3, 2(tip)]
-              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip swap — rebase target ${targetChangeId} -A picked ${picked}, move bookmark\n`);
-              jj(`rebase -r ${targetChangeId} -A ${picked}`);
-              // Target is now after picked (new last in group) — move bookmark to target
-              try { jj(`bookmark set ${pickedEntry.bookmark} -r ${targetChangeId} --allow-backwards`); } catch {}
+              // Within-group tip move: use -B to put picked before target
+              // Then move bookmark to the new last commit in the group
+              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip move — rebase -r ${picked} -B ${targetChangeId}\n`);
+              jj(`rebase -r ${picked} -B ${targetChangeId}`);
+
+              // Find the new last commit in the group (excluding picked, which moved earlier)
+              // After rebase, need to re-read. Use the group's items minus picked.
+              const groupCommits = items.filter(i => i.group === pickedGroup && i.type === 'commit');
+              const lastNonPicked = groupCommits.filter(i => i.changeId !== picked && !i.changeId?.startsWith(picked)).pop();
+              if (lastNonPicked) {
+                fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: move bookmark ${pickedEntry.bookmark} to new tip ${lastNonPicked.changeId}\n`);
+                try { jj(`bookmark set ${pickedEntry.bookmark} -r ${lastNonPicked.changeId} --allow-backwards`); } catch {}
+              }
             } else {
               // Cross-group or ungrouped: rebase
               fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: cross-group rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
