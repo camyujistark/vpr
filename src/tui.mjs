@@ -19,21 +19,11 @@ import { git, gitSafe, jj, jjSafe, hasJj, getBase as gitGetBase, getFilesForComm
 import { loadConfig, loadMeta, saveMeta } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
 
-function getRemoteHead() {
-  return gitSafe(`rev-parse origin/${git('branch --show-current')}`);
-}
+// No getRemoteHead needed — jj handles remote tracking natively
 
-function loadCommits(base, remoteHead) {
-  let raw;
-  if (hasJj()) {
-    // jj log: change_id + commit_id + subject
-    raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id ++ "\\t" ++ description.first_line() ++ "\\n"'`);
-    if (!raw) {
-      raw = git(`log --reverse --format='%H%x09%H%x09%s' ${base}..HEAD`);
-    }
-  } else {
-    raw = git(`log --reverse --format='%H%x09%H%x09%s' ${base}..HEAD`);
-  }
+function loadCommits(base) {
+  // jj log: change_id + commit_id + subject
+  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id ++ "\\t" ++ description.first_line() ++ "\\n"'`);
   if (!raw) return [];
 
   // Build lookup: which change IDs belong to which group
@@ -53,9 +43,6 @@ function loadCommits(base, remoteHead) {
     const sha = parts[1]?.trim();
     const subject = parts[2]?.trim();
     if (!sha || !subject) continue;
-    if (remoteHead) {
-      try { execSync(`git merge-base --is-ancestor ${sha} ${remoteHead}`, { stdio: 'pipe', shell: '/bin/bash' }); continue; } catch {}
-    }
     const tp = changeToGroup.get(changeId) || null;
     const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
     all.push({
@@ -188,7 +175,6 @@ let cursor = 0;
 let picked = null;   // index into flat items list (for space pick/drop)
 let pickedCi = null; // commit index being moved
 let message = '';
-let dirty = false;
 let diffScroll = 0;  // scroll offset for diff pane
 let cachedDiffs = new Map();
 let cachedFiles = new Map(); // sha -> [files]
@@ -332,10 +318,9 @@ function render() {
 
   // Header
   out += `${BOLD}VPR Manager${RESET}  ${DIM}${vprs.length} VPRs, ${commits.length} commits${RESET}`;
-  if (dirty) out += `  ${YELLOW}●${RESET}`;
   if (picked !== null) out += `  ${MAGENTA}[MOVING: ${commits[pickedCi].sha.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  g merge  x remove  w edit ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  g merge  x remove  w edit ticket  p PR draft  R refresh  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll left panel
@@ -446,8 +431,8 @@ function render() {
 
 // ── Reload ─────────────────────────────────────────────────────────────
 function reload() {
-  const remoteHead = getRemoteHead();
-  commits = loadCommits(base, remoteHead);
+  vprMeta = loadMeta();
+  commits = loadCommits(base);
   cachedDiffs.clear();
   cachedFiles.clear();
   cachedNumstat.clear();
@@ -584,94 +569,8 @@ function mergeVpr(input) {
   return true;
 }
 
-function save() {
-  const edits = [];
-
-  for (const c of commits) {
-    const currentSubject = git(`log -1 --format=%s ${c.sha}`);
-    const currentTrailer = git(`log -1 --format='%(trailers:key=VPR,valueonly)' ${c.sha}`).trim();
-    const needsSubjectChange = currentSubject !== c.subject;
-    const needsTrailerChange = (c.tp || '') !== (currentTrailer || '');
-
-    if (needsSubjectChange || needsTrailerChange) {
-      edits.push({ sha: c.sha, newSubject: c.subject, newTp: c.tp });
-    }
-  }
-
-  if (edits.length === 0) { message = `${DIM}No changes to save${RESET}`; dirty = false; return; }
-
-  if (hasJj()) {
-    // jj: instant describe per commit — no rebase needed
-    let saved = 0;
-    for (const e of edits) {
-      try {
-        let msg = e.newSubject;
-        if (e.newTp) msg += `\n\nVPR: ${e.newTp}`;
-        describeCommit(e.sha, msg);
-        saved++;
-      } catch (err) {
-        message = `${RED}Failed to describe ${e.sha.slice(0, 8)}${RESET}`;
-        return;
-      }
-    }
-    message = `${GREEN}Saved ${saved} commit(s) via jj describe${RESET}`;
-    dirty = false;
-    cachedDiffs.clear();
-    const remoteHead = getRemoteHead();
-    commits = loadCommits(getBase(), remoteHead);
-    buildVprs();
-  } else {
-    // git fallback: interactive rebase (complex, fragile)
-    const base = getBase();
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-'));
-    const sedCmds = edits.map(e => `s/^pick ${e.sha.slice(0, 7)}/reword ${e.sha.slice(0, 7)}/`).join('; ');
-
-    const mapFile = path.join(tmpDir, 'map.json');
-    const mapData = {};
-    for (const e of edits) {
-      mapData[e.sha.slice(0, 7)] = { subject: e.newSubject, tp: e.newTp };
-    }
-    fs.writeFileSync(mapFile, JSON.stringify(mapData));
-
-    const editorScript = path.join(tmpDir, 'editor.sh');
-    fs.writeFileSync(editorScript, `#!/bin/bash
-MSG_FILE="$1"
-SHORT_SHA=$(git log -1 --format=%h 2>/dev/null)
-RESULT=$(node -e "
-  const map = require('${mapFile}');
-  const sha = '$SHORT_SHA';
-  for (const [k, v] of Object.entries(map)) {
-    if (sha.startsWith(k) || k.startsWith(sha)) {
-      let msg = v.subject;
-      if (v.tp) msg += '\\n\\nVPR: ' + v.tp;
-      console.log(msg);
-      process.exit(0);
-    }
-  }
-  process.exit(1);
-" 2>/dev/null)
-if [ $? -eq 0 ] && [ -n "$RESULT" ]; then echo "$RESULT" > "$MSG_FILE"; fi
-`, { mode: 0o755 });
-
-    try {
-      execSync(`git rebase -i ${base}`, {
-        stdio: 'pipe',
-        env: { ...process.env, GIT_SEQUENCE_EDITOR: `sed -i '${sedCmds}'`, GIT_EDITOR: editorScript }
-      });
-      message = `${GREEN}Saved ${edits.length} commit(s) via git rebase${RESET}`;
-      dirty = false;
-      cachedDiffs.clear();
-      const remoteHead = getRemoteHead();
-      commits = loadCommits(base, remoteHead);
-      buildVprs();
-    } catch {
-      try { execSync('git rebase --abort', { stdio: 'pipe' }); } catch {}
-      message = `${RED}Save failed — rebase aborted. Branch unchanged.${RESET}`;
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  }
-}
+// No save function needed — groupings auto-save to meta.json on every change.
+// Commit message editing can be done via jj describe directly (: command).
 
 // ── Input mode state ───────────────────────────────────────────────────
 let mode = 'normal'; // normal, merge, input
@@ -834,8 +733,7 @@ export function startTui(config, baseArg) {
   const base = baseArg || gitGetBase();
   if (!base) { process.stderr.write('Could not find base branch\n'); process.exit(1); }
 
-  const remoteHead = getRemoteHead();
-  commits = loadCommits(base, remoteHead);
+  commits = loadCommits(base);
   buildVprs();
 
   readline.emitKeypressEvents(process.stdin);
@@ -897,7 +795,7 @@ process.stdin.on('keypress', (str, key) => {
       }
       break;
 
-    case 'n': {
+    case 's': {
       // Scratch group (no ticket — for temporary organization)
       const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
       startInput(`Scratch group (${tp}): `, '', (title) => {
@@ -1041,21 +939,9 @@ process.stdin.on('keypress', (str, key) => {
       return;
     }
 
-    case 's':
-      save();
-      break;
+    // 's' is now scratch group (handled above)
 
     case 'q':
-      if (dirty) {
-        message = `${YELLOW}Unsaved changes! q again to quit, s to save${RESET}`;
-        render();
-        process.stdin.once('keypress', (s, k) => {
-          if (k?.name === 'q' || s === 'q') { process.stdout.write(SHOW_CURSOR + CLEAR); process.exit(0); }
-          if (s === 's') { save(); }
-          render();
-        });
-        return;
-      }
       process.stdout.write(SHOW_CURSOR + CLEAR);
       process.exit(0);
       break;
