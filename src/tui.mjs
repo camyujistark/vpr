@@ -966,7 +966,8 @@ export function startTui(config, baseArg) {
                 reload();
                 message = `${GREEN}Created ${bm} with WI #${wi.id}${RESET}`;
               }
-            } catch { message = `${RED}Failed to create ticket${RESET}`; }
+            } catch (err) { message = `${RED}Failed: ${(err?.stderr?.toString() || err?.message || '').slice(0, 80)}${RESET}`; }
+            render();
           }, true);
         });
         return;
