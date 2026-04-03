@@ -245,6 +245,42 @@ function getGroupSummary(item, rightW) {
   return lines;
 }
 
+// ── Fast right-pane-only redraw for edit mode ──────────────────────────
+function renderEditOnly() {
+  const cols = process.stdout.columns || 120;
+  const rows = process.stdout.rows || 40;
+  const leftW = Math.max(35, Math.floor(cols * 0.4));
+  const rightW = cols - leftW - 1;
+  const headerLines = 3;
+  const footerLines = 3;
+  const bH = rows - headerLines - footerLines;
+
+  const edit = getEditLines(rightW);
+  let out = SYNC_START + HIDE_CURSOR;
+
+  for (let row = 0; row < bH; row++) {
+    const rRow = diffScroll + row;
+    let rightCell = '';
+    if (rRow < edit.lines.length) {
+      rightCell = edit.lines[rRow].slice(0, rightW - 1);
+    }
+    // Move to right pane column and overwrite
+    out += `${ESC}${headerLines + 1 + row};${leftW + 2}H${ESC}0K${rightCell}`;
+  }
+
+  // Cursor
+  if (edit.cursorRow >= 0) {
+    const screenRow = headerLines + 1 + edit.cursorRow - diffScroll;
+    const screenCol = leftW + 2 + edit.cursorCol;
+    if (screenRow > headerLines && screenRow <= headerLines + bH) {
+      out += `${ESC}${screenRow};${screenCol}H${SHOW_CURSOR}`;
+    }
+  }
+
+  out += SYNC_END;
+  process.stdout.write(out);
+}
+
 // ── Render ──────────────────────────────────────────────────────────────
 function render() {
   const items = buildItems();
@@ -469,10 +505,9 @@ function handleEditKey(str, key) {
     return;
   }
   if (key.name === 'z' && key.ctrl) {
-    // Undo — restore original
     editBuffer = editOriginal;
     editCursorPos = editBuffer.length;
-    render();
+    renderEditOnly();
     return;
   }
   if (key.name === 'backspace') {
@@ -480,29 +515,59 @@ function handleEditKey(str, key) {
       editBuffer = editBuffer.slice(0, editCursorPos - 1) + editBuffer.slice(editCursorPos);
       editCursorPos--;
     }
-    render();
+    renderEditOnly();
     return;
   }
   if (key.name === 'return') {
     editBuffer = editBuffer.slice(0, editCursorPos) + '\n' + editBuffer.slice(editCursorPos);
     editCursorPos++;
-    render();
+    renderEditOnly();
     return;
   }
   if (key.name === 'left') {
     editCursorPos = Math.max(0, editCursorPos - 1);
-    render();
+    renderEditOnly();
     return;
   }
   if (key.name === 'right') {
     editCursorPos = Math.min(editBuffer.length, editCursorPos + 1);
-    render();
+    renderEditOnly();
+    return;
+  }
+  if (key.name === 'up') {
+    // Move cursor up one line
+    const before = editBuffer.slice(0, editCursorPos);
+    const lastNewline = before.lastIndexOf('\n');
+    if (lastNewline >= 0) {
+      const prevNewline = before.lastIndexOf('\n', lastNewline - 1);
+      const colInLine = editCursorPos - lastNewline - 1;
+      const prevLineStart = prevNewline + 1;
+      const prevLineLen = lastNewline - prevLineStart;
+      editCursorPos = prevLineStart + Math.min(colInLine, prevLineLen);
+    }
+    renderEditOnly();
+    return;
+  }
+  if (key.name === 'down') {
+    // Move cursor down one line
+    const after = editBuffer.slice(editCursorPos);
+    const nextNewline = after.indexOf('\n');
+    if (nextNewline >= 0) {
+      const before = editBuffer.slice(0, editCursorPos);
+      const currentLineStart = before.lastIndexOf('\n') + 1;
+      const colInLine = editCursorPos - currentLineStart;
+      const nextLineStart = editCursorPos + nextNewline + 1;
+      const nextNextNewline = editBuffer.indexOf('\n', nextLineStart);
+      const nextLineLen = (nextNextNewline >= 0 ? nextNextNewline : editBuffer.length) - nextLineStart;
+      editCursorPos = nextLineStart + Math.min(colInLine, nextLineLen);
+    }
+    renderEditOnly();
     return;
   }
   if (str && !key.ctrl && str.length === 1) {
     editBuffer = editBuffer.slice(0, editCursorPos) + str + editBuffer.slice(editCursorPos);
     editCursorPos++;
-    render();
+    renderEditOnly();
     return;
   }
 }
@@ -865,6 +930,7 @@ export function startTui(config, baseArg) {
         const fieldName = FIELD_NAMES[fieldIdx];
         const currentVal = eMeta[fieldName] || (fieldName === 'prTitle' ? eMeta.wiTitle : '') || '';
         startFieldEdit(eBm, fieldName, currentVal);
+        render();
         return;
       }
 
