@@ -231,7 +231,7 @@ function getGroupSummary(item, rightW) {
   addField(0, 'Ticket Title', meta.wiTitle);
   addField(1, 'Ticket Description', meta.wiDescription);
 
-  lines.push('│  ─── PR Draft ───');
+  lines.push(`│  ${CYAN}${BOLD}▸ PR Draft${RESET}`);
   lines.push('│');
 
   addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
