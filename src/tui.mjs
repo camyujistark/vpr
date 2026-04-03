@@ -186,54 +186,45 @@ function buildItems() {
 function getGroupSummary(item) {
   const meta = item.meta || {};
   const lines = [];
-  const SEL = `${INVERT}`;
-  const END = `${RESET}`;
+  const WHITE = `${ESC}37m`;
+
+  function addField(idx, label, value) {
+    const val = value || `${DIM}(empty)${RESET}`;
+    const valLines = val.split('\n');
+    if (fieldIdx === idx) {
+      // Selected: cyan box outline around the field
+      lines.push(`│  ${CYAN}┌ ${label}${RESET}`);
+      for (const l of valLines) lines.push(`│  ${CYAN}│${RESET} ${WHITE}${l}${RESET}`);
+      lines.push(`│  ${CYAN}└${'─'.repeat(label.length + 1)}${RESET}`);
+    } else {
+      // Unselected: dim label, white value
+      lines.push(`│  ${DIM}${label}${RESET}`);
+      for (const l of valLines) lines.push(`│  ${WHITE}${l}${RESET}`);
+    }
+    lines.push('│');
+  }
 
   lines.push(`╭─ ${item.bookmark}: ${item.title}`);
   lines.push('│');
 
   if (meta.wi) {
-    lines.push(`│  WI: #${meta.wi} [${meta.wiState || '?'}]`);
+    lines.push(`│  ${DIM}WI: #${meta.wi} [${meta.wiState || '?'}]${RESET}`);
   }
   lines.push('│');
 
-  // Field 0: Ticket Title
-  const f0 = fieldIdx === 0 ? SEL : '';
-  const f0e = fieldIdx === 0 ? END : '';
-  lines.push(`│  ${f0}Ticket Title${f0e}`);
-  lines.push(`│  ${f0}${meta.wiTitle || '(empty)'}${f0e}`);
-  lines.push('│');
-
-  // Field 1: Ticket Description
-  const f1 = fieldIdx === 1 ? SEL : '';
-  const f1e = fieldIdx === 1 ? END : '';
-  lines.push(`│  ${f1}Ticket Description${f1e}`);
-  const descLines = (meta.wiDescription || '(empty)').split('\n');
-  for (const l of descLines) lines.push(`│  ${f1}${l}${f1e}`);
-  lines.push('│');
+  addField(0, 'Ticket Title', meta.wiTitle);
+  addField(1, 'Ticket Description', meta.wiDescription);
 
   lines.push('│  ─── PR Draft ───');
   lines.push('│');
 
-  // Field 2: PR Title
-  const f2 = fieldIdx === 2 ? SEL : '';
-  const f2e = fieldIdx === 2 ? END : '';
-  lines.push(`│  ${f2}PR Title${f2e}`);
-  lines.push(`│  ${f2}${meta.prTitle || meta.wiTitle || '(empty)'}${f2e}`);
-  lines.push('│');
+  addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
+  addField(3, 'PR Body', meta.prDesc);
 
-  // Field 3: PR Body
-  const f3 = fieldIdx === 3 ? SEL : '';
-  const f3e = fieldIdx === 3 ? END : '';
-  lines.push(`│  ${f3}PR Body${f3e}`);
-  const bodyLines = (meta.prDesc || '(empty)').split('\n');
-  for (const l of bodyLines) lines.push(`│  ${f3}${l}${f3e}`);
-  lines.push('│');
-
-  lines.push(`│  Commits: ${item.commitCount}`);
+  lines.push(`│  ${DIM}Commits: ${item.commitCount}${RESET}`);
   lines.push('╰─');
   lines.push('');
-  lines.push(`${DIM}J/K select field  e edit  S save to provider${RESET}`);
+  lines.push(`${DIM}J/K select field  e edit  S sync to provider${RESET}`);
 
   return lines;
 }
