@@ -63,7 +63,7 @@ function loadCommits(base, remoteHead) {
   return all.slice(firstVprIdx);
 }
 
-// getFilesForCommit, getDiffForCommit imported from git.mjs
+// Raw getFilesForCommit/getDiffForCommit imported but accessed via getCached* wrappers
 
 let provider = null; // set in startTui()
 
@@ -91,7 +91,7 @@ function getVprSummaryLines(vpr) {
 
   // Work item
   if (meta.wi) {
-    syncWi(vpr.tp);
+    // WI synced on load or explicit w press, not during render
     lines.push(`│  WI:       #${meta.wi} [${meta.wiState || '?'}]`);
     if (meta.wiTitle) lines.push(`│  Title:    ${meta.wiTitle}`);
     if (meta.wiDescription) {
@@ -124,18 +124,14 @@ function getVprSummaryLines(vpr) {
   lines.push('│');
 
   // Files
-  const allFiles = new Map(); // file -> {added, removed}
+  const allFiles = new Map();
   for (const ci of vpr.commitIdxs) {
-    try {
-      const stat = git(`diff-tree --no-commit-id --numstat -r ${commits[ci].sha}`);
-      for (const line of stat.split('\n').filter(Boolean)) {
-        const [a, r, f] = line.split('\t');
-        if (!allFiles.has(f)) allFiles.set(f, { added: 0, removed: 0 });
-        const entry = allFiles.get(f);
-        entry.added += parseInt(a) || 0;
-        entry.removed += parseInt(r) || 0;
-      }
-    } catch {}
+    for (const { file, added, removed } of getCachedNumstat(commits[ci].sha)) {
+      if (!allFiles.has(file)) allFiles.set(file, { added: 0, removed: 0 });
+      const entry = allFiles.get(file);
+      entry.added += added;
+      entry.removed += removed;
+    }
   }
 
   const totalAdded = [...allFiles.values()].reduce((s, f) => s + f.added, 0);
@@ -155,6 +151,8 @@ const ESC = '\x1b[';
 const CLEAR = `${ESC}2J${ESC}H`;
 const HIDE_CURSOR = `${ESC}?25l`;
 const SHOW_CURSOR = `${ESC}?25h`;
+const SYNC_START = `${ESC}?2026h`; // begin synchronized output
+const SYNC_END = `${ESC}?2026l`;   // end synchronized output
 const BOLD = `${ESC}1m`;
 const DIM = `${ESC}2m`;
 const ITALIC = `${ESC}3m`;
@@ -185,7 +183,24 @@ let message = '';
 let dirty = false;
 let diffScroll = 0;  // scroll offset for diff pane
 let cachedDiffs = new Map();
+let cachedFiles = new Map(); // sha -> [files]
+let cachedNumstat = new Map(); // sha -> [{file, added, removed}]
 let bodyH = 20;
+
+function getCachedFiles(sha) {
+  if (!cachedFiles.has(sha)) cachedFiles.set(sha, getFilesForCommit(sha));
+  return cachedFiles.get(sha);
+}
+
+function getCachedNumstat(sha) {
+  if (!cachedNumstat.has(sha)) cachedNumstat.set(sha, getNumstatForCommit(sha));
+  return cachedNumstat.get(sha);
+}
+
+function getCachedDiff(sha) {
+  if (!cachedDiffs.has(sha)) cachedDiffs.set(sha, getDiffForCommit(sha));
+  return cachedDiffs.get(sha);
+}
 
 function buildVprs() {
   const map = new Map();
@@ -211,7 +226,7 @@ function getDependencyErrors() {
   for (let vi = 0; vi < vprs.length; vi++) {
     const vpr = vprs[vi];
     for (const ci of vpr.commitIdxs) {
-      const files = getFilesForCommit(commits[ci].sha);
+      const files = getCachedFiles(commits[ci].sha);
       for (const f of files) {
         if (fileFirstVpr.has(f)) {
           const firstVi = fileFirstVpr.get(f);
@@ -234,7 +249,7 @@ function getDependencyErrors() {
   for (let vi = 0; vi < vprs.length; vi++) {
     const vpr = vprs[vi];
     for (const ci of vpr.commitIdxs) {
-      const files = getFilesForCommit(commits[ci].sha);
+      const files = getCachedFiles(commits[ci].sha);
       for (const f of files) {
         if (!sharedFiles.has(f)) sharedFiles.set(f, new Set());
         sharedFiles.get(f).add(vpr.tp);
@@ -290,7 +305,7 @@ function render() {
   const footerLines = 4 + (errors.length > 0 ? errors.length + 1 : 0) + (shared.length > 0 ? Math.min(shared.length, 3) + 1 : 0);
   bodyH = rows - headerLines - footerLines;
 
-  let out = CLEAR + HIDE_CURSOR;
+  let out = SYNC_START + CLEAR + HIDE_CURSOR;
 
   // Header
   out += `${BOLD}VPR Manager${RESET}  ${DIM}${vprs.length} VPRs, ${commits.length} commits${RESET}`;
@@ -311,9 +326,7 @@ function render() {
   if (currentItem && currentItem.type === 'vpr') {
     rightLines = getVprSummaryLines(currentItem.vpr);
   } else if (currentItem && currentItem.ci !== null) {
-    const sha = commits[currentItem.ci].sha;
-    if (!cachedDiffs.has(sha)) cachedDiffs.set(sha, getDiffForCommit(sha));
-    rightLines = cachedDiffs.get(sha).split('\n');
+    rightLines = getCachedDiff(commits[currentItem.ci].sha).split('\n');
   }
 
   // Render body rows
@@ -403,6 +416,7 @@ function render() {
   const ready = errors.length === 0 && ungrouped.length === 0 && vprs.length <= 10;
   if (vprs.length > MAX_VPRS) out += `${RED}Over limit: ${vprs.length} VPRs (max ${MAX_VPRS})${RESET}\n`;
   out += `${ready ? `${GREEN}Ready to render` : `${YELLOW}Not ready`}${RESET}\n`;
+  out += SYNC_END;
 
   process.stdout.write(out);
 }
@@ -412,6 +426,8 @@ function reload() {
   const remoteHead = getRemoteHead();
   commits = loadCommits(base, remoteHead);
   cachedDiffs.clear();
+  cachedFiles.clear();
+  cachedNumstat.clear();
   buildVprs();
   cursor = Math.min(cursor, buildItems().length - 1);
   message = `${GREEN}Refreshed (${commits.length} commits)${RESET}`;
