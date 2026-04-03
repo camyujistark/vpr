@@ -308,7 +308,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  e edit  d del  x del group  n new  S sync  u undo  : jj  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  e edit  d delete  n new  S sync  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -1058,50 +1058,43 @@ export function startTui(config, baseArg) {
       // w and p removed — use J/K to select field, e to edit, S to sync
 
       case 'd': {
-        // Delete commit (jj abandon)
         const dItem = items[cursor];
-        if (!dItem?.changeId || dItem.type === 'group' || dItem.type === 'ungrouped-header') {
-          message = `${RED}Select a commit to delete${RESET}`;
+        if (dItem?.type === 'group') {
+          // Delete entire group + all commits
+          const dMeta = vprMeta.bookmarks?.[dItem.bookmark] || {};
+          const dLabel = dMeta.tpIndex || dItem.bookmark;
+          startInput(`Delete ${dLabel} and all its commits? (y/n)`, '', (answer) => {
+            if (answer !== 'y') return;
+            try {
+              const groupCommits = items.filter(i => i.group === dItem.bookmark && i.type === 'commit');
+              for (const c of groupCommits) {
+                try { jj(`abandon ${c.changeId}`); } catch {}
+              }
+              try { jj(`bookmark delete ${dItem.bookmark}`); } catch {}
+              if (vprMeta.bookmarks?.[dItem.bookmark]) delete vprMeta.bookmarks[dItem.bookmark];
+              saveMeta(vprMeta);
+              reload();
+              message = `${GREEN}Deleted ${dLabel}${RESET}`;
+            } catch (err) {
+              message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+            }
+          });
+        } else if (dItem?.changeId) {
+          // Delete single commit
+          startInput(`Abandon ${dItem.changeId.slice(0, 8)}? (y/n)`, '', (answer) => {
+            if (answer !== 'y') return;
+            try {
+              jj(`abandon ${dItem.changeId}`);
+              reload();
+              message = `${GREEN}Abandoned ${dItem.changeId.slice(0, 8)}${RESET}`;
+            } catch (err) {
+              message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+            }
+          });
+        } else {
+          message = `${RED}Nothing to delete${RESET}`;
           break;
         }
-        startInput(`Abandon ${dItem.changeId.slice(0, 8)}? (y/n)`, '', (answer) => {
-          if (answer !== 'y') return;
-          try {
-            jj(`abandon ${dItem.changeId}`);
-            reload();
-            message = `${GREEN}Abandoned ${dItem.changeId.slice(0, 8)}${RESET}`;
-          } catch (err) {
-            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
-          }
-        });
-        return;
-      }
-
-      case 'x': {
-        // Remove bookmark + metadata
-        const xItem = items[cursor];
-        if (xItem?.type !== 'group') { message = `${RED}Select a bookmark group${RESET}`; break; }
-        const xMeta = vprMeta.bookmarks?.[xItem.bookmark] || {};
-        const xLabel = xMeta.tpIndex || xItem.bookmark;
-        startInput(`Delete ${xLabel} and all its commits? (y/n)`, '', (answer) => {
-          if (answer !== 'y') return;
-          try {
-            // Abandon all commits in the group
-            const groupCommits = items.filter(i => i.group === xItem.bookmark && i.type === 'commit');
-            for (const c of groupCommits) {
-              try { jj(`abandon ${c.changeId}`); } catch {}
-            }
-            // Delete bookmark
-            try { jj(`bookmark delete ${xItem.bookmark}`); } catch {}
-            // Remove meta
-            if (vprMeta.bookmarks?.[xItem.bookmark]) delete vprMeta.bookmarks[xItem.bookmark];
-            saveMeta(vprMeta);
-            reload();
-            message = `${GREEN}Deleted ${xLabel}${RESET}`;
-          } catch (err) {
-            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
-          }
-        });
         return;
       }
 
