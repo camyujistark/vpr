@@ -1,13 +1,18 @@
 /**
- * VPR TUI — Interactive virtual PR manager with split-pane diff preview.
+ * VPR TUI — Thin metadata layer over jj's native bookmark stacking.
  *
- * Keys (lazygit-style):
+ * jj handles: commit manipulation, reordering, splitting, squashing, bookmarks
+ * VPR handles: work item tracking, PR titles/descriptions, provider integration
+ *
+ * Keys:
  *   j/k    Navigate           J/K    Scroll diff
- *   space  Pick up / drop     n      New VPR group
- *   g      Merge VPRs         r      Rename VPR
- *   t      PR title           d      PR description
- *   w      Create/sync WI     R      Refresh
- *   s      Save               q      Quit
+ *   c      Create ticket + bookmark at current commit
+ *   w      Edit ticket (title → desc → sync to provider)
+ *   p      Edit PR draft (title → body)
+ *   x      Remove bookmark + metadata
+ *   R      Refresh
+ *   :      Run jj command directly
+ *   q      Quit
  */
 
 import { execSync } from 'child_process';
@@ -15,147 +20,19 @@ import readline from 'readline';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { git, gitSafe, jj, jjSafe, hasJj, getBase as gitGetBase, getFilesForCommit, getDiffForCommit, getNumstatForCommit, describeCommit, getChangeId, clearChangeIdCache } from './git.mjs';
+import { jj, jjSafe, hasJj, git, gitSafe } from './git.mjs';
 import { loadConfig, loadMeta, saveMeta } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
 
-// No getRemoteHead needed — jj handles remote tracking natively
-
-function loadCommits(base) {
-  // jj log: change_id + commit_id + subject
-  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id ++ "\\t" ++ description.first_line() ++ "\\n"'`);
-  if (!raw) return [];
-
-  // Build lookup: which change IDs belong to which group
-  const groups = vprMeta.groups || {};
-
-  // Build prefix lookup: map short change ID prefixes to group TP
-  function findGroup(changeId) {
-    for (const [tp, group] of Object.entries(groups)) {
-      for (const cid of (group.commits || [])) {
-        // Prefix match — meta may have shorter IDs than jj returns
-        if (changeId.startsWith(cid) || cid.startsWith(changeId)) return tp;
-      }
-    }
-    return null;
-  }
-
-  const lines = raw.split('\n').filter(Boolean);
-  const all = [];
-  for (const line of lines) {
-    const parts = line.split('\t');
-    const changeId = parts[0]?.trim();
-    const sha = parts[1]?.trim();
-    const subject = parts[2]?.trim();
-    if (!sha || !subject) continue;
-    const tp = findGroup(changeId);
-    const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
-    all.push({
-      sha, changeId, subject, tp,
-      ccType: ccMatch ? ccMatch[1] : null,
-      ccScope: ccMatch ? ccMatch[2] || null : null,
-      ccDesc: ccMatch ? ccMatch[3] : subject,
-    });
-  }
-  // Show from first grouped commit onwards, or last 20 if none grouped
-  const firstGrouped = all.findIndex(c => c.tp);
-  if (firstGrouped === -1) return all.slice(-20);
-  return all.slice(firstGrouped);
-}
-
-// Raw getFilesForCommit/getDiffForCommit imported but accessed via getCached* wrappers
-
-let provider = null; // set in startTui()
-
-function syncWi(tp) {
-  const meta = vprMeta[tp];
-  if (!meta?.wi || meta.wiSynced || !provider) return;
-  try {
-    // Sync is async but we call it in a sync context — use execSync wrapper
-    const wi = provider.getWorkItem(meta.wi);
-    if (wi.then) return; // Skip if truly async (shouldn't be with execSync providers)
-    meta.wiTitle = wi.title || meta.title;
-    meta.wiDescription = wi.description || '';
-    meta.wiState = wi.state || '';
-    meta.wiSynced = true;
-    saveMeta(vprMeta);
-  } catch {}
-}
-
-function getVprSummaryLines(vpr) {
-  const meta = vprMeta[vpr.tp] || {};
-  const lines = [];
-
-  lines.push(`╭─ ${vpr.tp}: ${vpr.title}`);
-  lines.push('│');
-
-  // Work item
-  if (meta.wi) {
-    // WI synced on load or explicit w press, not during render
-    lines.push(`│  WI:       #${meta.wi} [${meta.wiState || '?'}]`);
-    if (meta.wiTitle) lines.push(`│  Title:    ${meta.wiTitle}`);
-    if (meta.wiDescription) {
-      lines.push('│  Desc:');
-      for (const l of meta.wiDescription.split('\n')) lines.push(`│    ${l}`);
-    }
-    if (meta.branch) lines.push(`│  Branch:   ${meta.branch}`);
-  } else {
-    lines.push('│  WI:       (press w to create)');
-  }
-  lines.push('│');
-  lines.push('│  ─── PR Draft ───');
-  lines.push('│');
-  lines.push(`│  Title:    ${meta.prTitle || meta.wiTitle || meta.title || '(press t to set)'}`);
-  if (meta.prDesc) {
-    lines.push('│  Body:');
-    for (const l of meta.prDesc.split('\n')) lines.push(`│    ${l}`);
-  } else {
-    lines.push(`│  Body:     (press d to write)`);
-  }
-  lines.push('│');
-
-  // Commits
-  lines.push(`│  Commits (${vpr.commitIdxs.length}):`);
-  for (const ci of vpr.commitIdxs) {
-    const c = commits[ci];
-    const typeTag = c.ccType ? `[${c.ccType}]` : '[?]';
-    lines.push(`│    ${c.sha.slice(0, 8)} ${typeTag} ${c.ccDesc || c.subject}`);
-  }
-  lines.push('│');
-
-  // Files
-  const allFiles = new Map();
-  for (const ci of vpr.commitIdxs) {
-    for (const { file, added, removed } of getCachedNumstat(commits[ci].sha)) {
-      if (!allFiles.has(file)) allFiles.set(file, { added: 0, removed: 0 });
-      const entry = allFiles.get(file);
-      entry.added += added;
-      entry.removed += removed;
-    }
-  }
-
-  const totalAdded = [...allFiles.values()].reduce((s, f) => s + f.added, 0);
-  const totalRemoved = [...allFiles.values()].reduce((s, f) => s + f.removed, 0);
-  lines.push(`│  Files (${allFiles.size}):  +${totalAdded} -${totalRemoved}`);
-  for (const [file, stat] of allFiles) {
-    lines.push(`│    +${String(stat.added).padEnd(4)} -${String(stat.removed).padEnd(4)} ${file}`);
-  }
-  lines.push('│');
-  lines.push('╰─');
-
-  return lines;
-}
-
-// ── ANSI helpers ───────────────────────────────────────────────────────
+// ── ANSI ───────────────────────────────────────────────────────────────
 const ESC = '\x1b[';
 const CLEAR = `${ESC}2J${ESC}H`;
 const HIDE_CURSOR = `${ESC}?25l`;
 const SHOW_CURSOR = `${ESC}?25h`;
-const SYNC_START = `${ESC}?2026h`; // begin synchronized output
-const SYNC_END = `${ESC}?2026l`;   // end synchronized output
+const SYNC_START = `${ESC}?2026h`;
+const SYNC_END = `${ESC}?2026l`;
 const BOLD = `${ESC}1m`;
 const DIM = `${ESC}2m`;
-const ITALIC = `${ESC}3m`;
 const RED = `${ESC}31m`;
 const GREEN = `${ESC}32m`;
 const YELLOW = `${ESC}33m`;
@@ -163,234 +40,236 @@ const CYAN = `${ESC}36m`;
 const MAGENTA = `${ESC}35m`;
 const RESET = `${ESC}0m`;
 const INVERT = `${ESC}7m`;
-const BG_DARK = `${ESC}48;5;236m`;
-
-function moveTo(row, col) { return `${ESC}${row};${col}H`; }
-function clearLine() { return `${ESC}2K`; }
-
-// loadMeta, saveMeta imported from config.mjs
-let vprMeta = loadMeta();
 
 // ── State ──────────────────────────────────────────────────────────────
-const MAX_VPRS = 10;
-let commits = [];
-let vprs = [];       // [{ tp, title, commitIdxs: [] }]
-let ungrouped = [];
+let provider = null;
+let vprMeta = {};
+let entries = [];     // [{ type: 'bookmark'|'commit', changeId, sha, subject, bookmark, ccType, ccScope, ccDesc }]
 let cursor = 0;
-let picked = null;   // index into flat items list (for space pick/drop)
-let pickedCi = null; // commit index being moved
 let message = '';
-let diffScroll = 0;  // scroll offset for diff pane
-let cachedDiffs = new Map();
-let cachedFiles = new Map(); // sha -> [files]
-let cachedNumstat = new Map(); // sha -> [{file, added, removed}]
+let diffScroll = 0;
 let bodyH = 20;
 
-function getCachedFiles(sha) {
-  if (!cachedFiles.has(sha)) cachedFiles.set(sha, getFilesForCommit(sha));
-  return cachedFiles.get(sha);
-}
-
-function getCachedNumstat(sha) {
-  if (!cachedNumstat.has(sha)) cachedNumstat.set(sha, getNumstatForCommit(sha));
-  return cachedNumstat.get(sha);
-}
+// Caches
+const diffCache = new Map();
+const filesCache = new Map();
 
 function getCachedDiff(sha) {
-  if (!cachedDiffs.has(sha)) cachedDiffs.set(sha, getDiffForCommit(sha));
-  return cachedDiffs.get(sha);
+  if (!diffCache.has(sha)) {
+    try { diffCache.set(sha, jj(`diff --git -r ${sha}`)); } catch { diffCache.set(sha, ''); }
+  }
+  return diffCache.get(sha);
 }
 
-function buildVprs() {
-  const groups = vprMeta.groups || {};
-  const map = new Map();
-  ungrouped = [];
+function getCachedFiles(sha) {
+  if (!filesCache.has(sha)) {
+    try {
+      filesCache.set(sha, jj(`diff --summary -r ${sha}`).split('\n').filter(Boolean));
+    } catch { filesCache.set(sha, []); }
+  }
+  return filesCache.get(sha);
+}
 
-  // Create entries for ALL groups in meta (including empty ones)
-  for (const [tp, group] of Object.entries(groups)) {
-    if (group.realized) continue; // skip realized groups
-    map.set(tp, {
-      tp,
-      title: group.wiTitle || group.title || tp,
-      commitIdxs: [],
+// ── Load jj log as flat list ───────────────────────────────────────────
+function loadEntries(base) {
+  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`);
+  if (!raw) return [];
+
+  const lines = raw.split('\n').filter(Boolean);
+  const result = [];
+
+  for (const line of lines) {
+    const [changeId, sha, bookmarkStr, subject] = line.split('\t');
+    if (!changeId || !subject) continue;
+
+    const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
+
+    // Parse bookmarks (jj may list multiple separated by spaces)
+    const bookmarks = bookmarkStr?.trim().split(/\s+/).filter(b => b && b.startsWith('tp-')) || [];
+    const bookmark = bookmarks[0] || null;
+
+    result.push({
+      type: bookmark ? 'bookmark' : 'commit',
+      changeId: changeId.trim(),
+      sha: sha.trim(),
+      subject: subject.trim(),
+      bookmark,
+      ccType: ccMatch ? ccMatch[1] : null,
+      ccScope: ccMatch ? ccMatch[2] || null : null,
+      ccDesc: ccMatch ? ccMatch[3] : subject.trim(),
     });
   }
 
-  // Assign commits to their groups
-  commits.forEach((c, i) => {
-    if (c.tp && map.has(c.tp)) {
-      map.get(c.tp).commitIdxs.push(i);
-    } else if (c.tp && !map.has(c.tp)) {
-      // Commit references a group not in meta — create it
-      map.set(c.tp, { tp: c.tp, title: c.ccDesc || c.subject, commitIdxs: [i] });
-    } else {
-      ungrouped.push(i);
-    }
-  });
-
-  // Preserve meta ordering (Object.keys order)
-  vprs = [...map.values()];
+  return result;
 }
 
-function getDependencyErrors() {
-  // Track first VPR that touches each file (by VPR order index)
-  const fileFirstVpr = new Map(); // file -> vpr order index
-  const errors = [];
-
-  for (let vi = 0; vi < vprs.length; vi++) {
-    const vpr = vprs[vi];
-    for (const ci of vpr.commitIdxs) {
-      const files = getCachedFiles(commits[ci].sha);
-      for (const f of files) {
-        if (fileFirstVpr.has(f)) {
-          const firstVi = fileFirstVpr.get(f);
-          if (firstVi !== vi) {
-            // File touched by two VPRs — check ordering
-            if (firstVi > vi) {
-              errors.push({ file: f, needs: vprs[firstVi].tp, before: vpr.tp });
-            }
-            // If firstVi < vi, ordering is correct — no error
-          }
-        } else {
-          fileFirstVpr.set(f, vi);
-        }
-      }
-    }
-  }
-
-  // Also collect shared files for display (not errors, just info)
-  const sharedFiles = new Map(); // file -> [tp1, tp2]
-  for (let vi = 0; vi < vprs.length; vi++) {
-    const vpr = vprs[vi];
-    for (const ci of vpr.commitIdxs) {
-      const files = getCachedFiles(commits[ci].sha);
-      for (const f of files) {
-        if (!sharedFiles.has(f)) sharedFiles.set(f, new Set());
-        sharedFiles.get(f).add(vpr.tp);
-      }
-    }
-  }
-
-  const shared = [];
-  for (const [file, tps] of sharedFiles) {
-    if (tps.size > 1) shared.push({ file, vprs: [...tps].join(' → ') });
-  }
-
-  return { errors, shared };
-}
-
-function nextTp() {
-  let max = 0;
-  for (const c of commits) {
-    if (c.tp) { const n = parseInt(c.tp.replace('TP-', '')); if (n > max) max = n; }
-  }
-  return `TP-${max + 1}`;
-}
-
-// ── Flat item list ─────────────────────────────────────────────────────
+// ── Build grouped view ─────────────────────────────────────────────────
 function buildItems() {
+  // Group commits by the bookmark above them (or below — bookmark is at tip)
+  // In jj stacked model: bookmark is at tip, commits below until next bookmark belong to it
+  // Since we load reversed (oldest first), we scan forward and assign to next bookmark seen
   const items = [];
-  for (const vpr of vprs) {
-    items.push({ type: 'vpr', vpr, ci: null });
-    for (const ci of vpr.commitIdxs) {
-      items.push({ type: 'commit', vpr, ci });
+  let currentGroup = null;
+
+  // Reverse scan: bookmarks are at tips, commits below belong to them
+  // We need to scan from top (newest) to bottom (oldest)
+  const reversed = [...entries].reverse();
+  const groups = []; // [{ bookmark, changeId, commits: [...] }]
+
+  for (const entry of reversed) {
+    if (entry.bookmark) {
+      currentGroup = { bookmark: entry.bookmark, entry, commits: [] };
+      groups.push(currentGroup);
+    } else if (currentGroup) {
+      currentGroup.commits.push(entry);
+    } else {
+      // Ungrouped commit above all bookmarks — orphan
+      if (!groups.find(g => g.bookmark === null)) {
+        groups.push({ bookmark: null, entry: null, commits: [] });
+      }
+      groups.find(g => g.bookmark === null).commits.push(entry);
     }
   }
-  if (ungrouped.length > 0) {
-    items.push({ type: 'header', vpr: null, ci: null });
-    for (const ci of ungrouped) {
-      items.push({ type: 'ungrouped', vpr: null, ci });
+
+  // Reverse back to display order (oldest group first)
+  groups.reverse();
+  for (const g of groups) g.commits.reverse();
+
+  // Build flat display list
+  for (const group of groups) {
+    const meta = group.bookmark ? (vprMeta.bookmarks?.[group.bookmark] || {}) : {};
+    const title = meta.wiTitle || meta.prTitle || group.entry?.ccDesc || group.bookmark || 'ungrouped';
+
+    if (group.bookmark) {
+      items.push({
+        type: 'group',
+        bookmark: group.bookmark,
+        title,
+        meta,
+        commitCount: group.commits.length + 1, // +1 for the bookmark commit itself
+        entry: group.entry,
+      });
+      // The bookmark's own commit
+      items.push({ type: 'commit', ...group.entry, group: group.bookmark });
+    } else {
+      items.push({ type: 'ungrouped-header', title: 'Ungrouped', commitCount: group.commits.length });
+    }
+
+    for (const commit of group.commits) {
+      items.push({ type: group.bookmark ? 'commit' : 'ungrouped', ...commit, group: group.bookmark });
     }
   }
+
   return items;
+}
+
+// ── Right pane: group summary or diff ──────────────────────────────────
+function getGroupSummary(item) {
+  const meta = item.meta || {};
+  const lines = [];
+
+  lines.push(`╭─ ${item.bookmark}: ${item.title}`);
+  lines.push('│');
+
+  if (meta.wi) {
+    lines.push(`│  WI:       #${meta.wi} [${meta.wiState || '?'}]`);
+    if (meta.wiTitle) lines.push(`│  Title:    ${meta.wiTitle}`);
+    if (meta.wiDescription) {
+      lines.push('│  Desc:');
+      for (const l of meta.wiDescription.split('\n')) lines.push(`│    ${l}`);
+    }
+  } else {
+    lines.push('│  WI:       (press c to create)');
+  }
+
+  lines.push('│');
+  lines.push('│  ─── PR Draft ───');
+  lines.push('│');
+  lines.push(`│  Title:    ${meta.prTitle || meta.wiTitle || '(press p to edit)'}`);
+  if (meta.prDesc) {
+    lines.push('│  Body:');
+    for (const l of meta.prDesc.split('\n')) lines.push(`│    ${l}`);
+  } else {
+    lines.push('│  Body:     (press p to edit)');
+  }
+
+  lines.push('│');
+  lines.push(`│  Commits:  ${item.commitCount}`);
+  lines.push('╰─');
+
+  return lines;
 }
 
 // ── Render ──────────────────────────────────────────────────────────────
 function render() {
   const items = buildItems();
-  const { errors, shared } = getDependencyErrors();
   const cols = process.stdout.columns || 120;
   const rows = process.stdout.rows || 40;
 
-  // Layout: left panel 40% (min 35), right panel rest
   const leftW = Math.max(35, Math.floor(cols * 0.4));
-  const rightW = cols - leftW - 1; // 1 for border
+  const rightW = cols - leftW - 1;
   const headerLines = 3;
-  const footerLines = 4 + (errors.length > 0 ? errors.length + 1 : 0) + (shared.length > 0 ? Math.min(shared.length, 3) + 1 : 0);
+  const footerLines = 3;
   bodyH = rows - headerLines - footerLines;
 
   let out = SYNC_START + CLEAR + HIDE_CURSOR;
 
   // Header
-  out += `${BOLD}VPR Manager${RESET}  ${DIM}${vprs.length} VPRs, ${commits.length} commits${RESET}`;
-  if (picked !== null) out += `  ${MAGENTA}[MOVING: ${commits[pickedCi].sha.slice(0, 8)}]${RESET}`;
-  out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  g merge  x remove  w edit ticket  p PR draft  R refresh  q quit${RESET}\n`;
+  const bookmarkCount = entries.filter(e => e.bookmark).length;
+  out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  c create ticket  w edit ticket  p PR draft  x remove  : jj cmd  R refresh  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
-  // Scroll left panel
+  // Scroll
   let scrollStart = 0;
   if (cursor >= scrollStart + bodyH) scrollStart = cursor - bodyH + 1;
   if (cursor < scrollStart) scrollStart = cursor;
 
-  // Get right pane content: VPR summary for headers, diff for commits
+  // Right pane content
   const currentItem = items[cursor];
   let rightLines = [];
-  if (currentItem && currentItem.type === 'vpr') {
-    rightLines = getVprSummaryLines(currentItem.vpr);
-  } else if (currentItem && currentItem.ci !== null) {
-    rightLines = getCachedDiff(commits[currentItem.ci].sha).split('\n');
+  if (currentItem?.type === 'group') {
+    rightLines = getGroupSummary(currentItem);
+  } else if (currentItem?.sha) {
+    rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
   }
 
-  // Render body rows
+  // Body
   for (let row = 0; row < bodyH; row++) {
-    const itemIdx = scrollStart + row;
-
-    // Left panel
+    const idx = scrollStart + row;
     let leftCell = '';
-    if (itemIdx < items.length) {
-      const item = items[itemIdx];
-      const selected = itemIdx === cursor;
-      const isPicked = picked !== null && itemIdx === picked;
 
-      if (item.type === 'vpr') {
-        const count = item.vpr.commitIdxs.length;
-        const label = `${item.vpr.tp}: ${item.vpr.title}`;
-        const truncated = label.slice(0, leftW - 6);
-        if (selected) leftCell = `${INVERT}${CYAN}${BOLD}${truncated}${RESET} ${DIM}(${count})${RESET}`;
-        else leftCell = `${CYAN}${BOLD}${truncated}${RESET} ${DIM}(${count})${RESET}`;
-      } else if (item.type === 'commit' || item.type === 'ungrouped') {
-        const c = commits[item.ci];
-        const prefix = isPicked ? `${MAGENTA}● ` : '  ';
-        const label = `${c.sha.slice(0, 8)} ${c.subject}`.slice(0, leftW - 4);
-        if (selected) leftCell = `${INVERT}${prefix}${label}${RESET}`;
-        else if (isPicked) leftCell = `${prefix}${label}${RESET}`;
-        else if (item.type === 'ungrouped') leftCell = `${YELLOW}${prefix}${label}${RESET}`;
-        else leftCell = `${prefix}${label}${RESET}`;
-      } else if (item.type === 'header') {
-        const label = '⚠ Ungrouped';
-        if (selected) leftCell = `${INVERT}${YELLOW}${BOLD}${label}${RESET}`;
-        else leftCell = `${YELLOW}${BOLD}${label}${RESET}`;
+    if (idx < items.length) {
+      const item = items[idx];
+      const sel = idx === cursor;
+
+      if (item.type === 'group') {
+        const label = `${item.bookmark}: ${item.title}`.slice(0, leftW - 6);
+        leftCell = sel
+          ? `${INVERT}${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`
+          : `${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`;
+      } else if (item.type === 'commit') {
+        const typeTag = item.ccType ? `${DIM}[${item.ccType}]${RESET}` : '';
+        const label = `  ${item.changeId?.slice(0, 8) || ''} ${typeTag} ${item.ccDesc || item.subject}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${label}${RESET}` : label;
+      } else if (item.type === 'ungrouped-header') {
+        const label = `⚠ Ungrouped (${item.commitCount})`;
+        leftCell = sel ? `${INVERT}${YELLOW}${BOLD}${label}${RESET}` : `${YELLOW}${BOLD}${label}${RESET}`;
+      } else if (item.type === 'ungrouped') {
+        const label = `  ${item.changeId?.slice(0, 8) || ''} ${item.subject}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${YELLOW}${label}${RESET}` : `${YELLOW}${label}${RESET}`;
       }
     }
 
-    // Right panel (VPR summary or diff preview)
+    // Right pane
     let rightCell = '';
     const rRow = diffScroll + row;
     if (rRow < rightLines.length) {
-      let line = rightLines[rRow].slice(0, rightW - 1);
-      // Color based on content
-      if (currentItem?.type === 'vpr') {
-        // VPR summary — use box drawing colors
+      const line = rightLines[rRow].slice(0, rightW - 1);
+      if (currentItem?.type === 'group') {
         if (line.startsWith('╭') || line.startsWith('╰')) rightCell = `${CYAN}${line}${RESET}`;
-        else if (line.includes('[feat]')) rightCell = line.replace('[feat]', `${GREEN}[feat]${RESET}`);
-        else if (line.includes('[fix]')) rightCell = line.replace('[fix]', `${RED}[fix]${RESET}`);
-        else if (line.includes('[test]')) rightCell = line.replace('[test]', `${YELLOW}[test]${RESET}`);
-        else if (line.includes('[?]')) rightCell = line.replace('[?]', `${RED}[?]${RESET}`);
-        else if (line.match(/^\│\s+\+/)) rightCell = `${DIM}${line}${RESET}`;
         else rightCell = `${DIM}${line}${RESET}`;
       } else {
-        // Diff coloring
         if (line.startsWith('+') && !line.startsWith('+++')) rightCell = `${GREEN}${line}${RESET}`;
         else if (line.startsWith('-') && !line.startsWith('---')) rightCell = `${RED}${line}${RESET}`;
         else if (line.startsWith('@@')) rightCell = `${CYAN}${line}${RESET}`;
@@ -399,194 +278,25 @@ function render() {
       }
     }
 
-    // Pad left cell to fixed width (strip ANSI for length calc)
     const visibleLen = leftCell.replace(/\x1b\[[0-9;]*m/g, '').length;
     const padding = Math.max(0, leftW - visibleLen);
-
     out += `${leftCell}${' '.repeat(padding)}│${rightCell}\n`;
   }
 
-  // Footer separator
+  // Footer
   out += `${DIM}${'─'.repeat(leftW)}┴${'─'.repeat(rightW)}${RESET}\n`;
-
-  // Dependency errors
-  if (errors.length > 0) {
-    out += `${RED}Ordering errors:${RESET}\n`;
-    for (const e of errors) {
-      out += `  ${RED}✗${RESET} ${e.file}: ${e.needs} must come before ${e.before}\n`;
-    }
-  }
-
-  // Shared files (info, not error if order is correct)
-  if (shared.length > 0 && errors.length === 0) {
-    const shown = shared.slice(0, 3);
-    out += `${DIM}Shared files (order OK): ${shown.map(s => s.file).join(', ')}${shared.length > 3 ? ` +${shared.length - 3} more` : ''}${RESET}\n`;
-  }
-
-  // Status
   if (message) { out += message + '\n'; message = ''; }
-
-  const ready = errors.length === 0 && ungrouped.length === 0 && vprs.length <= 10;
-  if (vprs.length > MAX_VPRS) out += `${RED}Over limit: ${vprs.length} VPRs (max ${MAX_VPRS})${RESET}\n`;
-  out += `${ready ? `${GREEN}Ready to render` : `${YELLOW}Not ready`}${RESET}\n`;
+  else out += '\n';
   out += SYNC_END;
 
   process.stdout.write(out);
 }
 
-// ── Reload ─────────────────────────────────────────────────────────────
-function reload() {
-  vprMeta = loadMeta();
-  commits = loadCommits(base);
-  cachedDiffs.clear();
-  cachedFiles.clear();
-  cachedNumstat.clear();
-  buildVprs();
-  cursor = Math.min(cursor, buildItems().length - 1);
-  message = `${GREEN}Refreshed (${commits.length} commits)${RESET}`;
-}
-
-// Watch .git for changes (like lazygit uses fsnotify)
-let lastHead = git('rev-parse HEAD');
-const gitDir = path.join(process.cwd(), '.git');
-try {
-  fs.watch(gitDir, { recursive: false }, (event, filename) => {
-    if (!filename) return;
-    // HEAD, refs, or index changed
-    if (['HEAD', 'index', 'COMMIT_EDITMSG'].includes(filename) || filename.startsWith('refs')) {
-      try {
-        const head = git('rev-parse HEAD');
-        if (head !== lastHead) { lastHead = head; reload(); render(); }
-      } catch {}
-    }
-  });
-  // Also watch refs/heads for branch changes
-  const refsDir = path.join(gitDir, 'refs', 'heads');
-  if (fs.existsSync(refsDir)) {
-    fs.watch(refsDir, { recursive: true }, () => {
-      try {
-        const head = git('rev-parse HEAD');
-        if (head !== lastHead) { lastHead = head; reload(); render(); }
-      } catch {}
-    });
-  }
-} catch {
-  // Fallback to polling if fs.watch fails
-  setInterval(() => {
-    try {
-      const head = git('rev-parse HEAD');
-      if (head !== lastHead) { lastHead = head; reload(); render(); }
-    } catch {}
-  }, 2000);
-}
-
-// ── Actions ────────────────────────────────────────────────────────────
-function pickOrDrop() {
-  const items = buildItems();
-  const item = items[cursor];
-
-  if (picked === null) {
-    // Pick up
-    if (!item || (item.type !== 'commit' && item.type !== 'ungrouped')) {
-      message = `${RED}Select a commit to pick up${RESET}`;
-      return;
-    }
-    picked = cursor;
-    pickedCi = item.ci;
-    message = `${MAGENTA}Picked ${commits[pickedCi].sha.slice(0, 8)} — navigate to target VPR and press space to drop${RESET}`;
-  } else {
-    // Drop onto current position
-    if (!item) { message = `${RED}Navigate to a VPR to drop${RESET}`; return; }
-
-    let targetTp = null;
-    if (item.type === 'vpr') {
-      targetTp = item.vpr.tp;
-    } else if (item.type === 'commit') {
-      targetTp = item.vpr.tp;
-    } else {
-      message = `${RED}Navigate to a VPR or commit within a VPR to drop${RESET}`;
-      return;
-    }
-
-    if (commits[pickedCi].tp === targetTp) {
-      message = `${DIM}Already in ${targetTp}${RESET}`;
-      picked = null;
-      pickedCi = null;
-      return;
-    }
-
-    const c = commits[pickedCi];
-    const changeId = c.changeId || c.sha;
-    const groups = vprMeta.groups || {};
-
-    // Remove from source group
-    if (c.tp && groups[c.tp]) {
-      groups[c.tp].commits = (groups[c.tp].commits || []).filter(id => !changeId.startsWith(id) && !id.startsWith(changeId));
-    }
-
-    // Add to target group
-    if (!groups[targetTp]) groups[targetTp] = { commits: [] };
-    if (!groups[targetTp].commits) groups[targetTp].commits = [];
-    groups[targetTp].commits.push(changeId);
-
-    vprMeta.groups = groups;
-    saveMeta(vprMeta);
-
-    c.tp = targetTp;
-    message = `${GREEN}Dropped into ${targetTp}${RESET}`;
-    picked = null;
-    pickedCi = null;
-    buildVprs();
-  }
-}
-
-function mergeVpr(input) {
-  const items = buildItems();
-  const item = items[cursor];
-  if (!item || item.type !== 'vpr') { message = `${RED}Select a VPR header first${RESET}`; return false; }
-
-  const idx = parseInt(input) - 1;
-  if (isNaN(idx) || idx < 0 || idx >= vprs.length) { message = `${RED}Invalid selection${RESET}`; return false; }
-
-  const source = item.vpr;
-  const target = vprs[idx];
-  if (source.tp === target.tp) { message = `${RED}Can't merge into self${RESET}`; return false; }
-
-  const groups = vprMeta.groups || {};
-  const sourceCommits = groups[source.tp]?.commits || [];
-  if (!groups[target.tp]) groups[target.tp] = { commits: [] };
-  if (!groups[target.tp].commits) groups[target.tp].commits = [];
-
-  // Move all commits from source to target
-  groups[target.tp].commits.push(...sourceCommits);
-  groups[source.tp].commits = []; // keep source as empty group
-
-  for (const ci of source.commitIdxs) {
-    commits[ci].tp = target.tp;
-  }
-
-  vprMeta.groups = groups;
-  saveMeta(vprMeta);
-
-  message = `${GREEN}Merged ${source.tp} into ${target.tp}${RESET}`;
-  cursor = 0;
-  buildVprs();
-  return true;
-}
-
-// No save function needed — groupings auto-save to meta.json on every change.
-// Commit message editing can be done via jj describe directly (: command).
-
-// ── Input mode state ───────────────────────────────────────────────────
-let mode = 'normal'; // normal, merge, input
+// ── Input popup ────────────────────────────────────────────────────────
+let mode = 'normal';
 let inputBuffer = '';
 let inputPrompt = '';
 let inputCallback = null;
-
-/**
- * Centered popup input — lazygit style.
- * Single-line: one input row. Multi-line: multiple rows, Enter adds newline, Ctrl+S saves.
- */
 let inputMultiline = false;
 let inputCursorLine = 0;
 
@@ -594,62 +304,39 @@ function startInput(prompt, defaultVal, callback, multiline = false) {
   mode = 'input';
   inputPrompt = prompt;
   inputMultiline = multiline;
+  inputBuffer = defaultVal || '';
   inputCallback = callback;
-  if (multiline) {
-    inputBuffer = defaultVal || '';
-    inputCursorLine = inputBuffer.split('\n').length - 1;
-  } else {
-    inputBuffer = defaultVal || '';
-  }
+  inputCursorLine = inputBuffer.split('\n').length - 1;
   renderPopup();
 }
 
 function renderPopup() {
   const cols = process.stdout.columns || 120;
   const rows = process.stdout.rows || 40;
-
   const boxW = Math.min(70, cols - 4);
   const innerW = boxW - 4;
   const lines = inputMultiline ? inputBuffer.split('\n') : [inputBuffer];
   const contentH = inputMultiline ? Math.max(lines.length, 3) : 1;
-  const boxH = contentH + 4; // border + padding + help + border
+  const boxH = contentH + 4;
   const startCol = Math.floor((cols - boxW) / 2);
   const startRow = Math.max(1, Math.floor((rows - boxH) / 2));
-
   const title = ` ${inputPrompt} `;
   const titlePad = Math.max(0, Math.floor((boxW - 2 - title.length) / 2));
 
   let out = '';
+  out += `${ESC}${startRow};${startCol}H${CYAN}╭${'─'.repeat(titlePad)}${BOLD}${title}${RESET}${CYAN}${'─'.repeat(Math.max(0, boxW - 2 - titlePad - title.length))}╮${RESET}`;
 
-  // Top border
-  out += `${ESC}${startRow};${startCol}H`;
-  out += `${CYAN}╭${'─'.repeat(titlePad)}${BOLD}${title}${RESET}${CYAN}${'─'.repeat(Math.max(0, boxW - 2 - titlePad - title.length))}╮${RESET}`;
-
-  // Content lines
   for (let i = 0; i < contentH; i++) {
     const line = (lines[i] || '').slice(0, innerW);
-    const pad = inputMultiline && i === lines.length
-      ? '░'.repeat(Math.max(0, innerW - line.length))
-      : ' '.repeat(Math.max(0, innerW - line.length));
-    out += `${ESC}${startRow + 1 + i};${startCol}H`;
-    out += `${CYAN}│${RESET} ${line}${i < lines.length ? '░'.repeat(Math.max(0, innerW - line.length)) : pad} ${CYAN}│${RESET}`;
+    out += `${ESC}${startRow + 1 + i};${startCol}H${CYAN}│${RESET} ${line}${'░'.repeat(Math.max(0, innerW - line.length))} ${CYAN}│${RESET}`;
   }
 
-  // Help line
-  const helpText = inputMultiline
-    ? '  Ctrl+S save · Esc cancel · Enter newline'
-    : '  Enter confirm · Esc cancel';
-  out += `${ESC}${startRow + 1 + contentH};${startCol}H`;
-  out += `${CYAN}│${RESET}${DIM}${helpText}${' '.repeat(Math.max(0, boxW - 2 - helpText.length))}${RESET}${CYAN}│${RESET}`;
+  const helpText = inputMultiline ? '  Ctrl+S save · Esc cancel · Enter newline' : '  Enter confirm · Esc cancel';
+  out += `${ESC}${startRow + 1 + contentH};${startCol}H${CYAN}│${RESET}${DIM}${helpText}${' '.repeat(Math.max(0, boxW - 2 - helpText.length))}${RESET}${CYAN}│${RESET}`;
+  out += `${ESC}${startRow + 2 + contentH};${startCol}H${CYAN}╰${'─'.repeat(boxW - 2)}╯${RESET}`;
 
-  // Bottom border
-  out += `${ESC}${startRow + 2 + contentH};${startCol}H`;
-  out += `${CYAN}╰${'─'.repeat(boxW - 2)}╯${RESET}`;
-
-  // Position cursor
   const cursorLineIdx = inputMultiline ? Math.min(inputCursorLine, lines.length - 1) : 0;
-  const cursorLineText = lines[cursorLineIdx] || '';
-  const cursorCol = startCol + 2 + cursorLineText.length;
+  const cursorCol = startCol + 2 + (lines[cursorLineIdx] || '').length;
   out += `${ESC}${startRow + 1 + cursorLineIdx};${cursorCol}H${SHOW_CURSOR}`;
 
   process.stdout.write(out);
@@ -657,305 +344,240 @@ function renderPopup() {
 
 function handleInputKey(str, key) {
   if (!inputMultiline && key.name === 'return') {
-    // Single-line: Enter confirms
-    mode = 'normal';
-    process.stdout.write(HIDE_CURSOR);
-    const val = inputBuffer.trim();
-    inputBuffer = '';
+    mode = 'normal'; process.stdout.write(HIDE_CURSOR);
+    const val = inputBuffer.trim(); inputBuffer = '';
     if (val && inputCallback) inputCallback(val);
-    render();
-    return;
+    render(); return;
   }
-  if (inputMultiline && key.name === 'return') {
-    // Multi-line: Enter adds newline
-    inputBuffer += '\n';
-    inputCursorLine++;
-    renderPopup();
-    return;
-  }
+  if (inputMultiline && key.name === 'return') { inputBuffer += '\n'; inputCursorLine++; renderPopup(); return; }
   if (inputMultiline && key.name === 's' && key.ctrl) {
-    // Multi-line: Ctrl+S saves
-    mode = 'normal';
-    process.stdout.write(HIDE_CURSOR);
-    const val = inputBuffer.trim();
-    inputBuffer = '';
+    mode = 'normal'; process.stdout.write(HIDE_CURSOR);
+    const val = inputBuffer.trim(); inputBuffer = '';
     if (val && inputCallback) inputCallback(val);
-    render();
-    return;
+    render(); return;
   }
-  if (key.name === 'escape') {
-    mode = 'normal';
-    inputBuffer = '';
-    process.stdout.write(HIDE_CURSOR);
-    render();
-    return;
-  }
+  if (key.name === 'escape') { mode = 'normal'; inputBuffer = ''; process.stdout.write(HIDE_CURSOR); render(); return; }
   if (key.name === 'backspace') {
-    if (inputBuffer.length > 0) {
-      if (inputBuffer.endsWith('\n')) inputCursorLine = Math.max(0, inputCursorLine - 1);
-      inputBuffer = inputBuffer.slice(0, -1);
-    }
-    renderPopup();
-    return;
+    if (inputBuffer.endsWith('\n')) inputCursorLine = Math.max(0, inputCursorLine - 1);
+    inputBuffer = inputBuffer.slice(0, -1); renderPopup(); return;
   }
-  if (str && !key.ctrl && str.length === 1) {
-    inputBuffer += str;
-    renderPopup();
-  }
+  if (str && !key.ctrl && str.length === 1) { inputBuffer += str; renderPopup(); }
 }
 
-/**
- * Open $EDITOR for multi-line input (like lazygit for commit messages).
- */
-function openEditor(initialContent, callback) {
-  const editor = process.env.EDITOR || process.env.VISUAL || 'nano';
-  const tmpFile = path.join(os.tmpdir(), `vpr-edit-${Date.now()}.md`);
-  fs.writeFileSync(tmpFile, initialContent || '');
-
-  // Restore terminal for editor
+// ── Open $EDITOR for multi-line (like lazygit) ─────────────────────────
+function openEditor(initial, callback) {
+  const editor = process.env.EDITOR || 'nano';
+  const tmp = path.join(os.tmpdir(), `vpr-${Date.now()}.md`);
+  fs.writeFileSync(tmp, initial || '');
   process.stdout.write(SHOW_CURSOR + CLEAR);
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
-
   try {
-    execSync(`${editor} "${tmpFile}"`, { stdio: 'inherit' });
-    const result = fs.readFileSync(tmpFile, 'utf-8').trim();
-    callback(result);
-  } catch {
-    message = `${RED}Editor failed${RESET}`;
-  } finally {
-    fs.rmSync(tmpFile, { force: true });
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
-    process.stdout.write(HIDE_CURSOR);
-    render();
-  }
+    execSync(`${editor} "${tmp}"`, { stdio: 'inherit' });
+    callback(fs.readFileSync(tmp, 'utf-8').trim());
+  } catch { message = `${RED}Editor failed${RESET}`; }
+  finally { fs.rmSync(tmp, { force: true }); if (process.stdin.isTTY) process.stdin.setRawMode(true); process.stdout.write(HIDE_CURSOR); render(); }
+}
+
+// ── jj command mode ────────────────────────────────────────────────────
+function runJjCommand(cmd) {
+  process.stdout.write(SHOW_CURSOR + CLEAR);
+  if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  try {
+    execSync(`jj ${cmd}`, { stdio: 'inherit', shell: '/bin/bash' });
+  } catch {}
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+  process.stdout.write(HIDE_CURSOR);
+  reload();
+  render();
+}
+
+// ── Reload ─────────────────────────────────────────────────────────────
+let base = '';
+
+function reload() {
+  vprMeta = loadMeta();
+  entries = loadEntries(base);
+  diffCache.clear();
+  filesCache.clear();
+  const items = buildItems();
+  cursor = Math.min(cursor, Math.max(0, items.length - 1));
+  message = `${GREEN}Refreshed${RESET}`;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────
 export function startTui(config, baseArg) {
+  if (!hasJj()) { process.stderr.write('VPR requires jj (jujutsu). Install it first.\n'); process.exit(1); }
+
   provider = createProvider(config);
   vprMeta = loadMeta();
 
-  const base = baseArg || gitGetBase();
-  if (!base) { process.stderr.write('Could not find base branch\n'); process.exit(1); }
-
-  commits = loadCommits(base);
-  buildVprs();
+  // Determine base
+  base = baseArg || 'trunk()';
+  entries = loadEntries(base);
 
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdout.write(HIDE_CURSOR);
   process.on('exit', () => process.stdout.write(SHOW_CURSOR + CLEAR));
 
+  // Watch .git for changes
+  const gitDir = path.join(process.cwd(), '.git');
+  let lastHead = '';
+  try {
+    lastHead = jj('log --no-graph -r @ -T commit_id');
+    fs.watch(gitDir, { recursive: false }, () => {
+      try {
+        const head = jj('log --no-graph -r @ -T commit_id');
+        if (head !== lastHead) { lastHead = head; reload(); render(); }
+      } catch {}
+    });
+  } catch {}
+
   render();
 
-process.stdin.on('keypress', (str, key) => {
-  if (!key) return;
-  const items = buildItems();
+  process.stdin.on('keypress', (str, key) => {
+    if (!key) return;
+    const items = buildItems();
 
-  // Input mode: inline text entry
-  if (mode === 'input') {
-    handleInputKey(str, key);
-    return;
-  }
+    // Input mode
+    if (mode === 'input') { handleInputKey(str, key); return; }
 
-  // Merge mode: waiting for number input
-  if (mode === 'merge') {
-    if (str >= '1' && str <= '9') {
-      mergeVpr(str);
-    } else {
-      message = `${DIM}Cancelled${RESET}`;
-    }
-    mode = 'normal';
-    render();
-    return;
-  }
-
-  // Shift keys (check before switch since key.name is lowercase)
-  if (key.name === 'j' && key.shift) { diffScroll += 3; render(); return; }
-  if (key.name === 'k' && key.shift) { diffScroll = Math.max(0, diffScroll - 3); render(); return; }
-  if (key.name === 'r' && key.shift) { reload(); render(); return; }
-
-  switch (key.name || str) {
-    case 'up': case 'k':
-      cursor = Math.max(0, cursor - 1);
-      diffScroll = 0;
-      break;
-    case 'down': case 'j':
-      cursor = Math.min(items.length - 1, cursor + 1);
-      diffScroll = 0;
-      break;
-
-    // Scroll diff pane
-    case 'pagedown': diffScroll += bodyH; break;
-    case 'pageup': diffScroll = Math.max(0, diffScroll - bodyH); break;
-
-    case 'space':
-      pickOrDrop();
-      break;
-
-    case 'escape':
-      if (picked !== null) {
-        picked = null; pickedCi = null;
-        message = `${DIM}Cancelled move${RESET}`;
-      }
-      break;
-
-    case 's': {
-      // Scratch group (no ticket — for temporary organization)
-      const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
-      startInput(`Scratch group (${tp}): `, '', (title) => {
-        if (!vprMeta.groups) vprMeta.groups = {};
-        vprMeta.groups[tp] = { wiTitle: title, commits: [], realized: false };
-        vprMeta.nextIndex = (vprMeta.nextIndex || 1) + 1;
-
-        // If cursor is on an ungrouped commit, move it in
-        const item = buildItems()[cursor];
-        if (item && (item.type === 'commit' || item.type === 'ungrouped')) {
-          const cid = commits[item.ci].changeId || commits[item.ci].sha;
-          vprMeta.groups[tp].commits.push(cid);
-          commits[item.ci].tp = tp;
-        }
-
-        saveMeta(vprMeta);
-        message = `${GREEN}Created ${tp}${RESET}`;
-        buildVprs();
-      });
+    // jj command mode
+    if (mode === 'jjcmd') {
+      handleInputKey(str, key);
       return;
     }
 
-    case 'c': {
-      // Create ticket via provider + new group
-      if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
-      const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
-      startInput(`Ticket title (${tp}): `, '', (title) => {
-        startInput(`Ticket description: `, '', (desc) => {
-          try {
-            const result = provider.createWorkItem(title, desc);
-            const wi = result.then ? null : result;
-            if (wi) {
-              if (!vprMeta.groups) vprMeta.groups = {};
-              vprMeta.groups[tp] = {
-                wi: wi.id,
-                wiTitle: title,
-                wiDescription: desc,
-                wiState: 'New',
-                commits: [],
-                realized: false,
-              };
-              vprMeta.nextIndex = (vprMeta.nextIndex || 1) + 1;
-              saveMeta(vprMeta);
-              message = `${GREEN}Created ${tp} with WI #${wi.id}${RESET}`;
-              buildVprs();
-            }
-          } catch {
-            message = `${RED}Failed to create ticket${RESET}`;
-          }
-        }, true);
-      });
-      return;
-    }
+    // Shift keys
+    if (key.name === 'j' && key.shift) { diffScroll += 3; render(); return; }
+    if (key.name === 'k' && key.shift) { diffScroll = Math.max(0, diffScroll - 3); render(); return; }
+    if (key.name === 'r' && key.shift) { reload(); render(); return; }
 
-    case 'x': {
-      // Remove empty group
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
-      const vprToRemove = items[cursor].vpr;
-      const groupData = vprMeta.groups?.[vprToRemove.tp];
-      if (vprToRemove.commitIdxs.length > 0) {
-        message = `${RED}Group has commits — unassign them first${RESET}`;
+    switch (key.name || str) {
+      case 'up': case 'k':
+        cursor = Math.max(0, cursor - 1);
+        diffScroll = 0;
         break;
+      case 'down': case 'j':
+        cursor = Math.min(items.length - 1, cursor + 1);
+        diffScroll = 0;
+        break;
+      case 'pagedown': diffScroll += bodyH; break;
+      case 'pageup': diffScroll = Math.max(0, diffScroll - bodyH); break;
+
+      case 'c': {
+        // Create ticket + jj bookmark at current commit
+        if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
+        const item = items[cursor];
+        if (!item?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
+
+        startInput('Ticket title: ', '', (title) => {
+          startInput('Ticket description: ', '', (desc) => {
+            try {
+              const result = provider.createWorkItem(title, desc);
+              const wi = result.then ? null : result;
+              if (wi) {
+                const prefix = config?.prefix || 'TP';
+                const idx = vprMeta.nextIndex || 1;
+                const bm = `${prefix.toLowerCase()}-${idx}`;
+                vprMeta.nextIndex = idx + 1;
+
+                // Create jj bookmark
+                jj(`bookmark create ${bm} -r ${item.changeId}`);
+
+                // Store metadata
+                if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+                vprMeta.bookmarks[bm] = {
+                  wi: wi.id, wiTitle: title, wiDescription: desc, wiState: 'New',
+                };
+                saveMeta(vprMeta);
+                reload();
+                message = `${GREEN}Created ${bm} with WI #${wi.id}${RESET}`;
+              }
+            } catch { message = `${RED}Failed to create ticket${RESET}`; }
+          }, true);
+        });
+        return;
       }
-      delete vprMeta.groups[vprToRemove.tp];
-      saveMeta(vprMeta);
-      message = `${GREEN}Removed ${vprToRemove.tp}${RESET}`;
-      cursor = Math.max(0, cursor - 1);
-      buildVprs();
-      break;
-    }
 
-    case 'g':
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header to merge${RESET}`; break; }
-      mode = 'merge';
-      message = `${CYAN}Merge into which VPR? (1-${vprs.length})${RESET}\n` +
-        vprs.map((v, i) => `  ${i + 1}) ${v.tp}: ${v.title}`).join('\n');
-      break;
+      case 'w': {
+        // Edit ticket
+        const item = items[cursor];
+        const bm = item?.type === 'group' ? item.bookmark : item?.group;
+        if (!bm) { message = `${RED}Select a bookmark group${RESET}`; break; }
+        const meta = vprMeta.bookmarks?.[bm] || {};
 
-    case 'r': {
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header to rename${RESET}`; break; }
-      const vprToRename = items[cursor].vpr;
-      startInput(`Rename ${vprToRename.tp}: `, vprToRename.title, (title) => {
-        vprToRename.title = title;
-        vprMeta[vprToRename.tp] = { ...vprMeta[vprToRename.tp], title };
-        saveMeta(vprMeta);
-        message = `${GREEN}Renamed ${vprToRename.tp}${RESET}`;
-        buildVprs();
-      });
-      return;
-    }
+        startInput(`Ticket title (${bm})`, meta.wiTitle || '', (title) => {
+          startInput(`Ticket description (${bm})`, meta.wiDescription || '', (desc) => {
+            startInput('Save to provider? (y/n)', '', (answer) => {
+              if (answer !== 'y') { message = `${DIM}Saved locally only${RESET}`; }
+              if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+              vprMeta.bookmarks[bm] = { ...vprMeta.bookmarks[bm], wiTitle: title, wiDescription: desc };
+              if (answer === 'y' && meta.wi && provider) {
+                try { provider.updateWorkItem(meta.wi, { title, description: desc }); } catch {}
+              }
+              saveMeta(vprMeta);
+              message = `${GREEN}Ticket updated${RESET}`;
+              reload();
+            });
+          }, true);
+        });
+        return;
+      }
 
-    case 'w': {
-      // Edit ticket: title → description → confirm save
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
-      const vprForWi = items[cursor].vpr;
-      const wiMeta = vprMeta[vprForWi.tp] || {};
-      const wiTitle = wiMeta.wiTitle || wiMeta.title || vprForWi.title || '';
-      const wiDesc = wiMeta.wiDescription || '';
+      case 'p': {
+        // Edit PR draft
+        const item = items[cursor];
+        const bm = item?.type === 'group' ? item.bookmark : item?.group;
+        if (!bm) { message = `${RED}Select a bookmark group${RESET}`; break; }
+        const meta = vprMeta.bookmarks?.[bm] || {};
 
-      startInput(`Ticket title (${vprForWi.tp})`, wiTitle, (title) => {
-        startInput(`Ticket description (${vprForWi.tp})`, wiDesc, (desc) => {
-          startInput(`Save ticket? (y/n)`, '', (answer) => {
-            if (answer !== 'y') { message = `${DIM}Cancelled${RESET}`; return; }
-            vprMeta[vprForWi.tp] = {
-              ...vprMeta[vprForWi.tp],
-              wiTitle: title,
-              wiDescription: desc,
-              title: title,
-            };
-            if (wiMeta.wi && provider) {
-              try { provider.updateWorkItem(wiMeta.wi, { title, description: desc }); } catch {}
-            }
+        startInput(`PR title (${bm})`, meta.prTitle || meta.wiTitle || '', (title) => {
+          startInput(`PR body (${bm})`, meta.prDesc || '', (body) => {
+            if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+            vprMeta.bookmarks[bm] = { ...vprMeta.bookmarks[bm], prTitle: title, prDesc: body };
             saveMeta(vprMeta);
-            message = `${GREEN}Ticket saved for ${vprForWi.tp}${RESET}`;
-            buildVprs();
-          });
-        }, true);
-      });
-      return;
-    }
+            message = `${GREEN}PR draft saved${RESET}`;
+          }, true);
+        });
+        return;
+      }
 
-    case 'p': {
-      // Edit PR draft: title → body → save
-      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
-      const vprForPr = items[cursor].vpr;
-      const prMeta = vprMeta[vprForPr.tp] || {};
-      const prTitle = prMeta.prTitle || prMeta.wiTitle || prMeta.title || vprForPr.title || '';
-      const prDesc = prMeta.prDesc || prMeta.wiDescription || '';
-
-      startInput(`PR title (${vprForPr.tp})`, prTitle, (title) => {
-        startInput(`PR body (${vprForPr.tp})`, prDesc, (body) => {
-          vprMeta[vprForPr.tp] = {
-            ...vprMeta[vprForPr.tp],
-            prTitle: title,
-            prDesc: body,
-          };
+      case 'x': {
+        // Remove bookmark + metadata
+        const item = items[cursor];
+        if (item?.type !== 'group') { message = `${RED}Select a bookmark group${RESET}`; break; }
+        startInput(`Remove ${item.bookmark}? (y/n)`, '', (answer) => {
+          if (answer !== 'y') return;
+          try { jj(`bookmark delete ${item.bookmark}`); } catch {}
+          if (vprMeta.bookmarks?.[item.bookmark]) delete vprMeta.bookmarks[item.bookmark];
           saveMeta(vprMeta);
-          message = `${GREEN}PR draft saved for ${vprForPr.tp}${RESET}`;
-        }, true);
-      });
-      return;
+          reload();
+          message = `${GREEN}Removed ${item.bookmark}${RESET}`;
+        });
+        return;
+      }
+
+      default:
+        // : for jj command
+        if (str === ':') {
+          startInput('jj ', '', (cmd) => {
+            runJjCommand(cmd);
+          });
+          return;
+        }
+        return; // unknown key, don't re-render
+
+      case 'escape': break;
+
+      case 'q':
+        process.stdout.write(SHOW_CURSOR + CLEAR);
+        process.exit(0);
+        break;
+
+      case 'c': break; // handled above (switch duplicate prevention)
     }
 
-    // 's' is now scratch group (handled above)
-
-    case 'q':
-      process.stdout.write(SHOW_CURSOR + CLEAR);
-      process.exit(0);
-      break;
-
-    case 'c':
-      if (key.ctrl) { process.stdout.write(SHOW_CURSOR + CLEAR); process.exit(0); }
-      break;
-  }
-
-  render();
-});
-} // end startTui
+    render();
+  });
+}
