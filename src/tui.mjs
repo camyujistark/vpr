@@ -508,13 +508,14 @@ export function startTui(config, baseArg) {
             break;
           }
 
-          if (picked === targetChangeId) {
+          if (picked === targetChangeId || picked.startsWith(targetChangeId) || targetChangeId.startsWith(picked)) {
             message = `${DIM}Same commit${RESET}`;
             picked = null;
             break;
           }
 
           try {
+            message = `${DIM}Running: jj rebase -r ${picked.slice(0,8)} -A ${targetChangeId.slice(0,8)}${RESET}`;
             const result = jj(`rebase -r ${picked} -A ${targetChangeId}`);
             message = `${GREEN}Moved ${picked.slice(0, 8)} after ${targetChangeId.slice(0, 8)}${RESET}`;
             picked = null;
