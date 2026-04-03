@@ -168,6 +168,21 @@ function buildItems() {
     }
   }
 
+  // Add empty groups from meta that have no jj bookmark (ticket exists but no commits)
+  const activeBookmarks = new Set(groups.filter(g => g.bookmark).map(g => g.bookmark));
+  for (const [bm, meta] of Object.entries(vprMeta.bookmarks || {})) {
+    if (!activeBookmarks.has(bm)) {
+      items.push({
+        type: 'group',
+        bookmark: bm,
+        title: meta.wiTitle || bm,
+        meta,
+        commitCount: 0,
+        entry: null,
+      });
+    }
+  }
+
   return items;
 }
 
@@ -526,8 +541,15 @@ export function startTui(config, baseArg) {
           }
 
           try {
+            // If picked commit is a bookmark tip, remove the jj bookmark (but keep metadata)
+            const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
+            if (pickedEntry?.bookmark) {
+              jj(`bookmark delete ${pickedEntry.bookmark}`);
+              // Meta stays — empty group persists as a planned ticket
+            }
+
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
-            message = `${GREEN}Moved ${picked.slice(0, 8)} after ${targetChangeId.slice(0, 8)}${RESET}`;
+            message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
           } catch (err) {
