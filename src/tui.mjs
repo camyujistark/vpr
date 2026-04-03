@@ -544,9 +544,18 @@ export function startTui(config, baseArg) {
               e.bookmark && (e.changeId === item.changeId || e.changeId?.startsWith(item.changeId?.slice(0, 8)))
             );
             if (isBookmarkTip) {
-              // Bookmark tip: insert before it to stay inside this group
+              // Bookmark tip: need to move the bookmark too
+              // Insert after the tip, then move bookmark to picked commit (new tip)
               targetChangeId = item.changeId;
-              rebaseFlag = '-B';
+              rebaseFlag = '-A';
+              // After rebase, the picked commit becomes the new tip — move the bookmark
+              const tipBookmark = entries.find(e =>
+                e.bookmark && (e.changeId === item.changeId || e.changeId?.startsWith(item.changeId?.slice(0, 8)))
+              )?.bookmark;
+              if (tipBookmark) {
+                // Store for post-rebase bookmark move
+                item._moveBookmark = tipBookmark;
+              }
             } else {
               // Regular commit: insert after it
               targetChangeId = item.changeId;
@@ -574,6 +583,11 @@ export function startTui(config, baseArg) {
             }
 
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
+
+            // If we dropped after a bookmark tip, move that bookmark to the picked commit (new tip)
+            if (item._moveBookmark) {
+              try { jj(`bookmark set ${item._moveBookmark} -r ${picked}`); } catch {}
+            }
 
             // If dropping into an empty group, create a bookmark on the moved commit
             const targetGroup = item.type === 'group' ? item : items.find(i => i.type === 'group' && i.bookmark === item.group);
