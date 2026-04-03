@@ -53,7 +53,7 @@ let lastRightPaneKey = '';
 let bodyH = 20;
 let fieldIdx = 0; // which field is highlighted in the group summary
 const FIELD_NAMES = ['wiTitle', 'wiDescription', 'prTitle', 'prDesc'];
-const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Body'];
+const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Story'];
 
 // Caches
 const diffCache = new Map();
@@ -243,7 +243,7 @@ function getGroupSummary(item, rightW, targetBranch) {
   lines.push('│');
 
   addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
-  addField(3, 'PR Body', meta.prDesc);
+  addField(3, 'PR Story', meta.prDesc);
 
   lines.push(`│  ${DIM}Commits: ${item.commitCount}${RESET}`);
   lines.push('╰─');
