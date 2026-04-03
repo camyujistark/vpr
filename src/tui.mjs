@@ -500,16 +500,11 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          let targetChangeId = null;
-          if (item.type === 'group') {
-            targetChangeId = item.entry?.changeId;
-          } else if (item.type === 'commit' && item.group) {
-            // Drop onto a commit within a group — rebase before it
-            targetChangeId = item.changeId;
-          }
+          // Resolve drop target
+          let targetChangeId = item.changeId || item.entry?.changeId || null;
 
           if (!targetChangeId) {
-            message = `${RED}Navigate to a bookmark group or commit to drop${RESET}`;
+            message = `${RED}Navigate to a commit or group to drop${RESET}`;
             break;
           }
 
@@ -520,12 +515,13 @@ export function startTui(config, baseArg) {
           }
 
           try {
-            jj(`rebase -r ${picked} -A ${targetChangeId}`);
+            const result = jj(`rebase -r ${picked} -A ${targetChangeId}`);
             message = `${GREEN}Moved ${picked.slice(0, 8)} after ${targetChangeId.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
           } catch (err) {
-            message = `${RED}Rebase failed${RESET}`;
+            const stderr = err?.stderr?.toString() || err?.message || 'unknown error';
+            message = `${RED}Rebase failed: ${stderr.slice(0, 80)}${RESET}`;
             picked = null;
           }
         }
