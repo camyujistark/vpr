@@ -855,6 +855,7 @@ export function startTui(config, baseArg) {
         if (picked) { picked = null; message = `${DIM}Cancelled${RESET}`; }
         break;
 
+      case 'return':
       case 'e': {
         // Inline edit the highlighted field in the right pane
         const eItem = items[cursor];
