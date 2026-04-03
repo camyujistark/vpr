@@ -227,7 +227,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  w edit ticket  p PR draft  x remove  : jj cmd  R refresh  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  space move  c ticket  w edit  p PR  x remove  u undo  : jj  R refresh  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -648,6 +648,18 @@ export function startTui(config, baseArg) {
           return;
         }
         return; // unknown key, don't re-render
+
+      case 'u': {
+        // Undo last jj operation
+        try {
+          jj('undo');
+          reload();
+          message = `${GREEN}Undone${RESET}`;
+        } catch (err) {
+          message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+        break;
+      }
 
       case 'q':
         process.stdout.write(SHOW_CURSOR + CLEAR);
