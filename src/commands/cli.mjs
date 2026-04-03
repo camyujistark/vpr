@@ -266,17 +266,13 @@ export function cmdStatus() {
     return aNum - bNum;
   });
 
+  // Resolve base to bookmark name once
+  const resolvedBase = resolveToBookmark(base);
+
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const bmMeta = g.bookmark ? (meta.bookmarks?.[g.bookmark] || {}) : {};
-    let target = i > 0 ? groups[i - 1].bookmark : base;
-    // Resolve change ID to bookmark name if possible
-    if (target && !target.includes('/') && !target.includes('@')) {
-      try {
-        const bm = jj(`log --no-graph -r '${target}' -T 'bookmarks'`).trim().split(/\s+/)[0];
-        if (bm) target = bm;
-      } catch {}
-    }
+    const target = i > 0 ? groups[i - 1].bookmark : resolvedBase;
     const tp = bmMeta.tpIndex || '';
     const title = bmMeta.wiTitle || g.bookmark || 'ungrouped';
     const wi = bmMeta.wi ? `#${bmMeta.wi}` : '';
@@ -291,13 +287,9 @@ export function cmdStatus() {
     console.log(`  commits:  ${g.commits.length}`);
     for (const c of g.commits) {
       console.log(`    ${c.changeId.slice(0, 8)} ${c.subject}`);
-      // Files changed
-      try {
-        const files = jj(`diff --summary -r ${c.changeId}`).split('\n').filter(Boolean);
-        for (const f of files) {
-          console.log(`      ${f}`);
-        }
-      } catch {}
+      for (const f of (c.files || [])) {
+        console.log(`      ${f}`);
+      }
     }
     console.log('');
   }
@@ -499,15 +491,27 @@ function findBookmark(meta, query) {
 }
 
 function loadEntries(base) {
-  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`);
+  // Single jj call with -s to get file summaries too
+  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -s -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`);
   if (!raw) return [];
   const meta = loadMeta();
-  return raw.split('\n').filter(Boolean).map(line => {
-    const [changeId, sha, bookmarkStr, subject] = line.split('\t');
-    const allBookmarks = bookmarkStr?.trim().split(/\s+/).filter(Boolean) || [];
-    const bookmark = allBookmarks.find(b => meta.bookmarks?.[b]) || null;
-    return { changeId: changeId?.trim(), sha: sha?.trim(), subject: subject?.trim(), bookmark };
-  });
+  const entries = [];
+  let current = null;
+
+  for (const line of raw.split('\n')) {
+    // Commit line has tabs (from template)
+    if (line.includes('\t')) {
+      const [changeId, sha, bookmarkStr, subject] = line.split('\t');
+      const allBookmarks = bookmarkStr?.trim().split(/\s+/).filter(Boolean) || [];
+      const bookmark = allBookmarks.find(b => meta.bookmarks?.[b]) || null;
+      current = { changeId: changeId?.trim(), sha: sha?.trim(), subject: subject?.trim(), bookmark, files: [] };
+      entries.push(current);
+    } else if (current && line.trim()) {
+      // File summary line (e.g. "M api/server.ts")
+      current.files.push(line.trim());
+    }
+  }
+  return entries;
 }
 
 function getGroupCommits(entries, bookmark, meta) {

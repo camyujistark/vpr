@@ -18,7 +18,8 @@
 
 import { loadConfig } from '../src/config.mjs';
 
-const cmd = process.argv[2];
+const ALIASES = { s: 'status', l: 'list', n: 'new', e: 'edit', m: 'move', d: 'delete' };
+const cmd = ALIASES[process.argv[2]] || process.argv[2];
 const args = process.argv.slice(3);
 
 switch (cmd) {
