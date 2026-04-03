@@ -93,7 +93,7 @@ switch (cmd) {
     vpr status                        Show chain summary
     vpr push [bookmark]               Push bookmarks to remote
 
-  <id> can be: bookmark name, TP index (tp-91), or partial match
+  <id> can be: bookmark name, project index (e.g. tp-91), or partial match
 `);
     break;
   }
