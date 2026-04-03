@@ -48,6 +48,14 @@ export function currentBranch() {
 }
 
 export function getBase() {
+  if (hasJj()) {
+    // jj uses branch@remote syntax
+    for (const ref of ['main@origin', 'master@origin', 'main', 'master']) {
+      if (jjSafe(`log --no-graph -r '${ref}' -T 'change_id.short()'`)) return ref;
+    }
+    // Fallback to trunk()
+    return 'trunk()';
+  }
   for (const ref of ['origin/main', 'origin/master', 'main', 'master']) {
     if (gitSafe(`rev-parse --verify ${ref}`)) return ref;
   }
