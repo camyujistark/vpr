@@ -189,24 +189,17 @@ function getGroupSummary(item, rightW) {
   const WHITE = `${ESC}37m`;
   const fieldW = Math.max(20, (rightW || 50) - 6);
 
-  function addField(idx, label, value, maxW) {
+  function addField(idx, label, value) {
     const val = value || '(empty)';
     const valLines = val.split('\n');
-    const w = Math.max(label.length + 2, ...valLines.map(l => l.length + 2), 20);
-    const boxW = Math.min(w, maxW || 50);
     const color = fieldIdx === idx ? GREEN : DIM;
-    const textColor = fieldIdx === idx ? WHITE : `${RESET}`;
+    const textColor = fieldIdx === idx ? `${ESC}37m` : `${RESET}`;
 
-    // Top border
-    lines.push(`│  ${color}╭─ ${label} ${'─'.repeat(Math.max(0, boxW - label.length - 4))}╮${RESET}`);
+    // Header line: ── Label ──────
+    lines.push(`│  ${color}── ${label} ${'─'.repeat(Math.max(0, 30 - label.length))}${RESET}`);
     // Content
-    for (const l of valLines) {
-      const padded = l.slice(0, boxW - 4);
-      const pad = Math.max(0, boxW - 4 - padded.length);
-      lines.push(`│  ${color}│${RESET} ${textColor}${padded}${' '.repeat(pad)}${RESET} ${color}│${RESET}`);
-    }
-    // Bottom border
-    lines.push(`│  ${color}╰${'─'.repeat(boxW - 2)}╯${RESET}`);
+    for (const l of valLines) lines.push(`│  ${textColor}${l}${RESET}`);
+    lines.push('│');
   }
 
   lines.push(`╭─ ${item.bookmark}: ${item.title}`);
@@ -217,14 +210,14 @@ function getGroupSummary(item, rightW) {
   }
   lines.push('│');
 
-  addField(0, 'Ticket Title', meta.wiTitle, fieldW);
-  addField(1, 'Ticket Description', meta.wiDescription, fieldW);
+  addField(0, 'Ticket Title', meta.wiTitle);
+  addField(1, 'Ticket Description', meta.wiDescription);
 
   lines.push('│  ─── PR Draft ───');
   lines.push('│');
 
-  addField(2, 'PR Title', meta.prTitle || meta.wiTitle, fieldW);
-  addField(3, 'PR Body', meta.prDesc, fieldW);
+  addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
+  addField(3, 'PR Body', meta.prDesc);
 
   lines.push(`│  ${DIM}Commits: ${item.commitCount}${RESET}`);
   lines.push('╰─');
