@@ -335,7 +335,7 @@ function render() {
   if (dirty) out += `  ${YELLOW}●${RESET}`;
   if (picked !== null) out += `  ${MAGENTA}[MOVING: ${commits[pickedCi].sha.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  c ticket  n group  g merge  x remove  w edit ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  g merge  x remove  w edit ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll left panel
@@ -898,9 +898,9 @@ process.stdin.on('keypress', (str, key) => {
       break;
 
     case 'n': {
-      // Create empty group (local only, no ticket)
+      // Scratch group (no ticket — for temporary organization)
       const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
-      startInput(`New group (${tp}) title: `, '', (title) => {
+      startInput(`Scratch group (${tp}): `, '', (title) => {
         if (!vprMeta.groups) vprMeta.groups = {};
         vprMeta.groups[tp] = { wiTitle: title, commits: [], realized: false };
         vprMeta.nextIndex = (vprMeta.nextIndex || 1) + 1;
