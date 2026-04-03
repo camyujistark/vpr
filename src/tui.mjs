@@ -307,7 +307,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  S sync  b bookmark  n new ticket  x remove  u undo  : jj  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  d delete  x remove group  n new  S sync  b bookmark  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -1051,17 +1051,50 @@ export function startTui(config, baseArg) {
 
       // w and p removed — use J/K to select field, e to edit, S to sync
 
+      case 'd': {
+        // Delete commit (jj abandon)
+        const dItem = items[cursor];
+        if (!dItem?.changeId || dItem.type === 'group' || dItem.type === 'ungrouped-header') {
+          message = `${RED}Select a commit to delete${RESET}`;
+          break;
+        }
+        startInput(`Abandon ${dItem.changeId.slice(0, 8)}? (y/n)`, '', (answer) => {
+          if (answer !== 'y') return;
+          try {
+            jj(`abandon ${dItem.changeId}`);
+            reload();
+            message = `${GREEN}Abandoned ${dItem.changeId.slice(0, 8)}${RESET}`;
+          } catch (err) {
+            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        });
+        return;
+      }
+
       case 'x': {
         // Remove bookmark + metadata
-        const item = items[cursor];
-        if (item?.type !== 'group') { message = `${RED}Select a bookmark group${RESET}`; break; }
-        startInput(`Remove ${item.bookmark}? (y/n)`, '', (answer) => {
+        const xItem = items[cursor];
+        if (xItem?.type !== 'group') { message = `${RED}Select a bookmark group${RESET}`; break; }
+        const xMeta = vprMeta.bookmarks?.[xItem.bookmark] || {};
+        const xLabel = xMeta.tpIndex || xItem.bookmark;
+        startInput(`Delete ${xLabel} and all its commits? (y/n)`, '', (answer) => {
           if (answer !== 'y') return;
-          try { jj(`bookmark delete ${item.bookmark}`); } catch {}
-          if (vprMeta.bookmarks?.[item.bookmark]) delete vprMeta.bookmarks[item.bookmark];
-          saveMeta(vprMeta);
-          reload();
-          message = `${GREEN}Removed ${item.bookmark}${RESET}`;
+          try {
+            // Abandon all commits in the group
+            const groupCommits = items.filter(i => i.group === xItem.bookmark && i.type === 'commit');
+            for (const c of groupCommits) {
+              try { jj(`abandon ${c.changeId}`); } catch {}
+            }
+            // Delete bookmark
+            try { jj(`bookmark delete ${xItem.bookmark}`); } catch {}
+            // Remove meta
+            if (vprMeta.bookmarks?.[xItem.bookmark]) delete vprMeta.bookmarks[xItem.bookmark];
+            saveMeta(vprMeta);
+            reload();
+            message = `${GREEN}Deleted ${xLabel}${RESET}`;
+          } catch (err) {
+            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
         });
         return;
       }
