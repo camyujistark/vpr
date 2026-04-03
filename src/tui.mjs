@@ -514,6 +514,33 @@ function handleEditKey(str, key) {
     if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
     if (!vprMeta.bookmarks[editBookmark]) vprMeta.bookmarks[editBookmark] = {};
     vprMeta.bookmarks[editBookmark][editFieldName] = editBuffer;
+
+    // If title changed, rename the jj bookmark to match new slug
+    if (editFieldName === 'wiTitle') {
+      const meta = vprMeta.bookmarks[editBookmark];
+      const wi = meta.wi;
+      if (wi) {
+        const slug = editBuffer.toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+          .split('-').slice(0, 4).join('-');
+        const newBm = `feat/${wi}-${slug}`;
+        if (newBm !== editBookmark) {
+          try {
+            jj(`bookmark rename ${editBookmark} ${newBm}`);
+            // Move meta to new key
+            vprMeta.bookmarks[newBm] = vprMeta.bookmarks[editBookmark];
+            delete vprMeta.bookmarks[editBookmark];
+            // Update PR title if it was auto-generated
+            if (vprMeta.bookmarks[newBm].tpIndex) {
+              vprMeta.bookmarks[newBm].prTitle = `${vprMeta.bookmarks[newBm].tpIndex}: ${editBuffer}`;
+            }
+            editBookmark = newBm;
+          } catch {}
+        }
+      }
+    }
+
     saveMeta(vprMeta);
     editMode = false;
     mode = 'normal';
