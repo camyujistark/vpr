@@ -151,8 +151,8 @@ function buildItems() {
 
     for (const commit of group.commits) {
       items.push({
-        type: group.bookmark ? 'commit' : 'ungrouped',
         ...commit,
+        type: group.bookmark ? 'commit' : 'ungrouped',
         group: group.bookmark,
       });
     }
