@@ -189,16 +189,34 @@ function getGroupSummary(item, rightW) {
   const WHITE = `${ESC}37m`;
   const fieldW = Math.max(20, (rightW || 50) - 6);
 
+  function wordWrap(text, width) {
+    const result = [];
+    for (const line of text.split('\n')) {
+      if (line.length <= width) { result.push(line); continue; }
+      let remaining = line;
+      while (remaining.length > width) {
+        let breakAt = remaining.lastIndexOf(' ', width);
+        if (breakAt <= 0) breakAt = width;
+        result.push(remaining.slice(0, breakAt));
+        remaining = remaining.slice(breakAt).trimStart();
+      }
+      if (remaining) result.push(remaining);
+    }
+    return result;
+  }
+
   function addField(idx, label, value) {
     const val = value || '(empty)';
-    const valLines = val.split('\n');
-    const color = fieldIdx === idx ? GREEN : DIM;
-    const textColor = fieldIdx === idx ? `${ESC}37m` : `${RESET}`;
+    const wrapW = Math.max(20, fieldW - 2);
+    const wrapped = wordWrap(val, wrapW);
+    const selected = fieldIdx === idx;
+    const borderColor = selected ? GREEN : `${ESC}90m`; // green or dark gray
+    const labelColor = selected ? `${GREEN}${BOLD}` : `${ESC}90m`;
 
-    // Header line: ── Label ──────
-    lines.push(`│  ${color}── ${label} ${'─'.repeat(Math.max(0, 30 - label.length))}${RESET}`);
-    // Content
-    for (const l of valLines) lines.push(`│  ${textColor}${l}${RESET}`);
+    // Header: ── Label ──────
+    lines.push(`│  ${borderColor}──${RESET} ${labelColor}${label}${RESET} ${borderColor}${'─'.repeat(Math.max(0, 30 - label.length))}${RESET}`);
+    // Content: always readable white
+    for (const l of wrapped) lines.push(`│    ${l}`);
     lines.push('│');
   }
 
