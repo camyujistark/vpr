@@ -684,25 +684,23 @@ export function startTui(config, baseArg) {
       }
 
       case 'w': {
-        // Edit ticket
-        const item = items[cursor];
-        const bm = item?.type === 'group' ? item.bookmark : item?.group;
-        if (!bm) { message = `${RED}Select a bookmark group${RESET}`; break; }
-        const meta = vprMeta.bookmarks?.[bm] || {};
+        // Edit ticket: title (Enter) → description (Ctrl+S) → saves
+        const wItem = items[cursor];
+        const wBm = wItem?.type === 'group' ? wItem.bookmark : wItem?.group;
+        if (!wBm) { message = `${RED}Select a bookmark group${RESET}`; break; }
+        const wMeta = vprMeta.bookmarks?.[wBm] || {};
 
-        startInput(`Ticket title (${bm})`, meta.wiTitle || '', (title) => {
-          startInput(`Ticket description (${bm})`, meta.wiDescription || '', (desc) => {
-            startInput('Save to provider? (y/n)', '', (answer) => {
-              if (answer !== 'y') { message = `${DIM}Saved locally only${RESET}`; }
-              if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
-              vprMeta.bookmarks[bm] = { ...vprMeta.bookmarks[bm], wiTitle: title, wiDescription: desc };
-              if (answer === 'y' && meta.wi && provider) {
-                try { provider.updateWorkItem(meta.wi, { title, description: desc }); } catch {}
-              }
-              saveMeta(vprMeta);
-              message = `${GREEN}Ticket updated${RESET}`;
-              reload();
-            });
+        startInput(`${wBm} title`, wMeta.wiTitle || '', (title) => {
+          startInput(`${wBm} description`, wMeta.wiDescription || '', (desc) => {
+            if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+            vprMeta.bookmarks[wBm] = { ...vprMeta.bookmarks[wBm], wiTitle: title, wiDescription: desc };
+            // Sync to provider if WI exists
+            if (wMeta.wi && provider) {
+              try { provider.updateWorkItem(wMeta.wi, { title, description: desc }); } catch {}
+            }
+            saveMeta(vprMeta);
+            message = `${GREEN}Ticket saved${RESET}`;
+            reload();
           }, true);
         });
         return;
