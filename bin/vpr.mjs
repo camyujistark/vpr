@@ -2,16 +2,24 @@
 /**
  * VPR — Virtual Pull Request manager.
  *
- * Usage:
+ * Interactive:
+ *   vpr                         Open TUI
  *   vpr init                    Set up VPR for this project
- *   vpr                         Open TUI (default)
- *   vpr list                    Print VPR groups (non-interactive)
- *   vpr render [base]           Create real branch chain from VPRs
+ *
+ * CLI (for AI/scripting):
+ *   vpr new "title" ["desc"]    Create ticket + bookmark
+ *   vpr edit <id> --flag "val"  Edit ticket/PR fields
+ *   vpr move <id> --after <id>  Move commit
+ *   vpr delete <id>             Delete commit or group
+ *   vpr list                    List groups as JSON
+ *   vpr status                  Show chain summary
+ *   vpr push [bookmark]         Push bookmarks to remote
  */
 
 import { loadConfig } from '../src/config.mjs';
 
 const cmd = process.argv[2];
+const args = process.argv.slice(3);
 
 switch (cmd) {
   case 'init': {
@@ -20,17 +28,45 @@ switch (cmd) {
     break;
   }
 
-  case 'list': {
-    // TODO: non-interactive list (like virtual-chain.sh --md)
-    console.log('Not yet implemented — use the TUI for now');
-    process.exit(0);
+  case 'new': {
+    const { cmdNew } = await import('../src/commands/cli.mjs');
+    cmdNew(args);
     break;
   }
 
-  case 'render': {
-    // TODO: materialize VPRs into real branch chain
-    console.log('Not yet implemented');
-    process.exit(0);
+  case 'edit': {
+    const { cmdEdit } = await import('../src/commands/cli.mjs');
+    cmdEdit(args);
+    break;
+  }
+
+  case 'move': {
+    const { cmdMove } = await import('../src/commands/cli.mjs');
+    cmdMove(args);
+    break;
+  }
+
+  case 'delete': {
+    const { cmdDelete } = await import('../src/commands/cli.mjs');
+    cmdDelete(args);
+    break;
+  }
+
+  case 'list': {
+    const { cmdList } = await import('../src/commands/cli.mjs');
+    cmdList();
+    break;
+  }
+
+  case 'status': {
+    const { cmdStatus } = await import('../src/commands/cli.mjs');
+    cmdStatus();
+    break;
+  }
+
+  case 'push': {
+    const { cmdPush } = await import('../src/commands/cli.mjs');
+    cmdPush(args);
     break;
   }
 
@@ -40,15 +76,24 @@ switch (cmd) {
     console.log(`
   VPR — Virtual Pull Request manager
 
-  Commands:
-    vpr init          Set up VPR for this project
-    vpr               Open interactive TUI
-    vpr list          Print VPR groups
-    vpr render        Create real branch chain from VPRs
+  Interactive:
+    vpr               Open TUI
+    vpr init          Set up for this project
 
-  The TUI shows your commits grouped by VPR trailer, with a
-  split-pane diff preview. Move commits between groups with
-  space, edit PR titles and descriptions, create work items.
+  CLI (for AI/scripting):
+    vpr new "title" ["desc"]          Create ticket + bookmark
+    vpr edit <id> --title "val"       Edit ticket title (renames branch)
+    vpr edit <id> --desc "val"        Edit ticket description
+    vpr edit <id> --pr-title "val"    Edit PR title
+    vpr edit <id> --pr-desc "val"     Edit PR description
+    vpr move <sha> --after <sha>      Move commit after target
+    vpr move <sha> --before <sha>     Move commit before target
+    vpr delete <sha-or-bookmark>      Delete commit or group
+    vpr list                          List groups as JSON
+    vpr status                        Show chain summary
+    vpr push [bookmark]               Push bookmarks to remote
+
+  <id> can be: bookmark name, TP index (tp-91), or partial match
 `);
     break;
   }
