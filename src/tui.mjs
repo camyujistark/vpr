@@ -547,15 +547,23 @@ export function startTui(config, baseArg) {
             rebaseFlag = '-A';
           }
 
-          // Handle empty group drop separately — no rebase, just bookmark swap
+          // Handle empty group drop: no rebase, just split the bookmark boundary
+          // The picked commit is the tip of some group. Move that group's bookmark
+          // back to the previous commit, then create the empty group's bookmark on picked.
           if (isEmptyGroupDrop && item.bookmark) {
             try {
-              // Remove picked commit's current bookmark (if any)
               const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
               if (pickedEntry?.bookmark) {
-                jj(`bookmark delete ${pickedEntry.bookmark}`);
+                // Move the source bookmark back to the commit before picked
+                // jj syntax: picked- means parent of picked
+                try {
+                  jj(`bookmark set ${pickedEntry.bookmark} -r '${picked}-' --allow-backwards`);
+                } catch {
+                  // If no parent, delete the bookmark
+                  jj(`bookmark delete ${pickedEntry.bookmark}`);
+                }
               }
-              // Create the empty group's bookmark on picked commit
+              // Create the empty group's bookmark on picked
               try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
                 jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`);
               }
