@@ -515,16 +515,30 @@ export function startTui(config, baseArg) {
           let rebaseFlag = '-A';
 
           if (item.type === 'group') {
-            // Find the first commit in this group (the one right after the previous bookmark)
             const groupCommits = items.filter(i => i.group === item.bookmark && i.type === 'commit');
             if (groupCommits.length > 0) {
-              // Insert before the first commit of the group (puts it at the start of the group)
+              // Insert before the first commit of the group
               targetChangeId = groupCommits[0].changeId;
               rebaseFlag = '-B';
-            } else {
-              // Empty group — insert after the entry (bookmark tip)
-              targetChangeId = item.entry?.changeId;
+            } else if (item.entry?.changeId) {
+              // Group has a bookmark tip but no child commits
+              targetChangeId = item.entry.changeId;
               rebaseFlag = '-A';
+            } else {
+              // Empty group (no bookmark, no commits) — find the previous group's tip
+              const groupIdx = items.indexOf(item);
+              for (let i = groupIdx - 1; i >= 0; i--) {
+                if (items[i].type === 'commit' || items[i].type === 'ungrouped') {
+                  targetChangeId = items[i].changeId;
+                  rebaseFlag = '-A';
+                  break;
+                }
+                if (items[i].type === 'group' && items[i].entry?.changeId) {
+                  targetChangeId = items[i].entry.changeId;
+                  rebaseFlag = '-A';
+                  break;
+                }
+              }
             }
           } else {
             targetChangeId = item.changeId;
@@ -551,6 +565,15 @@ export function startTui(config, baseArg) {
             }
 
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
+
+            // If dropping into an empty group, create a bookmark on the moved commit
+            const targetGroup = item.type === 'group' ? item : items.find(i => i.type === 'group' && i.bookmark === item.group);
+            if (targetGroup?.bookmark && targetGroup.commitCount === 0) {
+              try { jj(`bookmark create ${targetGroup.bookmark} -r ${picked}`); } catch {
+                try { jj(`bookmark set ${targetGroup.bookmark} -r ${picked}`); } catch {}
+              }
+            }
+
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
