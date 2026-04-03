@@ -365,8 +365,10 @@ function render() {
         const label = `⚠ Ungrouped (${item.commitCount})`;
         leftCell = sel ? `${INVERT}${MAGENTA}${BOLD}${label}${RESET}` : `${MAGENTA}${BOLD}${label}${RESET}`;
       } else if (item.type === 'ungrouped') {
-        const label = `  ${item.changeId?.slice(0, 8) || ''} ${item.subject}`.slice(0, leftW - 2);
-        leftCell = sel ? `${INVERT}${label}${RESET}` : `${MAGENTA}${label}${RESET}`;
+        const isPicked = picked && item.changeId?.startsWith(picked.slice(0, 8));
+        const prefix = isPicked ? `${MAGENTA}${BOLD}● ` : '  ';
+        const label = `${prefix}${item.changeId?.slice(0, 8) || ''} ${item.subject}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${label}${RESET}` : isPicked ? `${MAGENTA}${BOLD}${label}${RESET}` : `${MAGENTA}${label}${RESET}`;
       }
     }
 
