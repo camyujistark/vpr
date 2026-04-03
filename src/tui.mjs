@@ -491,7 +491,7 @@ function startFieldEdit(bookmark, fieldName, currentValue) {
 }
 
 function handleEditKey(str, key) {
-  if (key.name === 'escape') {
+  if (key.name === 'escape' || (key.name === 'c' && key.ctrl)) {
     // Save and exit
     if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
     if (!vprMeta.bookmarks[editBookmark]) vprMeta.bookmarks[editBookmark] = {};
