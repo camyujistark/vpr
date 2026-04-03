@@ -452,10 +452,14 @@ function renderPopup() {
 
 function handleInputKey(str, key) {
   if (!inputMultiline && key.name === 'return') {
-    mode = 'normal'; process.stdout.write(HIDE_CURSOR);
+    const cb = inputCallback;
     const val = inputBuffer.trim(); inputBuffer = '';
-    if (inputCallback) inputCallback(val); // allow empty
-    render(); return;
+    inputCallback = null;
+    mode = 'normal'; process.stdout.write(HIDE_CURSOR);
+    if (cb) cb(val);
+    // Only render if the callback didn't open a new popup
+    if (mode === 'normal') render();
+    return;
   }
   if (inputMultiline && key.name === 'return') { inputBuffer += '\n'; inputCursorLine++; renderPopup(); return; }
   if (inputMultiline && (key.name === 's' && key.ctrl)) {
@@ -954,10 +958,16 @@ export function startTui(config, baseArg) {
           startInput(`${nextBm} — Ticket description: `, '', (desc) => { // single-line, Enter confirms
             fs.appendFileSync('/tmp/vpr-debug.log', `C: desc entered: "${desc}", creating WI with provider ${provider?.name}\n`);
             try {
-              fs.appendFileSync('/tmp/vpr-debug.log', `C: calling createWorkItem("${title}", "${desc}")\n`);
-              const result = provider.createWorkItem(title, desc);
+              fs.appendFileSync('/tmp/vpr-debug.log', `C: calling createWorkItem("${title}", "${desc}") provider=${provider?.constructor?.name}\n`);
+              let result;
+              try {
+                result = provider.createWorkItem(title, desc);
+              } catch (e) {
+                fs.appendFileSync('/tmp/vpr-debug.log', `C: createWorkItem THREW: ${e?.message} ${e?.stderr?.toString()?.slice(0,200)}\n`);
+                throw e;
+              }
               fs.appendFileSync('/tmp/vpr-debug.log', `C: createWorkItem returned: ${JSON.stringify(result)}\n`);
-              const wi = result.then ? null : result;
+              const wi = result?.then ? null : result;
               fs.appendFileSync('/tmp/vpr-debug.log', `C: wi = ${JSON.stringify(wi)}\n`);
               if (wi) {
                 const bm = nextBm;
