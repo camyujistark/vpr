@@ -527,43 +527,34 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // "Put it here" — below cursor position
-          // Group header → top of group (before first commit)
-          // Commit → after that commit
+          // Two cases: drop on a commit, or drop on a group header
           let targetChangeId = null;
           let rebaseFlag = '-A';
+          let isEmptyGroupDrop = false;
 
           if (item.type === 'group') {
-            // Top of group: before the first commit
             const groupCommits = items.filter(i => i.group === item.bookmark && i.type === 'commit');
             if (groupCommits.length > 0) {
+              // Group with commits: insert before first commit (top of group)
               targetChangeId = groupCommits[0].changeId;
               rebaseFlag = '-B';
-            } else if (item.entry?.changeId) {
-              targetChangeId = item.entry.changeId;
-              rebaseFlag = '-B';
             } else {
-              // Empty meta-only group — find the nearest commit above in the display list
-              const itemIdx = items.indexOf(item);
-              for (let i = itemIdx - 1; i >= 0; i--) {
-                if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-A'; break; }
-                // Group header with an entry (has a jj bookmark)
-                if (items[i].type === 'group' && items[i].entry?.changeId) { targetChangeId = items[i].entry.changeId; rebaseFlag = '-A'; break; }
+              // Empty group: find the last commit above this group header in display
+              isEmptyGroupDrop = true;
+              const idx = items.indexOf(item);
+              for (let i = idx - 1; i >= 0; i--) {
+                if (items[i].changeId) { targetChangeId = items[i].changeId; break; }
+                if (items[i].entry?.changeId) { targetChangeId = items[i].entry.changeId; break; }
               }
-              // If nothing above, try the first commit below
-              if (!targetChangeId) {
-                for (let i = itemIdx + 1; i < items.length; i++) {
-                  if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-B'; break; }
-                }
-              }
+              rebaseFlag = '-A';
             }
-          } else {
+          } else if (item.changeId) {
             targetChangeId = item.changeId;
-            rebaseFlag = '-A'; // always insert after (below in display)
+            rebaseFlag = '-A';
           }
 
           if (!targetChangeId) {
-            message = `${RED}Navigate to a commit or group to drop${RESET}`;
+            message = `${RED}No target found${RESET}`;
             break;
           }
 
@@ -574,49 +565,22 @@ export function startTui(config, baseArg) {
           }
 
           try {
-            // If picked commit is a bookmark tip, remove the jj bookmark (but keep metadata)
-            const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
-            if (pickedEntry?.bookmark) {
-              // Check if this is the only commit in its group
-              const groupCommits = entries.filter(e => {
-                // Find commits in the same group (between previous bookmark and this one)
-                const idx = entries.indexOf(pickedEntry);
-                for (let i = idx - 1; i >= 0; i--) {
-                  if (entries[i].bookmark && entries[i].bookmark !== pickedEntry.bookmark) {
-                    // Check if e is between that bookmark and pickedEntry
-                    const eIdx = entries.indexOf(e);
-                    return eIdx > i && eIdx <= idx && !e.bookmark;
-                  }
-                }
-                return false;
-              });
-
-              if (groupCommits.length > 0) {
-                // Group has other commits — move bookmark to the previous commit in the group
-                const prevInGroup = groupCommits[groupCommits.length - 1];
-                try { jj(`bookmark set ${pickedEntry.bookmark} -r ${prevInGroup.changeId} --allow-backwards`); } catch {}
-              } else {
-                // Only commit in group — delete the bookmark
-                try { jj(`bookmark delete ${pickedEntry.bookmark}`); } catch {}
-              }
-              // Meta stays — empty group persists
-            }
-
+            // Step 1: Rebase
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-            // If target was a bookmark tip, the picked commit is now the new tip — move bookmark
+            // Step 2: Handle bookmark on TARGET commit (if it was a tip, extend the group)
             const targetEntry = entries.find(e =>
               e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
             );
-            if (targetEntry?.bookmark) {
+            if (targetEntry?.bookmark && rebaseFlag === '-A') {
+              // Dropped after a bookmark tip — move bookmark to picked (new tip)
               try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
             }
 
-            // If dropping into an empty group, create a bookmark on the moved commit
-            const targetGroup = item.type === 'group' ? item : items.find(i => i.type === 'group' && i.bookmark === item.group);
-            if (targetGroup?.bookmark && targetGroup.commitCount === 0) {
-              try { jj(`bookmark create ${targetGroup.bookmark} -r ${picked}`); } catch {
-                try { jj(`bookmark set ${targetGroup.bookmark} -r ${picked} --allow-backwards`); } catch {}
+            // Step 3: Handle empty group drop — create bookmark on picked
+            if (isEmptyGroupDrop && item.bookmark) {
+              try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
+                try { jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
 
