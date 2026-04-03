@@ -487,7 +487,7 @@ export function startTui(config, baseArg) {
       const idx = parseInt(str) - 1;
       if (idx >= 0 && idx < bmList.length && bItem?.changeId) {
         const bm = bmList[idx];
-        try { jj(`bookmark set ${bm} -r ${bItem.changeId}`); } catch {
+        try { jj(`bookmark set ${bm} -r ${bItem.changeId} --allow-backwards`); } catch {
           try { jj(`bookmark create ${bm} -r ${bItem.changeId}`); } catch {}
         }
         message = `${GREEN}Set ${bm} on ${bItem.changeId.slice(0, 8)}${RESET}`;
@@ -577,7 +577,11 @@ export function startTui(config, baseArg) {
             // If picked commit is a bookmark tip, remove the jj bookmark (but keep metadata)
             const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
             if (pickedEntry?.bookmark) {
-              jj(`bookmark delete ${pickedEntry.bookmark}`);
+              // Move source bookmark back to parent before deleting
+              try { jj(`bookmark set ${pickedEntry.bookmark} -r '${pickedEntry.changeId}-' --allow-backwards`); } catch {
+                // If no parent (first commit), just delete
+                try { jj(`bookmark delete ${pickedEntry.bookmark}`); } catch {}
+              }
               // Meta stays — empty group persists as a planned ticket
             }
 
@@ -588,14 +592,14 @@ export function startTui(config, baseArg) {
               e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
             );
             if (targetEntry?.bookmark) {
-              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked}`); } catch {}
+              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
             }
 
             // If dropping into an empty group, create a bookmark on the moved commit
             const targetGroup = item.type === 'group' ? item : items.find(i => i.type === 'group' && i.bookmark === item.group);
             if (targetGroup?.bookmark && targetGroup.commitCount === 0) {
               try { jj(`bookmark create ${targetGroup.bookmark} -r ${picked}`); } catch {
-                try { jj(`bookmark set ${targetGroup.bookmark} -r ${picked}`); } catch {}
+                try { jj(`bookmark set ${targetGroup.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
 

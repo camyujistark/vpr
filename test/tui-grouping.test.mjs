@@ -378,6 +378,61 @@ describe('full move cycle: move out then back into empty group', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('move commit to group tip, emptying source, then move it back', () => {
+    // Reproduces: pick uwrqqztp, drop on yrolouku (tp-93 tip), emptying tp-94
+    // Then pick uwrqqztp again, drop on tp-94 (empty group header)
+    makeCommit('feat: a');       // will be tp-91
+    makeCommit('feat: b');       // will be tp-93
+    makeCommit('feat: c');       // will be tp-94
+    makeCommit('feat: d');       // will be tp-95
+    const ids = getChangeIds();  // [a, b, c, d]
+
+    jj(`bookmark create tp-91 -r ${ids[0]}`);
+    jj(`bookmark create tp-93 -r ${ids[1]}`);
+    jj(`bookmark create tp-94 -r ${ids[2]}`);
+    jj(`bookmark create tp-95 -r ${ids[3]}`);
+
+    // Step 1: VPR picks c (tp-94 tip), drops on b (tp-93 tip)
+    // TUI does: delete tp-94 bookmark, rebase c after b, move tp-93 to c
+    jj('bookmark delete tp-94');
+    jj(`rebase -r ${ids[2]} -A ${ids[1]}`);
+    jj(`bookmark set tp-93 -r ${ids[2]}`);
+
+    // Verify: tp-94 is gone, c is now tp-93 tip
+    assert.ok(!getBookmarks()['tp-94'], 'tp-94 should be deleted');
+    assert.ok(getBookmarks()['tp-93'], 'tp-93 should exist');
+
+    // Log should be: a(tp-91), b, c(tp-93), d(tp-95)
+    let log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    let lines = log.split('\n').filter(Boolean);
+    assert.ok(lines[0].includes('feat: a'));
+    assert.ok(lines[1].includes('feat: b'));
+    assert.ok(lines[2].includes('feat: c') && lines[2].includes('tp-93'));
+    assert.ok(lines[3].includes('feat: d') && lines[3].includes('tp-95'));
+
+    // Step 2: VPR picks c (now tp-93 tip), drops on empty tp-94
+    // Use bookmark refs instead of change IDs for robustness
+    // tp-93 currently points to c. Move it to c's parent (b).
+    jj(`bookmark set tp-93 -r 'tp-93-' --allow-backwards`);
+    // Create tp-94 on c (use change ID — it's stable)
+    jj(`bookmark create tp-94 -r ${ids[2]}`);
+
+    // Verify: both bookmarks restored
+    const finalBookmarks = getBookmarks();
+    assert.ok(finalBookmarks['tp-91'], 'tp-91 exists');
+    assert.ok(finalBookmarks['tp-93'], 'tp-93 exists');
+    assert.ok(finalBookmarks['tp-94'], 'tp-94 recreated');
+    assert.ok(finalBookmarks['tp-95'], 'tp-95 exists');
+
+    // Log should be back to: a(tp-91), b(tp-93), c(tp-94), d(tp-95)
+    log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    lines = log.split('\n').filter(Boolean);
+    assert.ok(lines[0].includes('feat: a') && lines[0].includes('tp-91'), `got: ${lines[0]}`);
+    assert.ok(lines[1].includes('feat: b') && lines[1].includes('tp-93'), `got: ${lines[1]}`);
+    assert.ok(lines[2].includes('feat: c') && lines[2].includes('tp-94'), `got: ${lines[2]}`);
+    assert.ok(lines[3].includes('feat: d') && lines[3].includes('tp-95'), `got: ${lines[3]}`);
+  });
+
   it('delete bookmark then recreate on same commit', () => {
     makeCommit('feat: a');
     makeCommit('feat: b');
