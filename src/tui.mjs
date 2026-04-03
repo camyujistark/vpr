@@ -577,12 +577,29 @@ export function startTui(config, baseArg) {
             // If picked commit is a bookmark tip, remove the jj bookmark (but keep metadata)
             const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
             if (pickedEntry?.bookmark) {
-              // Move source bookmark back to parent before deleting
-              try { jj(`bookmark set ${pickedEntry.bookmark} -r '${pickedEntry.changeId}-' --allow-backwards`); } catch {
-                // If no parent (first commit), just delete
+              // Check if this is the only commit in its group
+              const groupCommits = entries.filter(e => {
+                // Find commits in the same group (between previous bookmark and this one)
+                const idx = entries.indexOf(pickedEntry);
+                for (let i = idx - 1; i >= 0; i--) {
+                  if (entries[i].bookmark && entries[i].bookmark !== pickedEntry.bookmark) {
+                    // Check if e is between that bookmark and pickedEntry
+                    const eIdx = entries.indexOf(e);
+                    return eIdx > i && eIdx <= idx && !e.bookmark;
+                  }
+                }
+                return false;
+              });
+
+              if (groupCommits.length > 0) {
+                // Group has other commits — move bookmark to the previous commit in the group
+                const prevInGroup = groupCommits[groupCommits.length - 1];
+                try { jj(`bookmark set ${pickedEntry.bookmark} -r ${prevInGroup.changeId} --allow-backwards`); } catch {}
+              } else {
+                // Only commit in group — delete the bookmark
                 try { jj(`bookmark delete ${pickedEntry.bookmark}`); } catch {}
               }
-              // Meta stays — empty group persists as a planned ticket
+              // Meta stays — empty group persists
             }
 
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
