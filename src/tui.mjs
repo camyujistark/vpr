@@ -578,38 +578,23 @@ export function startTui(config, baseArg) {
             fs.appendFileSync('/tmp/vpr-debug.log', `RUN: jj rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-            if (isEmptyGroupDrop) {
-              // Step 2 (empty group): skip target bookmark move — anchor is just a position
+            if (isEmptyGroupDrop && item.bookmark) {
+              // Step 2 (empty group): create bookmark on picked — skip target bookmark move
             } else {
-              // Step 2 (normal): if target was a bookmark tip AND picked has no bookmark,
-              // move target bookmark to picked (extending the group).
-              // If picked HAS a bookmark, don't move — both bookmarks stay where they are.
-              const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
+              // Step 2 (normal): if target was a bookmark tip, move bookmark to picked (new tip)
               const targetEntry = entries.find(e =>
                 e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
               );
-              if (targetEntry?.bookmark && rebaseFlag === '-A' && !pickedEntry?.bookmark) {
+              if (targetEntry?.bookmark && rebaseFlag === '-A') {
                 try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
 
             // Step 3: Handle empty group drop — create bookmark on picked
             if (isEmptyGroupDrop && item.bookmark) {
-              fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: creating bookmark ${item.bookmark} on ${picked}\n`);
-              try {
-                jj(`bookmark create ${item.bookmark} -r ${picked}`);
-                fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: success create\n`);
-              } catch (e1) {
-                fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: create failed: ${e1?.stderr?.toString()?.slice(0,80)}\n`);
-                try {
-                  jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`);
-                  fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: success set\n`);
-                } catch (e2) {
-                  fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: set also failed: ${e2?.stderr?.toString()?.slice(0,80)}\n`);
-                }
+              try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
+                try { jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
-            } else {
-              fs.appendFileSync('/tmp/vpr-debug.log', `STEP3: skipped — isEmptyGroupDrop=${isEmptyGroupDrop} item.bookmark=${item.bookmark}\n`);
             }
 
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
