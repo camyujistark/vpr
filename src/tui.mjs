@@ -131,6 +131,15 @@ function buildItems() {
     groups.push({ bookmark: null, commits: pending });
   }
 
+  // Sort groups by TP index (ascending), ungrouped at the end
+  groups.sort((a, b) => {
+    if (!a.bookmark) return 1;
+    if (!b.bookmark) return -1;
+    const aNum = parseInt(a.bookmark.replace(/\D/g, '')) || 0;
+    const bNum = parseInt(b.bookmark.replace(/\D/g, '')) || 0;
+    return aNum - bNum;
+  });
+
   // Build flat display list
   const items = [];
   for (const group of groups) {
