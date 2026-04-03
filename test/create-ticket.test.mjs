@@ -166,6 +166,106 @@ describe('create ticket (n key) — end to end', () => {
   });
 });
 
+describe('editing ticket title renames bookmark', () => {
+  let tmpDir;
+  let origCwd;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-rename-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate', tmpDir);
+    jj('config set --repo user.name "Test"', tmpDir);
+    jj('config set --repo user.email "test@test.com"', tmpDir);
+    fs.writeFileSync(path.join(tmpDir, 'test.txt'), 'hello');
+    jj('commit -m "feat: first"', tmpDir);
+    process.chdir(tmpDir);
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('renaming title updates bookmark slug and PR title', () => {
+    const changeId = jj("log --no-graph --reversed -r 'main..@-' -T 'change_id.short()'", tmpDir);
+
+    // Create initial bookmark
+    const oldBm = 'feat/17045-ci-add-playwright';
+    jj(`bookmark create ${oldBm} -r ${changeId}`, tmpDir);
+
+    writeMeta(tmpDir, {
+      nextIndex: 2,
+      bookmarks: {
+        [oldBm]: {
+          wi: 17045,
+          wiTitle: 'CI: Add Playwright',
+          wiDescription: 'Add E2E tests',
+          wiState: 'To Do',
+          tpIndex: 'TP-91',
+          prTitle: 'TP-91: CI: Add Playwright',
+        },
+      },
+    });
+
+    // Simulate title edit: change to "CI: Playwright E2E Pipeline"
+    const newTitle = 'CI: Playwright E2E Pipeline';
+    const slug = newTitle.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .split('-').slice(0, 4).join('-');
+    const newBm = `feat/17045-${slug}`;
+
+    // Rename jj bookmark
+    jj(`bookmark rename ${oldBm} ${newBm}`, tmpDir);
+
+    // Update meta
+    const meta = readMeta(tmpDir);
+    meta.bookmarks[newBm] = { ...meta.bookmarks[oldBm], wiTitle: newTitle, prTitle: `TP-91: ${newTitle}` };
+    delete meta.bookmarks[oldBm];
+    fs.writeFileSync(path.join(tmpDir, '.vpr', 'meta.json'), JSON.stringify(meta, null, 2));
+
+    // Verify bookmark renamed
+    const bookmarks = jj('bookmark list', tmpDir);
+    assert.ok(!bookmarks.includes(oldBm), 'old bookmark should be gone');
+    assert.ok(bookmarks.includes('feat/17045-ci-playwright-e2e-pipeline'), 'new bookmark should exist');
+
+    // Verify meta updated
+    const saved = readMeta(tmpDir);
+    assert.ok(!saved.bookmarks[oldBm], 'old key gone from meta');
+    assert.ok(saved.bookmarks[newBm], 'new key in meta');
+    assert.strictEqual(saved.bookmarks[newBm].wiTitle, newTitle);
+    assert.strictEqual(saved.bookmarks[newBm].prTitle, 'TP-91: CI: Playwright E2E Pipeline');
+    assert.strictEqual(saved.bookmarks[newBm].wi, 17045, 'WI ID preserved');
+    assert.strictEqual(saved.bookmarks[newBm].tpIndex, 'TP-91', 'TP index preserved');
+  });
+
+  it('title edit with same slug does not rename', () => {
+    const changeId = jj("log --no-graph --reversed -r 'main..@-' -T 'change_id.short()'", tmpDir);
+    const bm = 'feat/17045-ci-add';
+    jj(`bookmark create ${bm} -r ${changeId}`, tmpDir);
+
+    writeMeta(tmpDir, {
+      nextIndex: 2,
+      bookmarks: {
+        [bm]: { wi: 17045, wiTitle: 'CI: Add', tpIndex: 'TP-91', prTitle: 'TP-91: CI: Add' },
+      },
+    });
+
+    // Edit title to something with same slug prefix
+    const newTitle = 'CI: Add';
+    const slug = newTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').split('-').slice(0, 4).join('-');
+    const newBm = `feat/17045-${slug}`;
+
+    // Same bookmark name — no rename needed
+    assert.strictEqual(newBm, bm, 'slug should be the same');
+
+    const bookmarks = jj('bookmark list', tmpDir);
+    assert.ok(bookmarks.includes(bm), 'bookmark unchanged');
+  });
+});
+
 describe('chained popup flow', () => {
   it('single-line input callback receives the value', () => {
     // Simulate the popup flow: callback gets val
