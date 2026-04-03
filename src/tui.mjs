@@ -300,7 +300,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  S sync  b bookmark  c ticket  x remove  u undo  : jj  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  S sync  b bookmark  n new ticket  x remove  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -454,17 +454,20 @@ function handleInputKey(str, key) {
   if (!inputMultiline && key.name === 'return') {
     mode = 'normal'; process.stdout.write(HIDE_CURSOR);
     const val = inputBuffer.trim(); inputBuffer = '';
-    if (val && inputCallback) inputCallback(val);
+    if (inputCallback) inputCallback(val); // allow empty
     render(); return;
   }
   if (inputMultiline && key.name === 'return') { inputBuffer += '\n'; inputCursorLine++; renderPopup(); return; }
-  if (inputMultiline && key.name === 's' && key.ctrl) {
+  if (inputMultiline && (key.name === 's' && key.ctrl)) {
     mode = 'normal'; process.stdout.write(HIDE_CURSOR);
     const val = inputBuffer.trim(); inputBuffer = '';
-    if (val && inputCallback) inputCallback(val);
+    if (inputCallback) inputCallback(val); // allow empty
     render(); return;
   }
-  if (key.name === 'escape') { mode = 'normal'; inputBuffer = ''; process.stdout.write(HIDE_CURSOR); render(); return; }
+  if (key.name === 'escape' || (key.name === 'c' && key.ctrl)) {
+    mode = 'normal'; inputBuffer = ''; process.stdout.write(HIDE_CURSOR);
+    render(); return; // cancel — no callback
+  }
   if (key.name === 'backspace') {
     if (inputBuffer.endsWith('\n')) inputCursorLine = Math.max(0, inputCursorLine - 1);
     inputBuffer = inputBuffer.slice(0, -1); renderPopup(); return;
@@ -934,8 +937,8 @@ export function startTui(config, baseArg) {
         return;
       }
 
-      case 'c': {
-        // Create ticket + jj bookmark
+      case 'n': {
+        // New ticket + jj bookmark
         if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
         const item = items[cursor];
         // Resolve target: commit's changeId, group's tip commit, or @-
@@ -945,11 +948,17 @@ export function startTui(config, baseArg) {
         const prefix = config?.prefix || 'TP';
         const idx = vprMeta.nextIndex || 1;
         const nextBm = `${prefix.toLowerCase()}-${idx}`;
+        fs.appendFileSync('/tmp/vpr-debug.log', `C: starting title popup for ${nextBm}\n`);
         startInput(`${nextBm} — Ticket title: `, '', (title) => {
-          startInput(`${nextBm} — Ticket description: `, '', (desc) => {
+          fs.appendFileSync('/tmp/vpr-debug.log', `C: title entered: "${title}", starting desc popup\n`);
+          startInput(`${nextBm} — Ticket description: `, '', (desc) => { // single-line, Enter confirms
+            fs.appendFileSync('/tmp/vpr-debug.log', `C: desc entered: "${desc}", creating WI with provider ${provider?.name}\n`);
             try {
+              fs.appendFileSync('/tmp/vpr-debug.log', `C: calling createWorkItem("${title}", "${desc}")\n`);
               const result = provider.createWorkItem(title, desc);
+              fs.appendFileSync('/tmp/vpr-debug.log', `C: createWorkItem returned: ${JSON.stringify(result)}\n`);
               const wi = result.then ? null : result;
+              fs.appendFileSync('/tmp/vpr-debug.log', `C: wi = ${JSON.stringify(wi)}\n`);
               if (wi) {
                 const bm = nextBm;
                 vprMeta.nextIndex = idx + 1;
@@ -968,7 +977,7 @@ export function startTui(config, baseArg) {
               }
             } catch (err) { message = `${RED}Failed: ${(err?.stderr?.toString() || err?.message || '').slice(0, 80)}${RESET}`; }
             render();
-          }, true);
+          });
         });
         return;
       }
@@ -1034,7 +1043,7 @@ export function startTui(config, baseArg) {
         process.exit(0);
         break;
 
-      case 'c': break; // handled above (switch duplicate prevention)
+      case 'n': break; // handled above (switch duplicate prevention)
     }
 
     render();
