@@ -402,6 +402,16 @@ export async function cmdSend(args) {
   }
   if (hasErrors && !dryRun) { console.error('\nFix missing fields before sending.'); process.exit(1); }
 
+  // Chain order validation — each bookmark's ancestors up to its target
+  // should only contain commits from that group, not from other groups.
+  const chainErrors = validateChainOrder(groups, meta, base);
+  if (chainErrors.length > 0) {
+    console.error('\n⚠ Chain order mismatch — bookmarks contain commits from other groups:\n');
+    for (const err of chainErrors) console.error(`  ${err}`);
+    console.error('\nReorder commits so each group is contiguous before sending.');
+    if (!dryRun) process.exit(1);
+  }
+
   // Show chain
   console.log(`\n=== ${dryRun ? 'DRY RUN' : 'SEND'}: ${sendGroups.length} PR${sendGroups.length !== 1 ? 's' : ''} ===\n`);
 
@@ -452,30 +462,18 @@ export async function cmdSend(args) {
       continue;
     }
 
-    // Create PR
-    const prTitle = (m.prTitle || '').replace(/"/g, '\\"');
-    const prDesc = (m.prDesc || '').replace(/"/g, '\\"');
+    // Create PR via provider
+    const provider = createProvider(config);
     try {
-      const result = execSync(
-        `az repos pr create --repository "${config.repo}" ` +
-        `--source-branch "${g.bookmark}" --target-branch "${target}" ` +
-        `--title "${prTitle}" ` +
-        `--description "${prDesc}" ` +
-        (m.wi ? `--work-items ${m.wi} ` : '') +
-        `--project "${config.project}" --organization "${config.org}" --output json`,
-        { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] }
-      );
-      const prData = JSON.parse(result);
-      console.log(`  PR created: #${prData.pullRequestId}`);
+      const prResult = provider.createPR(g.bookmark, target, m.prTitle || '', m.prDesc || '', m.wi);
+      console.log(`  PR created: #${prResult.id}`);
 
-      // Update WI to Done
+      // Close work item
       if (m.wi) {
         try {
-          execSync(
-            `az boards work-item update --id ${m.wi} --state Done --org "${config.org}" --output json`,
-            { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] }
-          );
-          console.log(`  WI #${m.wi} → Done`);
+          const doneState = config.provider === 'github' ? 'Closed' : 'Done';
+          provider.updateWorkItem(m.wi, { state: doneState });
+          console.log(`  WI #${m.wi} → ${doneState}`);
         } catch {}
       }
     } catch (err) {
@@ -555,6 +553,51 @@ function loadEntries(base) {
     }
   }
   return entries;
+}
+
+function validateChainOrder(groups, meta, base) {
+  const errors = [];
+  const resolvedBase = resolveToBookmark(base);
+
+  // Build a set of known bookmark names for lookup
+  const knownBookmarks = new Set(groups.filter(g => g.bookmark).map(g => g.bookmark));
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (!g.bookmark) continue;
+    const m = meta.bookmarks?.[g.bookmark] || {};
+    const target = i > 0 ? groups[i - 1].bookmark : resolvedBase;
+    if (!target) continue;
+
+    // Ask jj for all commits between target and this bookmark
+    const raw = jjSafe(`log --no-graph -r '${target}..${g.bookmark}' -T 'change_id.short() ++ "\\t" ++ bookmarks ++ "\\n"'`);
+    if (!raw) continue;
+
+    const groupChangeIds = new Set(g.commits.map(c => c.changeId.slice(0, 8)));
+    for (const line of raw.split('\n')) {
+      if (!line.includes('\t')) continue;
+      const [cid, bms] = line.split('\t');
+      const changeId = cid?.trim();
+      if (!changeId) continue;
+
+      // Check if this commit belongs to a different group
+      const commitBookmarks = bms?.trim().split(/\s+/).filter(Boolean) || [];
+      const foreignBookmark = commitBookmarks.find(b => knownBookmarks.has(b) && b !== g.bookmark);
+
+      if (!groupChangeIds.has(changeId.slice(0, 8)) && !foreignBookmark) {
+        // Ungrouped commit in the range — could be fine, skip
+        continue;
+      }
+      if (foreignBookmark) {
+        const foreignMeta = meta.bookmarks?.[foreignBookmark] || {};
+        errors.push(
+          `${m.tpIndex || g.bookmark}: contains commits from ${foreignMeta.tpIndex || foreignBookmark}`
+        );
+        break; // one error per group is enough
+      }
+    }
+  }
+  return errors;
 }
 
 function getGroupCommits(entries, bookmark, meta) {
