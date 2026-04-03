@@ -345,7 +345,7 @@ export function cmdPush(args) {
   }
 }
 
-// ── vpr send [--dry-run] ───────────────────────────────────────────────
+// ── vpr send [id] [--dry-run] ─────────────────────────────────────────
 export async function cmdSend(args) {
   requireJj();
   const config = requireConfig();
@@ -353,6 +353,7 @@ export async function cmdSend(args) {
   const base = getBase() || 'main';
   const entries = loadEntries(base);
   const dryRun = args.includes('--dry-run');
+  const specificId = args.find(a => a !== '--dry-run');
 
   const groups = [];
   let pending = [];
@@ -376,12 +377,25 @@ export async function cmdSend(args) {
     return aNum - bNum;
   });
 
-  if (groups.length === 0) { console.log('No groups to send'); return; }
+  // Filter to specific ID if provided
+  let sendGroups = groups.filter(g => g.bookmark);
+  if (specificId) {
+    const bm = findBookmark(meta, specificId);
+    if (!bm) { console.error(`Not found: ${specificId}`); process.exit(1); }
+    const targetGroup = sendGroups.find(g => g.bookmark === bm);
+    if (!targetGroup) { console.error(`No commits for ${specificId}`); process.exit(1); }
+    // Find the target branch (previous group in full chain)
+    const idx = sendGroups.indexOf(targetGroup);
+    const target = idx > 0 ? sendGroups[idx - 1].bookmark : resolveToBookmark(base);
+    targetGroup._target = target;
+    sendGroups = [targetGroup];
+  }
+
+  if (sendGroups.length === 0) { console.log('No groups to send'); return; }
 
   // Validation
   let hasErrors = false;
-  for (const g of groups) {
-    if (!g.bookmark) continue;
+  for (const g of sendGroups) {
     const m = meta.bookmarks?.[g.bookmark] || {};
     if (!m.prTitle) { console.error(`Missing PR title for ${m.tpIndex || g.bookmark}`); hasErrors = true; }
     if (!m.wi) { console.error(`Missing work item for ${m.tpIndex || g.bookmark}`); hasErrors = true; }
@@ -389,13 +403,13 @@ export async function cmdSend(args) {
   if (hasErrors && !dryRun) { console.error('\nFix missing fields before sending.'); process.exit(1); }
 
   // Show chain
-  console.log(`\n=== ${dryRun ? 'DRY RUN' : 'SEND'}: ${groups.filter(g => g.bookmark).length} PRs ===\n`);
+  console.log(`\n=== ${dryRun ? 'DRY RUN' : 'SEND'}: ${sendGroups.length} PR${sendGroups.length !== 1 ? 's' : ''} ===\n`);
 
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    if (!g.bookmark) continue;
+  for (let i = 0; i < sendGroups.length; i++) {
+    const g = sendGroups[i];
     const m = meta.bookmarks?.[g.bookmark] || {};
-    const target = i > 0 ? groups[i - 1]?.bookmark : base;
+    const allIdx = groups.findIndex(gr => gr.bookmark === g.bookmark);
+    const target = g._target || (allIdx > 0 ? groups[allIdx - 1]?.bookmark : resolveToBookmark(base));
 
     console.log(`--- PR ${i + 1}: ${m.tpIndex || ''} ---`);
     console.log(`  Branch:  ${g.bookmark}`);
@@ -420,11 +434,11 @@ export async function cmdSend(args) {
   // Push and create PRs
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    if (!g.bookmark) continue;
+  for (let i = 0; i < sendGroups.length; i++) {
+    const g = sendGroups[i];
     const m = meta.bookmarks?.[g.bookmark] || {};
-    const target = i > 0 ? groups[i - 1]?.bookmark : base;
+    const allIdx = groups.findIndex(gr => gr.bookmark === g.bookmark);
+    const target = g._target || (allIdx > 0 ? groups[allIdx - 1]?.bookmark : resolveToBookmark(base));
 
     // Push
     console.log(`\nPushing ${m.tpIndex || g.bookmark}...`);
