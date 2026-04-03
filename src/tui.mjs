@@ -578,13 +578,16 @@ export function startTui(config, baseArg) {
             fs.appendFileSync('/tmp/vpr-debug.log', `RUN: jj rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-            // Step 2: Handle bookmark on TARGET commit (if it was a tip, extend the group)
-            const targetEntry = entries.find(e =>
-              e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
-            );
-            if (targetEntry?.bookmark && rebaseFlag === '-A') {
-              // Dropped after a bookmark tip — move bookmark to picked (new tip)
-              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+            if (isEmptyGroupDrop && item.bookmark) {
+              // Step 2 (empty group): create bookmark on picked — skip target bookmark move
+            } else {
+              // Step 2 (normal): if target was a bookmark tip, move bookmark to picked (new tip)
+              const targetEntry = entries.find(e =>
+                e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
+              );
+              if (targetEntry?.bookmark && rebaseFlag === '-A') {
+                try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+              }
             }
 
             // Step 3: Handle empty group drop — create bookmark on picked
