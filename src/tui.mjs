@@ -106,40 +106,35 @@ function loadEntries(base) {
 
 // ── Build grouped view ─────────────────────────────────────────────────
 function buildItems() {
-  // Group commits by the bookmark above them (or below — bookmark is at tip)
-  // In jj stacked model: bookmark is at tip, commits below until next bookmark belong to it
-  // Since we load reversed (oldest first), we scan forward and assign to next bookmark seen
-  const items = [];
-  let currentGroup = null;
+  // jj stacked model: bookmark is at the TIP of a group.
+  // Scan oldest→newest: accumulate commits, when we hit a bookmark it caps that group.
+  // Entries are loaded oldest-first (--reversed).
+  const groups = [];
+  let pending = []; // commits waiting for a bookmark to claim them
 
-  // Reverse scan: bookmarks are at tips, commits below belong to them
-  // We need to scan from top (newest) to bottom (oldest)
-  const reversed = [...entries].reverse();
-  const groups = []; // [{ bookmark, changeId, commits: [...] }]
-
-  for (const entry of reversed) {
+  for (const entry of entries) {
     if (entry.bookmark) {
-      currentGroup = { bookmark: entry.bookmark, entry, commits: [] };
-      groups.push(currentGroup);
-    } else if (currentGroup) {
-      currentGroup.commits.push(entry);
+      // This bookmark claims all pending commits + itself
+      groups.push({
+        bookmark: entry.bookmark,
+        commits: [...pending, entry], // pending commits + the bookmark commit
+      });
+      pending = [];
     } else {
-      // Ungrouped commit above all bookmarks — orphan
-      if (!groups.find(g => g.bookmark === null)) {
-        groups.push({ bookmark: null, entry: null, commits: [] });
-      }
-      groups.find(g => g.bookmark === null).commits.push(entry);
+      pending.push(entry);
     }
   }
 
-  // Reverse back to display order (oldest group first)
-  groups.reverse();
-  for (const g of groups) g.commits.reverse();
+  // Any remaining commits after the last bookmark are ungrouped
+  if (pending.length > 0) {
+    groups.push({ bookmark: null, commits: pending });
+  }
 
   // Build flat display list
+  const items = [];
   for (const group of groups) {
     const meta = group.bookmark ? (vprMeta.bookmarks?.[group.bookmark] || {}) : {};
-    const title = meta.wiTitle || meta.prTitle || group.entry?.ccDesc || group.bookmark || 'ungrouped';
+    const title = meta.wiTitle || meta.prTitle || group.commits[0]?.ccDesc || group.bookmark || 'ungrouped';
 
     if (group.bookmark) {
       items.push({
@@ -147,17 +142,19 @@ function buildItems() {
         bookmark: group.bookmark,
         title,
         meta,
-        commitCount: group.commits.length + 1, // +1 for the bookmark commit itself
-        entry: group.entry,
+        commitCount: group.commits.length,
+        entry: group.commits[group.commits.length - 1], // the bookmark commit (tip)
       });
-      // The bookmark's own commit
-      items.push({ type: 'commit', ...group.entry, group: group.bookmark });
     } else {
       items.push({ type: 'ungrouped-header', title: 'Ungrouped', commitCount: group.commits.length });
     }
 
     for (const commit of group.commits) {
-      items.push({ type: group.bookmark ? 'commit' : 'ungrouped', ...commit, group: group.bookmark });
+      items.push({
+        type: group.bookmark ? 'commit' : 'ungrouped',
+        ...commit,
+        group: group.bookmark,
+      });
     }
   }
 
