@@ -479,26 +479,23 @@ export function startTui(config, baseArg) {
       return;
     }
 
-    // Bookmark mode: pick which bookmark to set
+    // Bookmark mode
     if (mode === 'bookmark') {
       mode = 'normal';
       const bItem = items[cursor];
-      const existingBookmarks = Object.keys(vprMeta.bookmarks || {});
+      const bmList = Object.keys(vprMeta.bookmarks || {});
       const idx = parseInt(str) - 1;
-      if (idx >= 0 && idx < existingBookmarks.length && bItem?.changeId) {
-        const bm = existingBookmarks[idx];
+      if (idx >= 0 && idx < bmList.length && bItem?.changeId) {
+        const bm = bmList[idx];
         try { jj(`bookmark set ${bm} -r ${bItem.changeId}`); } catch {
           try { jj(`bookmark create ${bm} -r ${bItem.changeId}`); } catch {}
         }
         message = `${GREEN}Set ${bm} on ${bItem.changeId.slice(0, 8)}${RESET}`;
         reload();
-      } else if (key.name === 'escape') {
-        message = `${DIM}Cancelled${RESET}`;
       } else {
-        message = `${RED}Invalid selection${RESET}`;
+        message = `${DIM}Cancelled${RESET}`;
       }
-      render();
-      return;
+      render(); return;
     }
 
     // Shift keys
@@ -530,10 +527,9 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // Simple model: insert after cursor position
-          // Group header → before first commit of the group (top of group)
+          // "Put it here" — below cursor position
+          // Group header → top of group (before first commit)
           // Commit → after that commit
-          // Bookmarks are NOT touched — user sets them separately with 'b'
           let targetChangeId = null;
           let rebaseFlag = '-A';
 
@@ -546,14 +542,33 @@ export function startTui(config, baseArg) {
             } else if (item.entry?.changeId) {
               targetChangeId = item.entry.changeId;
               rebaseFlag = '-B';
+            } else {
+              // Empty meta-only group — find the nearest commit above in the display list
+              const itemIdx = items.indexOf(item);
+              for (let i = itemIdx - 1; i >= 0; i--) {
+                if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-A'; break; }
+                // Group header with an entry (has a jj bookmark)
+                if (items[i].type === 'group' && items[i].entry?.changeId) { targetChangeId = items[i].entry.changeId; rebaseFlag = '-A'; break; }
+              }
+              // If nothing above, try the first commit below
+              if (!targetChangeId) {
+                for (let i = itemIdx + 1; i < items.length; i++) {
+                  if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-B'; break; }
+                }
+              }
             }
-          } else if (item.changeId) {
+          } else {
             targetChangeId = item.changeId;
-            rebaseFlag = '-A';
+            // If this commit is a bookmark tip, insert before it (stays inside group)
+            // Otherwise insert after it (below in display)
+            const isBookmarkTip = entries.some(e =>
+              e.bookmark && (e.changeId === item.changeId || e.changeId?.startsWith(item.changeId?.slice(0, 8)))
+            );
+            rebaseFlag = isBookmarkTip ? '-B' : '-A';
           }
 
           if (!targetChangeId) {
-            message = `${RED}Navigate to a commit to drop${RESET}`;
+            message = `${RED}Navigate to a commit or group to drop${RESET}`;
             break;
           }
 
@@ -564,7 +579,23 @@ export function startTui(config, baseArg) {
           }
 
           try {
+            // If picked commit is a bookmark tip, remove the jj bookmark (but keep metadata)
+            const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
+            if (pickedEntry?.bookmark) {
+              jj(`bookmark delete ${pickedEntry.bookmark}`);
+              // Meta stays — empty group persists as a planned ticket
+            }
+
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
+
+            // If dropping into an empty group, create a bookmark on the moved commit
+            const targetGroup = item.type === 'group' ? item : items.find(i => i.type === 'group' && i.bookmark === item.group);
+            if (targetGroup?.bookmark && targetGroup.commitCount === 0) {
+              try { jj(`bookmark create ${targetGroup.bookmark} -r ${picked}`); } catch {
+                try { jj(`bookmark set ${targetGroup.bookmark} -r ${picked}`); } catch {}
+              }
+            }
+
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
@@ -574,18 +605,6 @@ export function startTui(config, baseArg) {
             picked = null;
           }
         }
-        break;
-      }
-
-      case 'b': {
-        // Set/move a bookmark on the current commit
-        const bItem = items[cursor];
-        if (!bItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
-        const existingBookmarks = Object.keys(vprMeta.bookmarks || {});
-        if (existingBookmarks.length === 0) { message = `${RED}No bookmarks defined — create a ticket first (c)${RESET}`; break; }
-        const list = existingBookmarks.map((bm, i) => `  ${i + 1}) ${bm}`).join('\n');
-        message = `${CYAN}Set bookmark on ${bItem.changeId.slice(0, 8)}:\n${list}\n  n) new bookmark${RESET}`;
-        mode = 'bookmark';
         break;
       }
 
@@ -708,6 +727,23 @@ export function startTui(config, baseArg) {
         } catch (err) {
           message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
         }
+        break;
+      }
+
+      case 'u': {
+        try { jj('undo'); reload(); message = `${GREEN}Undone${RESET}`; }
+        catch (err) { message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`; }
+        break;
+      }
+
+      case 'b': {
+        // Set/move a bookmark on current commit
+        const bItem = items[cursor];
+        if (!bItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
+        const bmList = Object.keys(vprMeta.bookmarks || {});
+        if (bmList.length === 0) { message = `${RED}No bookmarks — create a ticket first (c)${RESET}`; break; }
+        message = `${CYAN}Set bookmark on ${bItem.changeId.slice(0, 8)}:\n${bmList.map((bm, i) => `  ${i + 1}) ${bm}`).join('\n')}${RESET}`;
+        mode = 'bookmark';
         break;
       }
 
