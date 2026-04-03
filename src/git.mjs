@@ -49,11 +49,13 @@ export function currentBranch() {
 
 export function getBase() {
   if (hasJj()) {
-    // jj uses branch@remote syntax
-    for (const ref of ['main@origin', 'master@origin', 'main', 'master']) {
+    // Find the nearest ancestor with a remote bookmark (= last pushed commit)
+    const nearestRemote = jjSafe(`log --no-graph -r 'ancestors(@) & remote_bookmarks()' -T 'change_id.short() ++ "\\n"' --limit 1`);
+    if (nearestRemote?.trim()) return nearestRemote.trim();
+    // Fallback to remote main
+    for (const ref of ['main@origin', 'master@origin']) {
       if (jjSafe(`log --no-graph -r '${ref}' -T 'change_id.short()'`)) return ref;
     }
-    // Fallback to trunk()
     return 'trunk()';
   }
   for (const ref of ['origin/main', 'origin/master', 'main', 'master']) {
