@@ -601,8 +601,8 @@ export function startTui(config, baseArg) {
             if (pickedEntry?.bookmark && pickedGroup && pickedGroup === targetGroup) {
               // Within-group tip move: use -B to put picked before target
               // Then move bookmark to the new last commit in the group
-              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip move — rebase -r ${picked} -B ${targetChangeId}\n`);
-              jj(`rebase -r ${picked} -B ${targetChangeId}`);
+              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip move — rebase -r ${picked} -A ${targetChangeId}\n`);
+              jj(`rebase -r ${picked} -A ${targetChangeId}`);
 
               // Find the new last commit in the group (excluding picked, which moved earlier)
               // After rebase, need to re-read. Use the group's items minus picked.
