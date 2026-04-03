@@ -583,12 +583,17 @@ export function startTui(config, baseArg) {
             // Rebase
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-            // If target was a bookmark tip, move bookmark to picked (new tip)
-            const targetEntry = entries.find(e =>
-              e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
-            );
-            if (targetEntry?.bookmark && rebaseFlag === '-A') {
-              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+            // If target was a bookmark tip AND picked has no bookmark,
+            // extend the target group by moving its bookmark to picked (new tip).
+            // If picked already has a bookmark, leave both bookmarks alone.
+            const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
+            if (!pickedEntry?.bookmark) {
+              const targetEntry = entries.find(e =>
+                e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
+              );
+              if (targetEntry?.bookmark && rebaseFlag === '-A') {
+                try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+              }
             }
 
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
