@@ -604,8 +604,8 @@ export function startTui(config, baseArg) {
               // Cross-group or ungrouped: rebase
               jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-              // If target was a bookmark tip and picked has no bookmark, extend the group
-              if (targetEntry?.bookmark && rebaseFlag === '-A' && !pickedEntry?.bookmark) {
+              // If target was a bookmark tip, move it to picked (extending the group)
+              if (targetEntry?.bookmark && rebaseFlag === '-A') {
                 try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
