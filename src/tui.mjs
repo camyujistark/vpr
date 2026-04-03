@@ -524,11 +524,18 @@ export function startTui(config, baseArg) {
               targetChangeId = item.entry.changeId;
               rebaseFlag = '-B';
             } else {
-              // Empty group — find previous group's last commit
-              for (let i = items.indexOf(item) - 1; i >= 0; i--) {
-                const prev = items[i];
-                if (prev.changeId) { targetChangeId = prev.changeId; rebaseFlag = '-A'; break; }
-                if (prev.entry?.changeId) { targetChangeId = prev.entry.changeId; rebaseFlag = '-A'; break; }
+              // Empty meta-only group — find the nearest commit above in the display list
+              const itemIdx = items.indexOf(item);
+              for (let i = itemIdx - 1; i >= 0; i--) {
+                if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-A'; break; }
+                // Group header with an entry (has a jj bookmark)
+                if (items[i].type === 'group' && items[i].entry?.changeId) { targetChangeId = items[i].entry.changeId; rebaseFlag = '-A'; break; }
+              }
+              // If nothing above, try the first commit below
+              if (!targetChangeId) {
+                for (let i = itemIdx + 1; i < items.length; i++) {
+                  if (items[i].changeId) { targetChangeId = items[i].changeId; rebaseFlag = '-B'; break; }
+                }
               }
             }
           } else {
