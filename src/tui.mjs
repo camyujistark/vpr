@@ -15,7 +15,7 @@ import readline from 'readline';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { git, gitSafe, jj, jjSafe, hasJj, getBase as gitGetBase, getFilesForCommit, getDiffForCommit, getNumstatForCommit, describeCommit } from './git.mjs';
+import { git, gitSafe, jj, jjSafe, hasJj, getBase as gitGetBase, getFilesForCommit, getDiffForCommit, getNumstatForCommit, describeCommit, getChangeId, clearChangeIdCache } from './git.mjs';
 import { loadConfig, loadMeta, saveMeta } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
 
@@ -26,41 +26,49 @@ function getRemoteHead() {
 function loadCommits(base, remoteHead) {
   let raw;
   if (hasJj()) {
-    // jj log with template — cleaner than git format strings
-    // Get commits between base and current, excluding the working copy (@)
-    raw = jjSafe(`log --no-graph -r '${base}..@-' -T 'commit_id ++ "\\t" ++ description.first_line() ++ "\\t" ++ trailers().map(|t| if(t.key() == "VPR", t.value(), "")).join("") ++ "\\n"'`);
-    // If jj template fails (older version), fall back to git
+    // jj log: change_id + commit_id + subject
+    raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id ++ "\\t" ++ description.first_line() ++ "\\n"'`);
     if (!raw) {
-      raw = git(`log --reverse --format='%H%x09%s%x09%(trailers:key=VPR,valueonly,separator=%x2C)' ${base}..HEAD`);
+      raw = git(`log --reverse --format='%H%x09%H%x09%s' ${base}..HEAD`);
     }
   } else {
-    raw = git(`log --reverse --format='%H%x09%s%x09%(trailers:key=VPR,valueonly,separator=%x2C)' ${base}..HEAD`);
+    raw = git(`log --reverse --format='%H%x09%H%x09%s' ${base}..HEAD`);
   }
   if (!raw) return [];
+
+  // Build lookup: which change IDs belong to which group
+  const groups = vprMeta.groups || {};
+  const changeToGroup = new Map();
+  for (const [tp, group] of Object.entries(groups)) {
+    for (const cid of (group.commits || [])) {
+      changeToGroup.set(cid, tp);
+    }
+  }
+
   const lines = raw.split('\n').filter(Boolean);
   const all = [];
   for (const line of lines) {
     const parts = line.split('\t');
-    const sha = parts[0]?.trim();
-    const subject = parts[1]?.trim();
-    const trailer = parts[2]?.trim();
+    const changeId = parts[0]?.trim();
+    const sha = parts[1]?.trim();
+    const subject = parts[2]?.trim();
     if (!sha || !subject) continue;
     if (remoteHead) {
       try { execSync(`git merge-base --is-ancestor ${sha} ${remoteHead}`, { stdio: 'pipe', shell: '/bin/bash' }); continue; } catch {}
     }
-    const tp = trailer || null;
+    const tp = changeToGroup.get(changeId) || null;
     const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
     all.push({
-      sha, subject, tp,
+      sha, changeId, subject, tp,
       ccType: ccMatch ? ccMatch[1] : null,
       ccScope: ccMatch ? ccMatch[2] || null : null,
       ccDesc: ccMatch ? ccMatch[3] : subject,
     });
   }
-  // Only show from the first VPR-tagged commit onwards (skip old realized work)
-  const firstVprIdx = all.findIndex(c => c.tp);
-  if (firstVprIdx === -1) return all.slice(-20);
-  return all.slice(firstVprIdx);
+  // Show from first grouped commit onwards, or last 20 if none grouped
+  const firstGrouped = all.findIndex(c => c.tp);
+  if (firstGrouped === -1) return all.slice(-20);
+  return all.slice(firstGrouped);
 }
 
 // Raw getFilesForCommit/getDiffForCommit imported but accessed via getCached* wrappers
@@ -203,19 +211,34 @@ function getCachedDiff(sha) {
 }
 
 function buildVprs() {
+  const groups = vprMeta.groups || {};
   const map = new Map();
-  const order = [];
   ungrouped = [];
+
+  // Create entries for ALL groups in meta (including empty ones)
+  for (const [tp, group] of Object.entries(groups)) {
+    if (group.realized) continue; // skip realized groups
+    map.set(tp, {
+      tp,
+      title: group.wiTitle || group.title || tp,
+      commitIdxs: [],
+    });
+  }
+
+  // Assign commits to their groups
   commits.forEach((c, i) => {
-    if (!c.tp) { ungrouped.push(i); return; }
-    if (!map.has(c.tp)) {
-      const metaTitle = vprMeta[c.tp]?.title;
-      map.set(c.tp, { tp: c.tp, title: metaTitle || c.ccDesc || c.subject, commitIdxs: [] });
-      order.push(c.tp);
+    if (c.tp && map.has(c.tp)) {
+      map.get(c.tp).commitIdxs.push(i);
+    } else if (c.tp && !map.has(c.tp)) {
+      // Commit references a group not in meta — create it
+      map.set(c.tp, { tp: c.tp, title: c.ccDesc || c.subject, commitIdxs: [i] });
+    } else {
+      ungrouped.push(i);
     }
-    map.get(c.tp).commitIdxs.push(i);
   });
-  vprs = order.map(tp => map.get(tp));
+
+  // Preserve meta ordering (Object.keys order)
+  vprs = [...map.values()];
 }
 
 function getDependencyErrors() {
@@ -312,7 +335,7 @@ function render() {
   if (dirty) out += `  ${YELLOW}●${RESET}`;
   if (picked !== null) out += `  ${MAGENTA}[MOVING: ${commits[pickedCi].sha.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  n new  g merge  r rename  w ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K scroll  space move  c ticket  n group  g merge  x remove  w edit ticket  p PR draft  R refresh  s save  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll left panel
@@ -502,8 +525,24 @@ function pickOrDrop() {
       return;
     }
 
-    commits[pickedCi].tp = targetTp;
-    dirty = true;
+    const c = commits[pickedCi];
+    const changeId = c.changeId || c.sha;
+    const groups = vprMeta.groups || {};
+
+    // Remove from source group
+    if (c.tp && groups[c.tp]) {
+      groups[c.tp].commits = (groups[c.tp].commits || []).filter(id => id !== changeId);
+    }
+
+    // Add to target group
+    if (!groups[targetTp]) groups[targetTp] = { commits: [] };
+    if (!groups[targetTp].commits) groups[targetTp].commits = [];
+    groups[targetTp].commits.push(changeId);
+
+    vprMeta.groups = groups;
+    saveMeta(vprMeta);
+
+    c.tp = targetTp;
     message = `${GREEN}Dropped into ${targetTp}${RESET}`;
     picked = null;
     pickedCi = null;
@@ -523,11 +562,22 @@ function mergeVpr(input) {
   const target = vprs[idx];
   if (source.tp === target.tp) { message = `${RED}Can't merge into self${RESET}`; return false; }
 
+  const groups = vprMeta.groups || {};
+  const sourceCommits = groups[source.tp]?.commits || [];
+  if (!groups[target.tp]) groups[target.tp] = { commits: [] };
+  if (!groups[target.tp].commits) groups[target.tp].commits = [];
+
+  // Move all commits from source to target
+  groups[target.tp].commits.push(...sourceCommits);
+  groups[source.tp].commits = []; // keep source as empty group
+
   for (const ci of source.commitIdxs) {
     commits[ci].tp = target.tp;
   }
 
-  dirty = true;
+  vprMeta.groups = groups;
+  saveMeta(vprMeta);
+
   message = `${GREEN}Merged ${source.tp} into ${target.tp}${RESET}`;
   cursor = 0;
   buildVprs();
@@ -848,21 +898,75 @@ process.stdin.on('keypress', (str, key) => {
       break;
 
     case 'n': {
-      const tp = nextTp();
-      startInput(`New VPR (${tp}) title: `, '', (title) => {
+      // Create empty group (local only, no ticket)
+      const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
+      startInput(`New group (${tp}) title: `, '', (title) => {
+        if (!vprMeta.groups) vprMeta.groups = {};
+        vprMeta.groups[tp] = { wiTitle: title, commits: [], realized: false };
+        vprMeta.nextIndex = (vprMeta.nextIndex || 1) + 1;
+
+        // If cursor is on an ungrouped commit, move it in
         const item = buildItems()[cursor];
         if (item && (item.type === 'commit' || item.type === 'ungrouped')) {
+          const cid = commits[item.ci].changeId || commits[item.ci].sha;
+          vprMeta.groups[tp].commits.push(cid);
           commits[item.ci].tp = tp;
-          dirty = true;
-          message = `${GREEN}Created ${tp} and moved commit${RESET}`;
-        } else {
-          message = `${DIM}Created ${tp}: ${title}${RESET}`;
         }
-        vprMeta[tp] = { ...vprMeta[tp], title };
+
         saveMeta(vprMeta);
+        message = `${GREEN}Created ${tp}${RESET}`;
         buildVprs();
       });
       return;
+    }
+
+    case 'c': {
+      // Create ticket via provider + new group
+      if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
+      const tp = `${config?.prefix || 'VPR'}-${vprMeta.nextIndex || 1}`;
+      startInput(`Ticket title (${tp}): `, '', (title) => {
+        startInput(`Ticket description: `, '', (desc) => {
+          try {
+            const result = provider.createWorkItem(title, desc);
+            const wi = result.then ? null : result;
+            if (wi) {
+              if (!vprMeta.groups) vprMeta.groups = {};
+              vprMeta.groups[tp] = {
+                wi: wi.id,
+                wiTitle: title,
+                wiDescription: desc,
+                wiState: 'New',
+                commits: [],
+                realized: false,
+              };
+              vprMeta.nextIndex = (vprMeta.nextIndex || 1) + 1;
+              saveMeta(vprMeta);
+              message = `${GREEN}Created ${tp} with WI #${wi.id}${RESET}`;
+              buildVprs();
+            }
+          } catch {
+            message = `${RED}Failed to create ticket${RESET}`;
+          }
+        }, true);
+      });
+      return;
+    }
+
+    case 'x': {
+      // Remove empty group
+      if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
+      const vprToRemove = items[cursor].vpr;
+      const groupData = vprMeta.groups?.[vprToRemove.tp];
+      if (vprToRemove.commitIdxs.length > 0) {
+        message = `${RED}Group has commits — unassign them first${RESET}`;
+        break;
+      }
+      delete vprMeta.groups[vprToRemove.tp];
+      saveMeta(vprMeta);
+      message = `${GREEN}Removed ${vprToRemove.tp}${RESET}`;
+      cursor = Math.max(0, cursor - 1);
+      buildVprs();
+      break;
     }
 
     case 'g':

@@ -109,3 +109,26 @@ export function rebaseCommit(sha, newParent) {
     throw new Error('rebaseCommit without jj requires interactive rebase');
   }
 }
+
+/**
+ * Get jj change ID for a commit. Change IDs are stable across rebases/describes.
+ * Falls back to git SHA when jj is not available.
+ */
+let changeIdCache = new Map();
+export function getChangeId(sha) {
+  if (changeIdCache.has(sha)) return changeIdCache.get(sha);
+  let id;
+  if (hasJj()) {
+    try {
+      id = jj(`log --no-graph -r ${sha} -T 'change_id.short()'`).trim();
+    } catch { id = sha; }
+  } else {
+    id = sha;
+  }
+  changeIdCache.set(sha, id);
+  return id;
+}
+
+export function clearChangeIdCache() {
+  changeIdCache.clear();
+}
