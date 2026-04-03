@@ -281,7 +281,14 @@ function render() {
     lastRightPaneKey = rightPaneKey;
   }
   let rightLines = [];
-  if (currentItem?.type === 'group') {
+  let editCursorScreenRow = -1;
+  let editCursorScreenCol = -1;
+  if (editMode) {
+    const edit = getEditLines(rightW);
+    rightLines = edit.lines;
+    editCursorScreenRow = edit.cursorRow;
+    editCursorScreenCol = edit.cursorCol;
+  } else if (currentItem?.type === 'group') {
     rightLines = getGroupSummary(currentItem, rightW);
   } else if (currentItem?.sha) {
     rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
@@ -342,6 +349,16 @@ function render() {
   out += `${DIM}${'─'.repeat(leftW)}┴${'─'.repeat(rightW)}${RESET}\n`;
   if (message) { out += message + '\n'; message = ''; }
   else out += '\n';
+
+  // Show cursor in edit mode
+  if (editMode && editCursorScreenRow >= 0) {
+    const screenRow = headerLines + 1 + editCursorScreenRow - diffScroll;
+    const screenCol = leftW + 2 + editCursorScreenCol;
+    if (screenRow > headerLines && screenRow <= headerLines + bodyH) {
+      out += `${ESC}${screenRow};${screenCol}H${SHOW_CURSOR}`;
+    }
+  }
+
   out += SYNC_END;
 
   process.stdout.write(out);
@@ -417,6 +434,127 @@ function handleInputKey(str, key) {
     inputBuffer = inputBuffer.slice(0, -1); renderPopup(); return;
   }
   if (str && !key.ctrl && str.length === 1) { inputBuffer += str; renderPopup(); }
+}
+
+// ── Inline field editor ─────────────────────────────────────────────────
+let editMode = false;
+let editBuffer = '';
+let editCursorPos = 0; // position in the buffer
+let editFieldName = '';
+let editBookmark = '';
+
+function startFieldEdit(bookmark, fieldName, currentValue) {
+  editMode = true;
+  editBuffer = currentValue || '';
+  editCursorPos = editBuffer.length;
+  editFieldName = fieldName;
+  editBookmark = bookmark;
+  mode = 'edit';
+}
+
+function handleEditKey(str, key) {
+  if (key.name === 'escape') {
+    // Save and exit
+    if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+    if (!vprMeta.bookmarks[editBookmark]) vprMeta.bookmarks[editBookmark] = {};
+    vprMeta.bookmarks[editBookmark][editFieldName] = editBuffer;
+    saveMeta(vprMeta);
+    editMode = false;
+    mode = 'normal';
+    message = `${GREEN}${FIELD_LABELS[FIELD_NAMES.indexOf(editFieldName)]} saved${RESET}`;
+    process.stdout.write(HIDE_CURSOR);
+    render();
+    return;
+  }
+  if (key.name === 'backspace') {
+    if (editCursorPos > 0) {
+      editBuffer = editBuffer.slice(0, editCursorPos - 1) + editBuffer.slice(editCursorPos);
+      editCursorPos--;
+    }
+    render();
+    return;
+  }
+  if (key.name === 'return') {
+    editBuffer = editBuffer.slice(0, editCursorPos) + '\n' + editBuffer.slice(editCursorPos);
+    editCursorPos++;
+    render();
+    return;
+  }
+  if (key.name === 'left') {
+    editCursorPos = Math.max(0, editCursorPos - 1);
+    render();
+    return;
+  }
+  if (key.name === 'right') {
+    editCursorPos = Math.min(editBuffer.length, editCursorPos + 1);
+    render();
+    return;
+  }
+  if (str && !key.ctrl && str.length === 1) {
+    editBuffer = editBuffer.slice(0, editCursorPos) + str + editBuffer.slice(editCursorPos);
+    editCursorPos++;
+    render();
+    return;
+  }
+}
+
+function getEditLines(rightW) {
+  const wrapW = Math.max(20, rightW - 6);
+  const label = FIELD_LABELS[FIELD_NAMES.indexOf(editFieldName)] || editFieldName;
+  const lines = [];
+
+  lines.push(`${GREEN}${BOLD}── ${label} (editing) ${'─'.repeat(Math.max(0, 25 - label.length))}${RESET}`);
+  lines.push('');
+
+  // Word wrap the buffer and find cursor position
+  const beforeCursor = editBuffer.slice(0, editCursorPos);
+  const afterCursor = editBuffer.slice(editCursorPos);
+  const fullText = editBuffer;
+
+  // Wrap and render with cursor marker
+  let charCount = 0;
+  let cursorRow = 0;
+  let cursorCol = 0;
+
+  for (const line of fullText.split('\n')) {
+    // Wrap this line
+    if (line.length <= wrapW) {
+      if (charCount <= editCursorPos && editCursorPos <= charCount + line.length) {
+        cursorRow = lines.length;
+        cursorCol = editCursorPos - charCount;
+      }
+      lines.push(line || ' ');
+      charCount += line.length + 1; // +1 for \n
+    } else {
+      let remaining = line;
+      while (remaining.length > wrapW) {
+        let breakAt = remaining.lastIndexOf(' ', wrapW);
+        if (breakAt <= 0) breakAt = wrapW;
+        const segment = remaining.slice(0, breakAt);
+        if (charCount <= editCursorPos && editCursorPos <= charCount + segment.length) {
+          cursorRow = lines.length;
+          cursorCol = editCursorPos - charCount;
+        }
+        lines.push(segment);
+        charCount += breakAt;
+        remaining = remaining.slice(breakAt).trimStart();
+        if (remaining.length > 0) charCount++; // trimmed space
+      }
+      if (remaining) {
+        if (charCount <= editCursorPos && editCursorPos <= charCount + remaining.length) {
+          cursorRow = lines.length;
+          cursorCol = editCursorPos - charCount;
+        }
+        lines.push(remaining);
+        charCount += remaining.length + 1;
+      }
+    }
+  }
+
+  lines.push('');
+  lines.push(`${DIM}type to edit · Enter newline · Esc save${RESET}`);
+
+  return { lines, cursorRow, cursorCol };
 }
 
 // ── Open $EDITOR for multi-line (like lazygit) ─────────────────────────
@@ -500,7 +638,10 @@ export function startTui(config, baseArg) {
     if (!key) return;
     const items = buildItems();
 
-    // Input mode
+    // Inline edit mode
+    if (mode === 'edit') { handleEditKey(str, key); return; }
+
+    // Input mode (popups)
     if (mode === 'input') { handleInputKey(str, key); return; }
 
     // jj command mode
@@ -706,23 +847,14 @@ export function startTui(config, baseArg) {
         break;
 
       case 'e': {
-        // Edit the highlighted field on the group summary
+        // Inline edit the highlighted field in the right pane
         const eItem = items[cursor];
         if (eItem?.type !== 'group') { message = `${RED}Select a group header${RESET}`; break; }
         const eBm = eItem.bookmark;
         const eMeta = vprMeta.bookmarks?.[eBm] || {};
         const fieldName = FIELD_NAMES[fieldIdx];
-        const fieldLabel = FIELD_LABELS[fieldIdx];
-        const isMultiline = fieldName === 'wiDescription' || fieldName === 'prDesc';
         const currentVal = eMeta[fieldName] || (fieldName === 'prTitle' ? eMeta.wiTitle : '') || '';
-
-        startInput(`${eBm} — ${fieldLabel}`, currentVal, (val) => {
-          if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
-          if (!vprMeta.bookmarks[eBm]) vprMeta.bookmarks[eBm] = {};
-          vprMeta.bookmarks[eBm][fieldName] = val;
-          saveMeta(vprMeta);
-          message = `${GREEN}${fieldLabel} saved${RESET}`;
-        }, isMultiline);
+        startFieldEdit(eBm, fieldName, currentVal);
         return;
       }
 
