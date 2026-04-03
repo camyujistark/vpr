@@ -539,62 +539,56 @@ export function startTui(config, baseArg) {
               targetChangeId = groupCommits[0].changeId;
               rebaseFlag = '-B';
             } else {
-              // Empty group: find the last commit above this group header, skipping the picked commit
+              // Empty group: no rebase — just reassign the bookmark
               isEmptyGroupDrop = true;
-              const idx = items.indexOf(item);
-              for (let i = idx - 1; i >= 0; i--) {
-                const cid = items[i].changeId || items[i].entry?.changeId;
-                if (cid && cid !== picked && !cid.startsWith(picked) && !picked.startsWith(cid)) {
-                  targetChangeId = cid;
-                  break;
-                }
-              }
-              rebaseFlag = '-A';
             }
           } else if (item.changeId) {
             targetChangeId = item.changeId;
             rebaseFlag = '-A';
           }
 
-          // Debug: log to file
-          const dbg = `DROP: item.type=${item.type} item.bookmark=${item.bookmark} item.changeId=${item.changeId} item.entry?.changeId=${item.entry?.changeId} isEmptyGroupDrop=${isEmptyGroupDrop} targetChangeId=${targetChangeId} rebaseFlag=${rebaseFlag} picked=${picked}\n`;
-          fs.appendFileSync('/tmp/vpr-debug.log', dbg);
+          // Handle empty group drop separately — no rebase, just bookmark swap
+          if (isEmptyGroupDrop && item.bookmark) {
+            try {
+              // Remove picked commit's current bookmark (if any)
+              const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
+              if (pickedEntry?.bookmark) {
+                jj(`bookmark delete ${pickedEntry.bookmark}`);
+              }
+              // Create the empty group's bookmark on picked commit
+              try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
+                jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`);
+              }
+              message = `${GREEN}Assigned ${picked.slice(0, 8)} to ${item.bookmark}${RESET}`;
+            } catch (err) {
+              message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+            }
+            picked = null;
+            reload();
+            break;
+          }
 
           if (!targetChangeId) {
             message = `${RED}No target found${RESET}`;
-            fs.appendFileSync('/tmp/vpr-debug.log', 'FAIL: no targetChangeId\n');
             break;
           }
 
           if (picked === targetChangeId || picked.startsWith(targetChangeId) || targetChangeId.startsWith(picked)) {
-            message = `${DIM}Same commit${RESET}`;
-            fs.appendFileSync('/tmp/vpr-debug.log', `FAIL: same commit picked=${picked} target=${targetChangeId}\n`);
+            message = `${DIM}Same position${RESET}`;
             picked = null;
             break;
           }
 
           try {
-            // Step 1: Rebase
-            fs.appendFileSync('/tmp/vpr-debug.log', `RUN: jj rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
+            // Rebase
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-            if (isEmptyGroupDrop && item.bookmark) {
-              // Step 2 (empty group): create bookmark on picked — skip target bookmark move
-            } else {
-              // Step 2 (normal): if target was a bookmark tip, move bookmark to picked (new tip)
-              const targetEntry = entries.find(e =>
-                e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
-              );
-              if (targetEntry?.bookmark && rebaseFlag === '-A') {
-                try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
-              }
-            }
-
-            // Step 3: Handle empty group drop — create bookmark on picked
-            if (isEmptyGroupDrop && item.bookmark) {
-              try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
-                try { jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`); } catch {}
-              }
+            // If target was a bookmark tip, move bookmark to picked (new tip)
+            const targetEntry = entries.find(e =>
+              e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
+            );
+            if (targetEntry?.bookmark && rebaseFlag === '-A') {
+              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
             }
 
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
