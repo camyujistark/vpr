@@ -188,7 +188,7 @@ function buildItems() {
 }
 
 // ── Right pane: group summary with selectable fields ─────────────────
-function getGroupSummary(item, rightW) {
+function getGroupSummary(item, rightW, targetBranch) {
   const meta = item.meta || {};
   const lines = [];
   const WHITE = `${ESC}37m`;
@@ -233,6 +233,7 @@ function getGroupSummary(item, rightW) {
   if (meta.wi) {
     lines.push(`│  ${DIM}WI: #${meta.wi} [${meta.wiState || '?'}]${RESET}`);
   }
+  lines.push(`│  ${DIM}Target: ${targetBranch || 'main'}${RESET}`);
   lines.push('│');
 
   addField(0, 'Ticket Title', meta.wiTitle);
@@ -307,7 +308,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  d delete  x remove group  n new  S sync  b bookmark  u undo  : jj  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  e edit  d del  x del group  n new  S sync  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -332,7 +333,12 @@ function render() {
     editCursorScreenRow = edit.cursorRow;
     editCursorScreenCol = edit.cursorCol;
   } else if (currentItem?.type === 'group') {
-    rightLines = getGroupSummary(currentItem, rightW);
+    // Find previous group in the chain for target branch
+    const allGroups = items.filter(i => i.type === 'group');
+    const groupIdx = allGroups.findIndex(g => g.bookmark === currentItem.bookmark);
+    const prevGroup = groupIdx > 0 ? allGroups[groupIdx - 1] : null;
+    const targetBranch = prevGroup?.bookmark || base;
+    rightLines = getGroupSummary(currentItem, rightW, targetBranch);
   } else if (currentItem?.sha) {
     rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
   }
@@ -1092,6 +1098,21 @@ export function startTui(config, baseArg) {
             saveMeta(vprMeta);
             reload();
             message = `${GREEN}Deleted ${xLabel}${RESET}`;
+          } catch (err) {
+            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        });
+        return;
+      }
+
+      case 'c': {
+        // Commit (jj commit) — prompts for message
+        startInput('Commit message: ', '', (msg) => {
+          if (!msg) return;
+          try {
+            jj(`commit -m '${msg.replace(/'/g, "'\\''")}'`);
+            reload();
+            message = `${GREEN}Committed: ${msg.slice(0, 40)}${RESET}`;
           } catch (err) {
             message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
           }
