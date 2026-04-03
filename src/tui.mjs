@@ -870,54 +870,54 @@ process.stdin.on('keypress', (str, key) => {
     }
 
     case 'w': {
-      // Edit ticket (title + description in one popup)
+      // Edit ticket: title → description → confirm save
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForWi = items[cursor].vpr;
       const wiMeta = vprMeta[vprForWi.tp] || {};
       const wiTitle = wiMeta.wiTitle || wiMeta.title || vprForWi.title || '';
       const wiDesc = wiMeta.wiDescription || '';
-      const existing = `${wiTitle}\n\n${wiDesc}`;
-      startInput(`Ticket (${vprForWi.tp}) — line 1: title, rest: description`, existing.trim(), (val) => {
-        const lines = val.split('\n');
-        const title = lines[0].trim();
-        const desc = lines.slice(1).join('\n').trim();
-        vprMeta[vprForWi.tp] = {
-          ...vprMeta[vprForWi.tp],
-          wiTitle: title,
-          wiDescription: desc,
-          title: title,
-        };
-        // Update Azure DevOps if WI exists
-        if (wiMeta.wi && provider) {
-          try { provider.updateWorkItem(wiMeta.wi, { title, description: desc }); } catch {}
-        }
-        saveMeta(vprMeta);
-        message = `${GREEN}Ticket updated for ${vprForWi.tp}${RESET}`;
-        buildVprs();
-      }, true);
+
+      startInput(`Ticket title (${vprForWi.tp})`, wiTitle, (title) => {
+        startInput(`Ticket description (${vprForWi.tp})`, wiDesc, (desc) => {
+          startInput(`Save ticket? (y/n)`, '', (answer) => {
+            if (answer !== 'y') { message = `${DIM}Cancelled${RESET}`; return; }
+            vprMeta[vprForWi.tp] = {
+              ...vprMeta[vprForWi.tp],
+              wiTitle: title,
+              wiDescription: desc,
+              title: title,
+            };
+            if (wiMeta.wi && provider) {
+              try { provider.updateWorkItem(wiMeta.wi, { title, description: desc }); } catch {}
+            }
+            saveMeta(vprMeta);
+            message = `${GREEN}Ticket saved for ${vprForWi.tp}${RESET}`;
+            buildVprs();
+          });
+        }, true);
+      });
       return;
     }
 
     case 'p': {
-      // Edit PR draft (title + description in one popup)
+      // Edit PR draft: title → body → save
       if (items[cursor]?.type !== 'vpr') { message = `${RED}Select a VPR header${RESET}`; break; }
       const vprForPr = items[cursor].vpr;
       const prMeta = vprMeta[vprForPr.tp] || {};
       const prTitle = prMeta.prTitle || prMeta.wiTitle || prMeta.title || vprForPr.title || '';
       const prDesc = prMeta.prDesc || prMeta.wiDescription || '';
-      const existing = `${prTitle}\n\n${prDesc}`;
-      startInput(`PR Draft (${vprForPr.tp}) — line 1: title, rest: body`, existing.trim(), (val) => {
-        const lines = val.split('\n');
-        const title = lines[0].trim();
-        const body = lines.slice(1).join('\n').trim();
-        vprMeta[vprForPr.tp] = {
-          ...vprMeta[vprForPr.tp],
-          prTitle: title,
-          prDesc: body,
-        };
-        saveMeta(vprMeta);
-        message = `${GREEN}PR draft updated for ${vprForPr.tp}${RESET}`;
-      }, true);
+
+      startInput(`PR title (${vprForPr.tp})`, prTitle, (title) => {
+        startInput(`PR body (${vprForPr.tp})`, prDesc, (body) => {
+          vprMeta[vprForPr.tp] = {
+            ...vprMeta[vprForPr.tp],
+            prTitle: title,
+            prDesc: body,
+          };
+          saveMeta(vprMeta);
+          message = `${GREEN}PR draft saved for ${vprForPr.tp}${RESET}`;
+        }, true);
+      });
       return;
     }
 
