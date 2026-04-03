@@ -1,157 +1,103 @@
 # VPR — Virtual Pull Request Manager
 
-Group atomic commits into virtual PRs, refine the story, then render into real branch chains when ready to push.
+Organize commits into virtual PR groups, refine the story, then push as chained git branches.
 
-## Problem
+## Why
 
-Maintaining real branch chains during development is fragile. Amending an early commit cascades rebases. Cherry-picks silently produce empty commits. Moving a change between PRs means rebasing the entire chain. One mistake can lose work.
-
-## Solution
-
-Work on **one branch**. Tag commits to virtual PR groups via git trailers. Rearrange freely. Render the branch chain once at push time.
-
-```
-One working branch           VPR groups              Real branches
-─────────────────           ──────────              ─────────────
-feat(media): ...      ─┐    TP-1: [2 commits]  ──► feat/123-typst
-test(media): ...      ─┤    TP-2: [1 commit]   ──► feat/124-docker
-refactor(docker): ... ─┘    TP-3: [3 commits]  ──► feat/125-ansible
-```
+Maintaining real branch chains during development is fragile — amending cascades rebases, cherry-picks produce empty commits, moving changes between PRs means starting over. VPR keeps everything on one branch using jj bookmarks as PR boundaries. Real git branches are created at push time.
 
 ## Quick Start
 
 ```bash
-# Install globally
-cd /path/to/vpr && npm link
-
-# Initialize in your project
+cd /path/to/vpr && npm link   # install globally
 cd your-project
-vpr init
-
-# Open the TUI
-vpr
+vpr init                       # set up provider + prefix
 ```
 
-## Init
-
-`vpr init` creates a `.vpr/` directory (gitignored) with your config:
+## Workflow
 
 ```
-? Which provider?
-  1) azure-devops
-  2) github
-  3) bitbucket
-  4) gitlab
-  5) none
-
-? VPR prefix: TP
-? Organization URL: https://dev.azure.com/YourOrg
-? Project name: My Project
-? Repository name: my-repo
+vpr new "Title" "Desc"          # create ticket + local bookmark
+code freely, commit as you go
+vpr move <sha> --after <sha>    # organize commits
+vpr edit tp-1 --pr-desc "..."   # write PR story
+vpr send --dry-run              # preview the chain
+vpr send                        # push branches + create PRs
 ```
 
-Config is stored in `.vpr/config.json`. VPR metadata (titles, descriptions, work item IDs) in `.vpr/meta.json`.
+## PR Story
 
-## Commit Format
+Each VPR group has a **PR story** — your intent and context for the reviewer.
 
-Conventional commits with a `VPR:` trailer in the body:
+- **With Claude:** At push time, the AI combines the story + commits + files changed to craft a polished PR description. The story drives the narrative, the code provides the detail.
+- **Without Claude:** The story is used as-is for the PR description.
+- **In the TUI:** Edit via `J/K` to select the PR Story field, `e` to edit inline.
+- **In the CLI:** `vpr edit <id> --pr-desc "your story"`
 
-```
-feat(media): replace texlive with typst
+## CLI Commands
 
-VPR: TP-92
-```
+| Command | Alias | What it does |
+|---------|-------|-------------|
+| `vpr status` | `vpr s` | Show chain with commits + files |
+| `vpr list` | `vpr l` | JSON output for AI parsing |
+| `vpr new "title" "desc"` | `vpr n` | Create ticket + bookmark |
+| `vpr edit <id> --flag "val"` | `vpr e` | Edit ticket/PR fields |
+| `vpr move <sha> --after <sha>` | `vpr m` | Move commit |
+| `vpr delete <id>` | `vpr d` | Delete commit or group |
+| `vpr squash <sha>` | | Squash into parent |
+| `vpr split <sha>` | | Split commit interactively |
+| `vpr send --dry-run` | | Preview what would push |
+| `vpr send` | | Push branches + create PRs |
+| `vpr push [id]` | | Push bookmark as git branch |
 
-The subject line stays clean. The trailer is metadata that VPR reads and manages.
-
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `ci`, `chore`, `style`, `perf`
+`<id>` can be: bookmark name, project index (e.g. tp-91), or partial match.
 
 ## TUI
 
-Split-pane layout — VPR groups on the left, diff or PR summary on the right.
+```bash
+vpr                # open interactive TUI
+```
 
-### Keys (lazygit-style)
+Split-pane: groups on left, diff or PR metadata on right.
 
 | Key | Action |
 |-----|--------|
-| `j/k` | Navigate list |
-| `J/K` | Scroll diff pane |
-| `PgUp/PgDn` | Page through diff |
-| `Space` | Pick up / drop commit |
-| `n` | New VPR group |
-| `g` | Merge VPR into another |
-| `r` | Rename VPR |
-| `t` | Edit PR title |
-| `d` | Edit PR description |
-| `w` | Create/sync work item |
-| `R` | Refresh from git |
-| `s` | Save (rewrite trailers via rebase) |
-| `Esc` | Cancel pick |
+| `j/k` | Navigate |
+| `J/K` | Select field / scroll diff |
+| `e` / `Enter` | Edit selected field inline |
+| `Esc` / `Ctrl+C` | Save edit / quit |
+| `Space` | Pick/drop commit to reorder |
+| `c` | Commit (jj commit) |
+| `n` | New ticket |
+| `d` | Delete commit or group |
+| `s` | Squash into parent |
+| `f` | Split commit |
+| `u` | Undo (jj undo) |
+| `S` | Sync ticket to provider |
+| `b` | Set bookmark on commit |
+| `:` | Run jj command |
 | `q` | Quit |
 
-### Views
+## How It Works
 
-**On a VPR header** — right pane shows PR summary:
-- Work item ID, title, state
-- PR title and description drafts
-- All commits with conventional commit types
-- All files changed with +/- counts
-
-**On a commit** — right pane shows the full diff
+- **jj bookmarks** define PR boundaries — each bookmark becomes a git branch at push time
+- **`.vpr/meta.json`** stores ticket IDs, PR titles, PR stories — local only, gitignored
+- **`.vpr/config.json`** stores provider settings (Azure DevOps, GitHub, etc.)
+- Commits are freely reordered with `jj rebase` — bookmarks follow automatically
+- `vpr send` pushes each bookmark as a git branch, creates chained PRs
 
 ## Providers
-
-VPR abstracts work item and PR creation behind providers:
 
 | Provider | Work Items | PRs | CLI Tool |
 |----------|-----------|-----|----------|
 | `azure-devops` | Azure Boards | `az repos pr` | `az` |
 | `github` | GitHub Issues | `gh pr` | `gh` |
-| `bitbucket` | (planned) | (planned) | — |
-| `gitlab` | (planned) | (planned) | — |
 | `none` | Local IDs | Manual | — |
 
-## Rules
+## Tests
 
-- **Max 10 VPRs** — this is a buffer zone, not a permanent system
-- **Ordering matters** — if VPR B touches a file that VPR A also touches, A must render before B
-- **Ungrouped commits** — any commit without a `VPR:` trailer is flagged
-
-## Workflow
-
-```
-code freely on one branch
-         ↓
-vpr              — view and organize VPR groups
-         ↓
-refine           — add docs, tests, reword, edit PR titles
-         ↓
-vpr render       — create real branch chain
-         ↓
-verify + push    — step through each PR
-```
-
-## Project Structure
-
-```
-vpr/
-├── bin/vpr.mjs                 CLI entry point
-├── src/
-│   ├── config.mjs              Project config (.vpr/config.json)
-│   ├── git.mjs                 Git helpers
-│   ├── tui.mjs                 Interactive TUI
-│   ├── providers/
-│   │   ├── base.mjs            Provider interface
-│   │   ├── azure-devops.mjs    Azure DevOps (az cli)
-│   │   ├── github.mjs          GitHub (gh cli)
-│   │   ├── none.mjs            No-op provider
-│   │   └── index.mjs           Provider factory
-│   └── commands/
-│       └── init.mjs            vpr init command
-├── test/
-│   ├── config.test.mjs         Config + provider tests
-│   └── git.test.mjs            Git helper + trailer tests
-└── package.json
+```bash
+npm test    # 99 tests
 ```
 
 ## License
