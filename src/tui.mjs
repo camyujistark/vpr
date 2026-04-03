@@ -524,79 +524,28 @@ export function startTui(config, baseArg) {
           picked = item.changeId;
           message = `${MAGENTA}Picked ${picked.slice(0, 8)} — navigate to a bookmark and press space${RESET}`;
         } else {
-          // Drop: rebase picked commit onto the bookmark's commit
+          // Drop: rebase only. Bookmarks follow commits (jj's default).
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // Two cases: drop on a commit, or drop on a group header
-          let targetChangeId = null;
-          let rebaseFlag = '-A';
-          let isEmptyGroupDrop = false;
-
-          if (item.type === 'group') {
-            const groupCommits = items.filter(i => i.group === item.bookmark && i.type === 'commit');
-            if (groupCommits.length > 0) {
-              // Group with commits: insert before first commit (top of group)
-              targetChangeId = groupCommits[0].changeId;
-              rebaseFlag = '-B';
-            } else {
-              // Empty group: find the last commit above this group header, skipping the picked commit
-              isEmptyGroupDrop = true;
-              const idx = items.indexOf(item);
-              for (let i = idx - 1; i >= 0; i--) {
-                const cid = items[i].changeId || items[i].entry?.changeId;
-                if (cid && cid !== picked && !cid.startsWith(picked) && !picked.startsWith(cid)) {
-                  targetChangeId = cid;
-                  break;
-                }
-              }
-              rebaseFlag = '-A';
-            }
-          } else if (item.changeId) {
-            targetChangeId = item.changeId;
-            rebaseFlag = '-A';
-          }
-
-          // Debug: log to file
-          const dbg = `DROP: item.type=${item.type} item.bookmark=${item.bookmark} item.changeId=${item.changeId} item.entry?.changeId=${item.entry?.changeId} isEmptyGroupDrop=${isEmptyGroupDrop} targetChangeId=${targetChangeId} rebaseFlag=${rebaseFlag} picked=${picked}\n`;
-          fs.appendFileSync('/tmp/vpr-debug.log', dbg);
+          // Find target: the commit to rebase relative to
+          const targetChangeId = item.changeId || item.entry?.changeId || null;
 
           if (!targetChangeId) {
-            message = `${RED}No target found${RESET}`;
-            fs.appendFileSync('/tmp/vpr-debug.log', 'FAIL: no targetChangeId\n');
+            message = `${RED}No target commit${RESET}`;
             break;
           }
 
           if (picked === targetChangeId || picked.startsWith(targetChangeId) || targetChangeId.startsWith(picked)) {
-            message = `${DIM}Same commit${RESET}`;
-            fs.appendFileSync('/tmp/vpr-debug.log', `FAIL: same commit picked=${picked} target=${targetChangeId}\n`);
+            message = `${DIM}Same position${RESET}`;
             picked = null;
             break;
           }
 
           try {
-            // Step 1: Rebase
-            fs.appendFileSync('/tmp/vpr-debug.log', `RUN: jj rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
-            jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
-
-            if (isEmptyGroupDrop && item.bookmark) {
-              // Step 2 (empty group): create bookmark on picked — skip target bookmark move
-            } else {
-              // Step 2 (normal): if target was a bookmark tip, move bookmark to picked (new tip)
-              const targetEntry = entries.find(e =>
-                e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
-              );
-              if (targetEntry?.bookmark && rebaseFlag === '-A') {
-                try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
-              }
-            }
-
-            // Step 3: Handle empty group drop — create bookmark on picked
-            if (isEmptyGroupDrop && item.bookmark) {
-              try { jj(`bookmark create ${item.bookmark} -r ${picked}`); } catch {
-                try { jj(`bookmark set ${item.bookmark} -r ${picked} --allow-backwards`); } catch {}
-              }
-            }
-
+            // Group header → insert before (top of group)
+            // Commit → insert after (below in display)
+            const flag = item.type === 'group' ? '-B' : '-A';
+            jj(`rebase -r ${picked} ${flag} ${targetChangeId}`);
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
