@@ -224,7 +224,7 @@ export function cmdList() {
       wiTitle: bmMeta.wiTitle || null,
       prTitle: bmMeta.prTitle || null,
       prDesc: bmMeta.prDesc || null,
-      target: prevGroup?.bookmark || base,
+      target: prevGroup?.bookmark || resolveToBookmark(base),
       commits: g.commits.map(c => ({
         changeId: c.changeId,
         sha: c.sha,
@@ -269,7 +269,14 @@ export function cmdStatus() {
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const bmMeta = g.bookmark ? (meta.bookmarks?.[g.bookmark] || {}) : {};
-    const target = i > 0 ? groups[i - 1].bookmark : base;
+    let target = i > 0 ? groups[i - 1].bookmark : base;
+    // Resolve change ID to bookmark name if possible
+    if (target && !target.includes('/') && !target.includes('@')) {
+      try {
+        const bm = jj(`log --no-graph -r '${target}' -T 'bookmarks'`).trim().split(/\s+/)[0];
+        if (bm) target = bm;
+      } catch {}
+    }
     const tp = bmMeta.tpIndex || '';
     const title = bmMeta.wiTitle || g.bookmark || 'ungrouped';
     const wi = bmMeta.wi ? `#${bmMeta.wi}` : '';
@@ -465,6 +472,15 @@ export function cmdSplit(args) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+function resolveToBookmark(changeId) {
+  if (!changeId || changeId.includes('/') || changeId.includes('@')) return changeId;
+  try {
+    const bm = jj(`log --no-graph -r '${changeId}' -T 'bookmarks'`).trim().split(/\s+/)[0];
+    if (bm) return bm;
+  } catch {}
+  return changeId;
+}
+
 function findBookmark(meta, query) {
   if (!query) return null;
   // Exact match
