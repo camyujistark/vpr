@@ -528,10 +528,12 @@ export function startTui(config, baseArg) {
         break;
 
       case 'c': {
-        // Create ticket + jj bookmark at current commit
+        // Create ticket + jj bookmark
         if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
         const item = items[cursor];
-        if (!item?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
+        // Resolve target: commit's changeId, group's tip commit, or @-
+        const targetChangeId = item?.changeId || item?.entry?.changeId || '@-';
+        if (!targetChangeId) { message = `${RED}No target commit${RESET}`; break; }
 
         startInput('Ticket title: ', '', (title) => {
           startInput('Ticket description: ', '', (desc) => {
@@ -545,7 +547,7 @@ export function startTui(config, baseArg) {
                 vprMeta.nextIndex = idx + 1;
 
                 // Create jj bookmark
-                jj(`bookmark create ${bm} -r ${item.changeId}`);
+                jj(`bookmark create ${bm} -r ${targetChangeId}`);
 
                 // Store metadata
                 if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
