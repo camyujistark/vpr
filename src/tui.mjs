@@ -535,15 +535,16 @@ export function startTui(config, baseArg) {
         const targetChangeId = item?.changeId || item?.entry?.changeId || '@-';
         if (!targetChangeId) { message = `${RED}No target commit${RESET}`; break; }
 
-        startInput('Ticket title: ', '', (title) => {
-          startInput('Ticket description: ', '', (desc) => {
+        const prefix = config?.prefix || 'TP';
+        const idx = vprMeta.nextIndex || 1;
+        const nextBm = `${prefix.toLowerCase()}-${idx}`;
+        startInput(`${nextBm} — Ticket title: `, '', (title) => {
+          startInput(`${nextBm} — Ticket description: `, '', (desc) => {
             try {
               const result = provider.createWorkItem(title, desc);
               const wi = result.then ? null : result;
               if (wi) {
-                const prefix = config?.prefix || 'TP';
-                const idx = vprMeta.nextIndex || 1;
-                const bm = `${prefix.toLowerCase()}-${idx}`;
+                const bm = nextBm;
                 vprMeta.nextIndex = idx + 1;
 
                 // Create jj bookmark
