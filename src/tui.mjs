@@ -750,6 +750,12 @@ export function startTui(config, baseArg) {
       render(); return;
     }
 
+    // Ctrl+C in normal mode — quit
+    if (key.name === 'c' && key.ctrl) {
+      process.stdout.write(SHOW_CURSOR + CLEAR);
+      process.exit(0);
+    }
+
     // Shift keys — context-sensitive
     const currentItem = items[cursor];
     if (key.name === 'j' && key.shift) {
