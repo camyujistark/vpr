@@ -515,16 +515,25 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // Resolve drop target and rebase strategy
+          // Resolve drop target
+          // Drop on group header → insert after the first commit of that group
+          // Drop on a commit → insert after that commit
           let targetChangeId = null;
-          let rebaseFlag = '-A'; // default: insert after
+          let rebaseFlag = '-A';
 
           if (item.type === 'group') {
-            // Drop on group header → insert before the bookmark tip (becomes part of the group)
-            targetChangeId = item.entry?.changeId;
-            rebaseFlag = '-B';
+            // Find the first commit in this group (the one right after the previous bookmark)
+            const groupCommits = items.filter(i => i.group === item.bookmark && i.type === 'commit');
+            if (groupCommits.length > 0) {
+              // Insert before the first commit of the group (puts it at the start of the group)
+              targetChangeId = groupCommits[0].changeId;
+              rebaseFlag = '-B';
+            } else {
+              // Empty group — insert after the entry (bookmark tip)
+              targetChangeId = item.entry?.changeId;
+              rebaseFlag = '-A';
+            }
           } else {
-            // Drop on a commit → insert after it
             targetChangeId = item.changeId;
             rebaseFlag = '-A';
           }
