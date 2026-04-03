@@ -449,6 +449,132 @@ describe('full move cycle: move out then back into empty group', () => {
   });
 });
 
+describe('cross-bookmark move: tp-94 → tp-93 → tp-94', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-cross-test-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate');
+    jj('config set --repo user.name "Test"');
+    jj('config set --repo user.email "test@test.com"');
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('move commit from tp-94 into tp-93, then back to tp-94', () => {
+    // Setup: a(tp-91), b, c(tp-93), d(tp-94), e(tp-95)
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    makeCommit('feat: d');
+    makeCommit('feat: e');
+    const ids = getChangeIds(); // [a, b, c, d, e]
+
+    jj(`bookmark create tp-91 -r ${ids[0]}`);
+    jj(`bookmark create tp-93 -r ${ids[2]}`);
+    jj(`bookmark create tp-94 -r ${ids[3]}`);
+    jj(`bookmark create tp-95 -r ${ids[4]}`);
+
+    // Verify initial state
+    let bm = getBookmarks();
+    assert.ok(bm['tp-93'], 'tp-93 on c');
+    assert.ok(bm['tp-94'], 'tp-94 on d');
+
+    // === Step 1: Move d (tp-94 tip) into tp-93 ===
+    // Drop on c (tp-93 tip): rebase -A c, then move tp-93 to d
+    jj(`rebase -r ${ids[3]} -A ${ids[2]}`);
+    jj(`bookmark set tp-93 -r ${ids[3]} --allow-backwards`);
+
+    // tp-94 followed d (jj default), so now both tp-93 and tp-94 on d
+    // Delete tp-94 since it was absorbed into tp-93... no wait
+    // Actually tp-94 bookmark followed d. Need to check.
+    let log1 = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    let lines1 = log1.split('\n').filter(Boolean);
+    // d should be after c and have tp-93 (and tp-94 followed it)
+    const dLine1 = lines1.find(l => l.includes('feat: d'));
+    assert.ok(dLine1.includes('tp-93'), `d should have tp-93, got: ${dLine1}`);
+
+    // === Step 2: Move d back to tp-94 (now empty in meta) ===
+    // Move tp-93 back to parent of d (which is c)
+    jj(`bookmark set tp-93 -r '${ids[3]}-' --allow-backwards`);
+    // tp-94 is already on d (followed it), so just verify
+    // If tp-94 was deleted, recreate it
+    bm = getBookmarks();
+    if (!bm['tp-94']) {
+      jj(`bookmark create tp-94 -r ${ids[3]}`);
+    }
+
+    // Verify final state: tp-93 on c, tp-94 on d
+    let log2 = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    let lines2 = log2.split('\n').filter(Boolean);
+
+    const cLine = lines2.find(l => l.includes('feat: c'));
+    const dLine = lines2.find(l => l.includes('feat: d'));
+    assert.ok(cLine.includes('tp-93'), `c should have tp-93, got: ${cLine}`);
+    assert.ok(dLine.includes('tp-94'), `d should have tp-94, got: ${dLine}`);
+
+    // Verify order: a, b, c(tp-93), d(tp-94), e(tp-95)
+    const aIdx = lines2.findIndex(l => l.includes('feat: a'));
+    const bIdx = lines2.findIndex(l => l.includes('feat: b'));
+    const cIdx = lines2.findIndex(l => l.includes('feat: c'));
+    const dIdx = lines2.findIndex(l => l.includes('feat: d'));
+    const eIdx = lines2.findIndex(l => l.includes('feat: e'));
+    assert.ok(aIdx < bIdx && bIdx < cIdx && cIdx < dIdx && dIdx < eIdx,
+      `Order should be a,b,c,d,e got indices: ${aIdx},${bIdx},${cIdx},${dIdx},${eIdx}`);
+  });
+});
+
+describe('within-group move should stay in group', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-within-test-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate');
+    jj('config set --repo user.name "Test"');
+    jj('config set --repo user.email "test@test.com"');
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reorder within a group — bookmark stays on tip', () => {
+    // Setup: a, b, c(tp-1) — all three in tp-1's group
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    const ids = getChangeIds();
+
+    jj(`bookmark create tp-1 -r ${ids[2]}`); // tip on c
+
+    // Move a after b (reorder within group): a,b,c → b,a,c
+    jj(`rebase -r ${ids[0]} -A ${ids[1]}`);
+
+    // tp-1 should still be on c (bookmark follows c, not a)
+    const bm = getBookmarks();
+    assert.ok(bm['tp-1'], 'tp-1 should still exist');
+
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    // c should still have tp-1
+    const cLine = lines.find(l => l.includes('feat: c'));
+    assert.ok(cLine.includes('tp-1'), `c should have tp-1, got: ${cLine}`);
+
+    // Order should be b, a, c(tp-1)
+    const bIdx = lines.findIndex(l => l.includes('feat: b'));
+    const aIdx = lines.findIndex(l => l.includes('feat: a'));
+    const cIdx = lines.findIndex(l => l.includes('feat: c'));
+    assert.ok(bIdx < aIdx && aIdx < cIdx, `Order should be b,a,c got: ${bIdx},${aIdx},${cIdx}`);
+  });
+});
+
 describe('ascending sort', () => {
   it('sorts tp-1, tp-2, tp-10 correctly (numeric not lexical)', () => {
     const groups = [
