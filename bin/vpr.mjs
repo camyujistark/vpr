@@ -70,6 +70,18 @@ switch (cmd) {
     break;
   }
 
+  case 'squash': {
+    const { cmdSquash } = await import('../src/commands/cli.mjs');
+    cmdSquash(args);
+    break;
+  }
+
+  case 'split': {
+    const { cmdSplit } = await import('../src/commands/cli.mjs');
+    cmdSplit(args);
+    break;
+  }
+
   case 'send': {
     const { cmdSend } = await import('../src/commands/cli.mjs');
     await cmdSend(args);
@@ -94,6 +106,8 @@ switch (cmd) {
     vpr edit <id> --pr-desc "val"     Edit PR description
     vpr move <sha> --after <sha>      Move commit after target
     vpr move <sha> --before <sha>     Move commit before target
+    vpr squash <sha>                  Squash commit into parent
+    vpr split <sha>                   Split commit interactively
     vpr delete <sha-or-bookmark>      Delete commit or group
     vpr list                          List groups as JSON
     vpr status                        Show chain summary

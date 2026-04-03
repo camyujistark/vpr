@@ -434,6 +434,25 @@ export async function cmdSend(args) {
   console.log('\nDone.');
 }
 
+// ── vpr squash <changeId> ──────────────────────────────────────────────
+export function cmdSquash(args) {
+  requireJj();
+  const changeId = args[0];
+  if (!changeId) { console.error('Usage: vpr squash <changeId>'); process.exit(1); }
+  jj(`squash -r ${changeId}`);
+  console.log(JSON.stringify({ squashed: changeId }));
+}
+
+// ── vpr split <changeId> ──────────────────────────────────────────────
+export function cmdSplit(args) {
+  requireJj();
+  const changeId = args[0];
+  if (!changeId) { console.error('Usage: vpr split <changeId>'); process.exit(1); }
+  // Split needs interactive diff editor
+  execSync(`jj split -r ${changeId}`, { stdio: 'inherit', shell: '/bin/bash' });
+  console.log(JSON.stringify({ split: changeId }));
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 function findBookmark(meta, query) {
   if (!query) return null;

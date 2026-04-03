@@ -308,7 +308,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  e edit  d delete  n new  S sync  u undo  : jj  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  s squash  f split  e edit  d del  n new  S sync  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -1095,6 +1095,22 @@ export function startTui(config, baseArg) {
           message = `${RED}Nothing to delete${RESET}`;
           break;
         }
+        return;
+      }
+
+      case 's': {
+        // Squash — merge selected commit into its parent
+        const sItem = items[cursor];
+        if (!sItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
+        runJjCommand(`squash -r ${sItem.changeId}`);
+        return;
+      }
+
+      case 'f': {
+        // Split — split selected commit interactively
+        const fItem = items[cursor];
+        if (!fItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
+        runJjCommand(`split -r ${fItem.changeId}`);
         return;
       }
 
