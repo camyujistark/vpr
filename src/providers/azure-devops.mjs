@@ -23,7 +23,7 @@ export class AzureDevOpsProvider extends BaseProvider {
   get repo() { return this.config.repo; }
   get wiType() { return this.config.wiType || 'Task'; }
 
-  async createWorkItem(title, description = '') {
+  createWorkItem(title, description = '') {
     const desc = description.replace(/"/g, '\\"');
     const result = az(
       `boards work-item create --type "${this.wiType}" --title "${title.replace(/"/g, '\\"')}"` +
@@ -33,7 +33,7 @@ export class AzureDevOpsProvider extends BaseProvider {
     return { id: result.id, url: result.url };
   }
 
-  async getWorkItem(id) {
+  getWorkItem(id) {
     const result = az(
       `boards work-item show --id ${id} --org "${this.org}"`
     );
@@ -47,7 +47,7 @@ export class AzureDevOpsProvider extends BaseProvider {
     };
   }
 
-  async updateWorkItem(id, fields) {
+  updateWorkItem(id, fields) {
     const args = [];
     if (fields.title) args.push(`--title "${fields.title.replace(/"/g, '\\"')}"`);
     if (fields.state) args.push(`--state "${fields.state}"`);
@@ -56,7 +56,7 @@ export class AzureDevOpsProvider extends BaseProvider {
     az(`boards work-item update --id ${id} ${args.join(' ')} --org "${this.org}"`);
   }
 
-  async createPR(sourceBranch, targetBranch, title, body, workItemId) {
+  createPR(sourceBranch, targetBranch, title, body, workItemId) {
     const wiFlag = workItemId ? ` --work-items ${workItemId}` : '';
     const result = az(
       `repos pr create --repository "${this.repo}"` +
@@ -69,7 +69,7 @@ export class AzureDevOpsProvider extends BaseProvider {
     return { id: result.pullRequestId, url: result.url };
   }
 
-  async getLatestPRIndex() {
+  getLatestPRIndex() {
     try {
       const result = az(
         `repos pr list --repository "${this.repo}" --top 1` +
