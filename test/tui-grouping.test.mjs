@@ -544,7 +544,7 @@ describe('within-group move should stay in group', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('reorder within a group — bookmark stays on tip', () => {
+  it('reorder non-tip within a group — bookmark stays on tip', () => {
     // Setup: a, b, c(tp-1) — all three in tp-1's group
     makeCommit('feat: a');
     makeCommit('feat: b');
@@ -563,15 +563,54 @@ describe('within-group move should stay in group', () => {
     const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
     const lines = log.split('\n').filter(Boolean);
 
-    // c should still have tp-1
     const cLine = lines.find(l => l.includes('feat: c'));
     assert.ok(cLine.includes('tp-1'), `c should have tp-1, got: ${cLine}`);
 
-    // Order should be b, a, c(tp-1)
     const bIdx = lines.findIndex(l => l.includes('feat: b'));
     const aIdx = lines.findIndex(l => l.includes('feat: a'));
     const cIdx = lines.findIndex(l => l.includes('feat: c'));
     assert.ok(bIdx < aIdx && aIdx < cIdx, `Order should be b,a,c got: ${bIdx},${aIdx},${cIdx}`);
+  });
+
+  it('move tip within group — bookmark moves to predecessor, commit reorders', () => {
+    // Setup: a, b, c(tp-1), d(tp-2) — tp-1 has a,b,c
+    // Pick c (tp-1 tip), drop on a → c goes after a, tp-1 moves to b
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    makeCommit('feat: d');
+    const ids = getChangeIds(); // [a, b, c, d]
+
+    jj(`bookmark create tp-1 -r ${ids[2]}`); // tip on c
+    jj(`bookmark create tp-2 -r ${ids[3]}`); // tip on d
+
+    // Simulate VPR: pick c (tp-1 tip), rebase after a, move tp-1 to b (predecessor)
+    jj(`rebase -r ${ids[2]} -A ${ids[0]}`);
+    jj(`bookmark set tp-1 -r ${ids[1]} --allow-backwards`);
+
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    // Order: a, c, b(tp-1), d(tp-2)
+    const aIdx = lines.findIndex(l => l.includes('feat: a'));
+    const cIdx = lines.findIndex(l => l.includes('feat: c'));
+    const bIdx = lines.findIndex(l => l.includes('feat: b'));
+    const dIdx = lines.findIndex(l => l.includes('feat: d'));
+
+    assert.ok(aIdx < cIdx && cIdx < bIdx && bIdx < dIdx,
+      `Order should be a,c,b,d got indices: ${aIdx},${cIdx},${bIdx},${dIdx}`);
+
+    // tp-1 should be on b (predecessor of c, the old tip)
+    const bLine = lines[bIdx];
+    assert.ok(bLine.includes('tp-1'), `b should have tp-1, got: ${bLine}`);
+
+    // tp-2 should still be on d
+    const dLine = lines[dIdx];
+    assert.ok(dLine.includes('tp-2'), `d should have tp-2, got: ${dLine}`);
+
+    // c should have no bookmark (it was the old tip, now just a regular commit)
+    const cLine = lines[cIdx];
+    assert.ok(!cLine.includes('tp-1') && !cLine.includes('tp-2'), `c should have no bookmark, got: ${cLine}`);
   });
 });
 
