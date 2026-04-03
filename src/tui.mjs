@@ -588,15 +588,26 @@ export function startTui(config, baseArg) {
           }
 
           try {
-            // Rebase
-            jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
-
-            // If target was a bookmark tip, move bookmark to picked (new tip)
+            const pickedEntry = entries.find(e => e.changeId === picked || e.changeId?.startsWith(picked) || picked?.startsWith(e.changeId));
             const targetEntry = entries.find(e =>
               e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
             );
-            if (targetEntry?.bookmark && rebaseFlag === '-A') {
-              try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+
+            // If picked is a bookmark tip and target is in the same group,
+            // just move the bookmark — don't rebase (avoids orphaning commits)
+            const pickedGroup = items.find(i => i.changeId === picked)?.group;
+            const targetGroup = items.find(i => i.changeId === targetChangeId)?.group;
+            if (pickedEntry?.bookmark && pickedGroup && pickedGroup === targetGroup) {
+              // Within-group: move bookmark to target, no rebase
+              jj(`bookmark set ${pickedEntry.bookmark} -r ${targetChangeId} --allow-backwards`);
+            } else {
+              // Cross-group or ungrouped: rebase
+              jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
+
+              // If target was a bookmark tip and picked has no bookmark, extend the group
+              if (targetEntry?.bookmark && rebaseFlag === '-A' && !pickedEntry?.bookmark) {
+                try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
+              }
             }
 
             message = `${GREEN}Moved ${picked.slice(0, 8)}${RESET}`;
