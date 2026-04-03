@@ -266,30 +266,41 @@ export function cmdStatus() {
     return aNum - bNum;
   });
 
-  // Resolve base to bookmark name once
   const resolvedBase = resolveToBookmark(base);
+  const totalGroups = groups.filter(g => g.bookmark).length;
+
+  console.log(`\n  ${totalGroups} virtual PRs\n`);
 
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    const bmMeta = g.bookmark ? (meta.bookmarks?.[g.bookmark] || {}) : {};
+    if (!g.bookmark) continue;
+    const m = meta.bookmarks?.[g.bookmark] || {};
     const target = i > 0 ? groups[i - 1].bookmark : resolvedBase;
-    const tp = bmMeta.tpIndex || '';
-    const title = bmMeta.wiTitle || g.bookmark || 'ungrouped';
-    const wi = bmMeta.wi ? `#${bmMeta.wi}` : '';
-    const prTitle = bmMeta.prTitle || '';
-    const prDesc = bmMeta.prDesc || '';
+    const tp = m.tpIndex || '';
+    const wi = m.wi ? `#${m.wi}` : '';
+    const prTitle = m.prTitle || '';
 
-    console.log(`═══ ${tp} ${wi} ${title} ═══`);
-    console.log(`  branch:   ${g.bookmark || '(none)'}`);
-    console.log(`  target:   ${target}`);
-    if (prTitle) console.log(`  PR title: ${prTitle}`);
-    if (prDesc) console.log(`  PR body:  ${prDesc.split('\n')[0]}${prDesc.includes('\n') ? '...' : ''}`);
-    console.log(`  commits:  ${g.commits.length}`);
+    // Header
+    console.log(`  ${tp} ${wi}  ${m.wiTitle || g.bookmark}`);
+    console.log(`  ${g.bookmark} → ${target}`);
+    if (prTitle) console.log(`  PR: ${prTitle}`);
+
+    // Commits + files
     for (const c of g.commits) {
-      console.log(`    ${c.changeId.slice(0, 8)} ${c.subject}`);
+      console.log(`    ${c.changeId.slice(0, 8)}  ${c.subject}`);
       for (const f of (c.files || [])) {
-        console.log(`      ${f}`);
+        console.log(`               ${f}`);
       }
+    }
+    console.log('');
+  }
+
+  // Ungrouped
+  const ungrouped = groups.find(g => !g.bookmark);
+  if (ungrouped && ungrouped.commits.length > 0) {
+    console.log(`  Ungrouped (${ungrouped.commits.length})`);
+    for (const c of ungrouped.commits) {
+      console.log(`    ${c.changeId.slice(0, 8)}  ${c.subject}`);
     }
     console.log('');
   }

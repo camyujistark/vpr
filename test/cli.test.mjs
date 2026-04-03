@@ -290,9 +290,9 @@ describe('vpr status', () => {
     const output = run('status');
     assert.ok(output.includes('TP-1'), 'should show TP index');
     assert.ok(output.includes('First'), 'should show title');
-    assert.ok(output.includes('branch:'), 'should show branch');
-    assert.ok(output.includes('target:'), 'should show target');
-    assert.ok(output.includes('commits:'), 'should show commit count');
+    assert.ok(output.includes('feat/'), 'should show branch');
+    assert.ok(output.includes('→'), 'should show target arrow');
+    assert.ok(output.includes('virtual PR'), 'should show PR count');
   });
 });
 
