@@ -3,6 +3,8 @@
  * Each function is a self-contained command that reads config/meta, does work, outputs JSON.
  */
 
+import { execSync } from 'child_process';
+import readline from 'readline';
 import { loadConfig, loadMeta, saveMeta } from '../config.mjs';
 import { jj, jjSafe, hasJj, getBase } from '../git.mjs';
 import { createProvider } from '../providers/index.mjs';
@@ -302,6 +304,134 @@ export function cmdPush(args) {
       console.error(`Failed to push ${bm}: ${err?.stderr?.toString()?.slice(0, 80) || err.message}`);
     }
   }
+}
+
+// ── vpr send [--dry-run] ───────────────────────────────────────────────
+export async function cmdSend(args) {
+  requireJj();
+  const config = requireConfig();
+  const meta = loadMeta();
+  const base = getBase() || 'main';
+  const entries = loadEntries(base);
+  const dryRun = args.includes('--dry-run');
+
+  const groups = [];
+  let pending = [];
+  for (const entry of entries) {
+    if (entry.bookmark) {
+      groups.push({ bookmark: entry.bookmark, commits: [...pending, entry] });
+      pending = [];
+    } else {
+      pending.push(entry);
+    }
+  }
+
+  // Sort by TP index
+  groups.sort((a, b) => {
+    if (!a.bookmark) return 1;
+    if (!b.bookmark) return -1;
+    const aMeta = meta.bookmarks?.[a.bookmark] || {};
+    const bMeta = meta.bookmarks?.[b.bookmark] || {};
+    const aNum = parseInt(aMeta.tpIndex?.replace(/\D/g, '')) || 0;
+    const bNum = parseInt(bMeta.tpIndex?.replace(/\D/g, '')) || 0;
+    return aNum - bNum;
+  });
+
+  if (groups.length === 0) { console.log('No groups to send'); return; }
+
+  // Validation
+  let hasErrors = false;
+  for (const g of groups) {
+    if (!g.bookmark) continue;
+    const m = meta.bookmarks?.[g.bookmark] || {};
+    if (!m.prTitle) { console.error(`Missing PR title for ${m.tpIndex || g.bookmark}`); hasErrors = true; }
+    if (!m.wi) { console.error(`Missing work item for ${m.tpIndex || g.bookmark}`); hasErrors = true; }
+  }
+  if (hasErrors && !dryRun) { console.error('\nFix missing fields before sending.'); process.exit(1); }
+
+  // Show chain
+  console.log(`\n=== ${dryRun ? 'DRY RUN' : 'SEND'}: ${groups.filter(g => g.bookmark).length} PRs ===\n`);
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (!g.bookmark) continue;
+    const m = meta.bookmarks?.[g.bookmark] || {};
+    const target = i > 0 ? groups[i - 1]?.bookmark : base;
+
+    console.log(`--- PR ${i + 1}: ${m.tpIndex || ''} ---`);
+    console.log(`  Branch:  ${g.bookmark}`);
+    console.log(`  Target:  ${target}`);
+    console.log(`  WI:      #${m.wi || '?'}`);
+    console.log(`  Title:   ${m.prTitle || '(not set)'}`);
+    if (m.prDesc) {
+      console.log(`  Body:    ${m.prDesc.split('\n')[0]}${m.prDesc.includes('\n') ? '...' : ''}`);
+    }
+    console.log(`  Commits: ${g.commits.length}`);
+    for (const c of g.commits) {
+      console.log(`    ${c.changeId.slice(0, 8)} ${c.subject}`);
+    }
+    console.log('');
+  }
+
+  if (dryRun) {
+    console.log('Dry run complete. Run `vpr send` to push.');
+    return;
+  }
+
+  // Push and create PRs
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (!g.bookmark) continue;
+    const m = meta.bookmarks?.[g.bookmark] || {};
+    const target = i > 0 ? groups[i - 1]?.bookmark : base;
+
+    // Push
+    console.log(`\nPushing ${m.tpIndex || g.bookmark}...`);
+    try {
+      jj(`git push --bookmark ${g.bookmark}`);
+      console.log(`  Pushed: ${g.bookmark}`);
+    } catch (err) {
+      console.error(`  Failed to push: ${err?.stderr?.toString()?.slice(0, 80) || err.message}`);
+      const answer = await new Promise(r => rl.question('  Continue? (y/n) ', r));
+      if (answer !== 'y') { rl.close(); process.exit(1); }
+      continue;
+    }
+
+    // Create PR
+    const prTitle = (m.prTitle || '').replace(/"/g, '\\"');
+    const prDesc = (m.prDesc || '').replace(/"/g, '\\"');
+    try {
+      const result = execSync(
+        `az repos pr create --repository "${config.repo}" ` +
+        `--source-branch "${g.bookmark}" --target-branch "${target}" ` +
+        `--title "${prTitle}" ` +
+        `--description "${prDesc}" ` +
+        (m.wi ? `--work-items ${m.wi} ` : '') +
+        `--project "${config.project}" --organization "${config.org}" --output json`,
+        { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+      const prData = JSON.parse(result);
+      console.log(`  PR created: #${prData.pullRequestId}`);
+
+      // Update WI to Done
+      if (m.wi) {
+        try {
+          execSync(
+            `az boards work-item update --id ${m.wi} --state Done --org "${config.org}" --output json`,
+            { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] }
+          );
+          console.log(`  WI #${m.wi} → Done`);
+        } catch {}
+      }
+    } catch (err) {
+      console.error(`  Failed to create PR: ${err?.stderr?.toString()?.slice(0, 100) || err.message}`);
+    }
+  }
+
+  rl.close();
+  console.log('\nDone.');
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

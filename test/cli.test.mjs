@@ -296,6 +296,63 @@ describe('vpr status', () => {
   });
 });
 
+describe('vpr send --dry-run', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('shows chain summary without pushing', () => {
+    makeCommit('feat: a');
+    runJSON('new "First PR"');
+    runJSON('edit tp-1 --pr-title "TP-1: First PR" --pr-desc "## Summary"');
+    makeCommit('feat: b');
+    runJSON('new "Second PR"');
+    runJSON('edit tp-2 --pr-title "TP-2: Second PR"');
+
+    const output = run('send --dry-run');
+    assert.ok(output.includes('DRY RUN'), 'should say dry run');
+    assert.ok(output.includes('2 PRs'), 'should show 2 PRs');
+    assert.ok(output.includes('TP-1'), 'should show TP-1');
+    assert.ok(output.includes('TP-2'), 'should show TP-2');
+    assert.ok(output.includes('First PR'), 'should show title');
+    assert.ok(output.includes('Branch:'), 'should show branch');
+    assert.ok(output.includes('Target:'), 'should show target');
+  });
+
+  it('shows target chain — PR 2 targets PR 1', () => {
+    makeCommit('feat: a');
+    runJSON('new "First"');
+    makeCommit('feat: b');
+    runJSON('new "Second"');
+
+    const output = run('send --dry-run');
+    const lines = output.split('\n');
+    const pr2Target = lines.find(l => l.includes('Target:') && !l.includes('main'));
+    assert.ok(pr2Target, 'PR 2 should target PR 1\'s branch');
+  });
+
+  it('validates missing PR title', () => {
+    makeCommit('feat: a');
+    runJSON('new "Test"');
+    // Clear the auto-generated PR title
+    const meta = readMeta();
+    const bm = Object.keys(meta.bookmarks)[0];
+    meta.bookmarks[bm].prTitle = '';
+    fs.writeFileSync(path.join(tmpDir, '.vpr', 'meta.json'), JSON.stringify(meta));
+
+    const output = run('send --dry-run');
+    assert.ok(output.includes('Missing PR title') || output.includes('not set'), 'should flag missing title');
+  });
+
+  it('shows commits per PR', () => {
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    runJSON('new "Group with 2 commits"');
+
+    const output = run('send --dry-run');
+    assert.ok(output.includes('Commits: 2'), 'should show 2 commits');
+  });
+});
+
 describe('vpr help', () => {
   beforeEach(setup);
   afterEach(teardown);

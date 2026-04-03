@@ -70,6 +70,12 @@ switch (cmd) {
     break;
   }
 
+  case 'send': {
+    const { cmdSend } = await import('../src/commands/cli.mjs');
+    await cmdSend(args);
+    break;
+  }
+
   case 'help':
   case '--help':
   case '-h': {
@@ -91,7 +97,9 @@ switch (cmd) {
     vpr delete <sha-or-bookmark>      Delete commit or group
     vpr list                          List groups as JSON
     vpr status                        Show chain summary
-    vpr push [bookmark]               Push bookmarks to remote
+    vpr push [bookmark]               Push bookmarks as git branches
+    vpr send                          Push all + create PRs (interactive)
+    vpr send --dry-run                Preview what would be pushed
 
   <id> can be: bookmark name, project index (e.g. tp-91), or partial match
 `);
