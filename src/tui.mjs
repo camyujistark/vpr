@@ -183,25 +183,30 @@ function buildItems() {
 }
 
 // ── Right pane: group summary with selectable fields ─────────────────
-function getGroupSummary(item) {
+function getGroupSummary(item, rightW) {
   const meta = item.meta || {};
   const lines = [];
   const WHITE = `${ESC}37m`;
+  const fieldW = Math.max(20, (rightW || 50) - 6);
 
-  function addField(idx, label, value) {
-    const val = value || `${DIM}(empty)${RESET}`;
+  function addField(idx, label, value, maxW) {
+    const val = value || '(empty)';
     const valLines = val.split('\n');
-    if (fieldIdx === idx) {
-      // Selected: cyan box outline around the field
-      lines.push(`│  ${CYAN}┌ ${label}${RESET}`);
-      for (const l of valLines) lines.push(`│  ${CYAN}│${RESET} ${WHITE}${l}${RESET}`);
-      lines.push(`│  ${CYAN}└${'─'.repeat(label.length + 1)}${RESET}`);
-    } else {
-      // Unselected: dim label, white value
-      lines.push(`│  ${DIM}${label}${RESET}`);
-      for (const l of valLines) lines.push(`│  ${WHITE}${l}${RESET}`);
+    const w = Math.max(label.length + 2, ...valLines.map(l => l.length + 2), 20);
+    const boxW = Math.min(w, maxW || 50);
+    const color = fieldIdx === idx ? GREEN : DIM;
+    const textColor = fieldIdx === idx ? WHITE : `${RESET}`;
+
+    // Top border
+    lines.push(`│  ${color}╭─ ${label} ${'─'.repeat(Math.max(0, boxW - label.length - 4))}╮${RESET}`);
+    // Content
+    for (const l of valLines) {
+      const padded = l.slice(0, boxW - 4);
+      const pad = Math.max(0, boxW - 4 - padded.length);
+      lines.push(`│  ${color}│${RESET} ${textColor}${padded}${' '.repeat(pad)}${RESET} ${color}│${RESET}`);
     }
-    lines.push('│');
+    // Bottom border
+    lines.push(`│  ${color}╰${'─'.repeat(boxW - 2)}╯${RESET}`);
   }
 
   lines.push(`╭─ ${item.bookmark}: ${item.title}`);
@@ -212,14 +217,14 @@ function getGroupSummary(item) {
   }
   lines.push('│');
 
-  addField(0, 'Ticket Title', meta.wiTitle);
-  addField(1, 'Ticket Description', meta.wiDescription);
+  addField(0, 'Ticket Title', meta.wiTitle, fieldW);
+  addField(1, 'Ticket Description', meta.wiDescription, fieldW);
 
   lines.push('│  ─── PR Draft ───');
   lines.push('│');
 
-  addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
-  addField(3, 'PR Body', meta.prDesc);
+  addField(2, 'PR Title', meta.prTitle || meta.wiTitle, fieldW);
+  addField(3, 'PR Body', meta.prDesc, fieldW);
 
   lines.push(`│  ${DIM}Commits: ${item.commitCount}${RESET}`);
   lines.push('╰─');
@@ -266,7 +271,7 @@ function render() {
   }
   let rightLines = [];
   if (currentItem?.type === 'group') {
-    rightLines = getGroupSummary(currentItem);
+    rightLines = getGroupSummary(currentItem, rightW);
   } else if (currentItem?.sha) {
     rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
   }
