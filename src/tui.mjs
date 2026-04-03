@@ -416,8 +416,14 @@ export function startTui(config, baseArg) {
   provider = createProvider(config);
   vprMeta = loadMeta();
 
-  // Determine base
-  base = baseArg || 'trunk()';
+  // Determine base: user arg, or nearest remote bookmark ancestor, or trunk
+  if (baseArg) {
+    base = baseArg;
+  } else {
+    // Find the nearest ancestor commit that has a remote bookmark
+    const nearestRemote = jjSafe(`log --no-graph -r 'ancestors(@) & remote_bookmarks()' -T 'change_id.short() ++ "\\n"' --limit 1`);
+    base = nearestRemote?.trim() || 'trunk()';
+  }
   entries = loadEntries(base);
 
   readline.emitKeypressEvents(process.stdin);
