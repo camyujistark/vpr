@@ -539,12 +539,15 @@ export function startTui(config, baseArg) {
               targetChangeId = groupCommits[0].changeId;
               rebaseFlag = '-B';
             } else {
-              // Empty group: find the last commit above this group header in display
+              // Empty group: find the last commit above this group header, skipping the picked commit
               isEmptyGroupDrop = true;
               const idx = items.indexOf(item);
               for (let i = idx - 1; i >= 0; i--) {
-                if (items[i].changeId) { targetChangeId = items[i].changeId; break; }
-                if (items[i].entry?.changeId) { targetChangeId = items[i].entry.changeId; break; }
+                const cid = items[i].changeId || items[i].entry?.changeId;
+                if (cid && cid !== picked && !cid.startsWith(picked) && !picked.startsWith(cid)) {
+                  targetChangeId = cid;
+                  break;
+                }
               }
               rebaseFlag = '-A';
             }
@@ -553,19 +556,26 @@ export function startTui(config, baseArg) {
             rebaseFlag = '-A';
           }
 
+          // Debug: log to file
+          const dbg = `DROP: item.type=${item.type} item.bookmark=${item.bookmark} item.changeId=${item.changeId} item.entry?.changeId=${item.entry?.changeId} isEmptyGroupDrop=${isEmptyGroupDrop} targetChangeId=${targetChangeId} rebaseFlag=${rebaseFlag} picked=${picked}\n`;
+          fs.appendFileSync('/tmp/vpr-debug.log', dbg);
+
           if (!targetChangeId) {
             message = `${RED}No target found${RESET}`;
+            fs.appendFileSync('/tmp/vpr-debug.log', 'FAIL: no targetChangeId\n');
             break;
           }
 
           if (picked === targetChangeId || picked.startsWith(targetChangeId) || targetChangeId.startsWith(picked)) {
             message = `${DIM}Same commit${RESET}`;
+            fs.appendFileSync('/tmp/vpr-debug.log', `FAIL: same commit picked=${picked} target=${targetChangeId}\n`);
             picked = null;
             break;
           }
 
           try {
             // Step 1: Rebase
+            fs.appendFileSync('/tmp/vpr-debug.log', `RUN: jj rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
             jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
             // Step 2: Handle bookmark on TARGET commit (if it was a tip, extend the group)
