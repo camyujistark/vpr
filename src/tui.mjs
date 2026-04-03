@@ -131,6 +131,14 @@ function buildItems() {
     groups.push({ bookmark: null, commits: pending });
   }
 
+  // Add empty groups from meta that have no jj bookmark
+  const activeBookmarks = new Set(groups.filter(g => g.bookmark).map(g => g.bookmark));
+  for (const [bm, meta] of Object.entries(vprMeta.bookmarks || {})) {
+    if (!activeBookmarks.has(bm)) {
+      groups.push({ bookmark: bm, commits: [] });
+    }
+  }
+
   // Sort groups by TP index (ascending), ungrouped at the end
   groups.sort((a, b) => {
     if (!a.bookmark) return 1;
@@ -164,21 +172,6 @@ function buildItems() {
         ...commit,
         type: group.bookmark ? 'commit' : 'ungrouped',
         group: group.bookmark,
-      });
-    }
-  }
-
-  // Add empty groups from meta that have no jj bookmark (ticket exists but no commits)
-  const activeBookmarks = new Set(groups.filter(g => g.bookmark).map(g => g.bookmark));
-  for (const [bm, meta] of Object.entries(vprMeta.bookmarks || {})) {
-    if (!activeBookmarks.has(bm)) {
-      items.push({
-        type: 'group',
-        bookmark: bm,
-        title: meta.wiTitle || bm,
-        meta,
-        commitCount: 0,
-        entry: null,
       });
     }
   }
