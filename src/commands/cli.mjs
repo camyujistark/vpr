@@ -269,7 +269,17 @@ export function cmdStatus() {
   const resolvedBase = resolveToBookmark(base);
   const totalGroups = groups.filter(g => g.bookmark).length;
 
-  console.log(`\n  ${totalGroups} virtual PRs\n`);
+  const C = '\x1b[36m';   // cyan
+  const G = '\x1b[32m';   // green
+  const Y = '\x1b[33m';   // yellow
+  const M = '\x1b[35m';   // magenta
+  const D = '\x1b[2m';    // dim
+  const B = '\x1b[1m';    // bold
+  const R = '\x1b[0m';    // reset
+  const RED = '\x1b[31m';
+  const W = '\x1b[37m';   // white
+
+  console.log(`\n  ${B}${totalGroups} virtual PRs${R}\n`);
 
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
@@ -279,28 +289,36 @@ export function cmdStatus() {
     const tp = m.tpIndex || '';
     const wi = m.wi ? `#${m.wi}` : '';
     const prTitle = m.prTitle || '';
+    const totalFiles = g.commits.reduce((n, c) => n + (c.files?.length || 0), 0);
 
-    // Header
-    console.log(`  ${tp} ${wi}  ${m.wiTitle || g.bookmark}`);
-    console.log(`  ${g.bookmark} → ${target}`);
-    if (prTitle) console.log(`  PR: ${prTitle}`);
+    // Header line
+    console.log(`  ${C}${B}${tp}${R} ${D}${wi}${R}  ${W}${B}${m.wiTitle || g.bookmark}${R}`);
+    // Branch → target
+    console.log(`  ${G}${g.bookmark}${R} ${D}→${R} ${D}${target}${R}`);
+    // PR title
+    if (prTitle) console.log(`  ${Y}PR: ${prTitle}${R}`);
+    // Stats
+    console.log(`  ${D}${g.commits.length} commit${g.commits.length !== 1 ? 's' : ''} · ${totalFiles} file${totalFiles !== 1 ? 's' : ''}${R}`);
 
     // Commits + files
     for (const c of g.commits) {
-      console.log(`    ${c.changeId.slice(0, 8)}  ${c.subject}`);
+      console.log(`  ${D}│${R} ${M}${c.changeId.slice(0, 8)}${R}  ${c.subject}`);
       for (const f of (c.files || [])) {
-        console.log(`               ${f}`);
+        const type = f.charAt(0);
+        const color = type === 'A' ? G : type === 'D' ? RED : D;
+        console.log(`  ${D}│${R}            ${color}${f}${R}`);
       }
     }
+    console.log(`  ${D}│${R}`);
     console.log('');
   }
 
   // Ungrouped
   const ungrouped = groups.find(g => !g.bookmark);
   if (ungrouped && ungrouped.commits.length > 0) {
-    console.log(`  Ungrouped (${ungrouped.commits.length})`);
+    console.log(`  ${M}${B}⚠ Ungrouped (${ungrouped.commits.length})${R}`);
     for (const c of ungrouped.commits) {
-      console.log(`    ${c.changeId.slice(0, 8)}  ${c.subject}`);
+      console.log(`  ${D}│${R} ${M}${c.changeId.slice(0, 8)}${R}  ${c.subject}`);
     }
     console.log('');
   }
