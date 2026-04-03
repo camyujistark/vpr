@@ -572,6 +572,40 @@ describe('within-group move should stay in group', () => {
     assert.ok(bIdx < aIdx && aIdx < cIdx, `Order should be b,a,c got: ${bIdx},${aIdx},${cIdx}`);
   });
 
+  it('swap tip with commit below — [1,2,3(tip)] pick 3 drop on 2 → [1,3,2(tip)]', () => {
+    makeCommit('feat: 1');
+    makeCommit('feat: 2');
+    makeCommit('feat: 3');
+    makeCommit('feat: 4');
+    const ids = getChangeIds(); // [1, 2, 3, 4]
+
+    jj(`bookmark create tp-1 -r ${ids[2]}`); // tip on 3
+    jj(`bookmark create tp-2 -r ${ids[3]}`); // tip on 4
+
+    // Pick 3 (tp-1 tip), drop on 2 → swap: rebase 2 after 3, move bookmark to 2
+    jj(`rebase -r ${ids[1]} -A ${ids[2]}`);
+    jj(`bookmark set tp-1 -r ${ids[1]} --allow-backwards`);
+
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    // Order: 1, 3, 2(tp-1), 4(tp-2)
+    const i1 = lines.findIndex(l => l.includes('feat: 1'));
+    const i3 = lines.findIndex(l => l.includes('feat: 3'));
+    const i2 = lines.findIndex(l => l.includes('feat: 2'));
+    const i4 = lines.findIndex(l => l.includes('feat: 4'));
+
+    assert.ok(i1 < i3 && i3 < i2 && i2 < i4,
+      `Order should be 1,3,2,4 got indices: ${i1},${i3},${i2},${i4}`);
+
+    // tp-1 on 2 (new tip), tp-2 on 4
+    assert.ok(lines[i2].includes('tp-1'), `2 should have tp-1, got: ${lines[i2]}`);
+    assert.ok(lines[i4].includes('tp-2'), `4 should have tp-2, got: ${lines[i4]}`);
+
+    // 3 should have no bookmark (it was old tip, now inside group)
+    assert.ok(!lines[i3].includes('tp-1'), `3 should not have tp-1, got: ${lines[i3]}`);
+  });
+
   it('move tip within group — bookmark moves to predecessor, commit reorders', () => {
     // Setup: a, b, c(tp-1), d(tp-2) — tp-1 has a,b,c
     // Pick c (tp-1 tip), drop on a → c goes after a, tp-1 moves to b
