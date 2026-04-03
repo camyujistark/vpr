@@ -49,6 +49,7 @@ let cursor = 0;
 let picked = null;  // changeId of picked commit
 let message = '';
 let diffScroll = 0;
+let lastRightPaneKey = ''; // track what's in the right pane to avoid unnecessary resets
 let bodyH = 20;
 
 // Caches
@@ -225,8 +226,13 @@ function render() {
   if (cursor >= scrollStart + bodyH) scrollStart = cursor - bodyH + 1;
   if (cursor < scrollStart) scrollStart = cursor;
 
-  // Right pane content
+  // Right pane content — only reset scroll when content source changes
   const currentItem = items[cursor];
+  const rightPaneKey = currentItem?.type === 'group' ? `group:${currentItem.bookmark}` : `commit:${currentItem?.changeId || ''}`;
+  if (rightPaneKey !== lastRightPaneKey) {
+    diffScroll = 0;
+    lastRightPaneKey = rightPaneKey;
+  }
   let rightLines = [];
   if (currentItem?.type === 'group') {
     rightLines = getGroupSummary(currentItem);
@@ -464,11 +470,9 @@ export function startTui(config, baseArg) {
     switch (key.name || str) {
       case 'up': case 'k':
         cursor = Math.max(0, cursor - 1);
-        diffScroll = 0;
         break;
       case 'down': case 'j':
         cursor = Math.min(items.length - 1, cursor + 1);
-        diffScroll = 0;
         break;
       case 'pagedown': diffScroll += bodyH; break;
       case 'pageup': diffScroll = Math.max(0, diffScroll - bodyH); break;
