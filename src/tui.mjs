@@ -603,9 +603,10 @@ export function startTui(config, baseArg) {
               // The bookmark must stay at the group's tip (last commit before next bookmark)
               fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
 
-              // Find the commit just before picked in the entries (it becomes the new tip)
-              const pickedIdx = entries.findIndex(e => e.changeId === picked || e.changeId?.startsWith(picked));
-              const newTipChangeId = (pickedIdx > 0) ? entries[pickedIdx - 1].changeId : null;
+              // Find the last commit in this group that ISN'T the picked commit
+              // That becomes the new bookmark tip
+              const groupItems = items.filter(i => i.group === pickedGroup && i.type === 'commit' && i.changeId !== picked && !i.changeId?.startsWith(picked));
+              const newTipChangeId = groupItems.length > 0 ? groupItems[groupItems.length - 1].changeId : null;
 
               jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
