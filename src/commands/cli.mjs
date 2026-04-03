@@ -273,13 +273,24 @@ export function cmdStatus() {
     const tp = bmMeta.tpIndex || '';
     const title = bmMeta.wiTitle || g.bookmark || 'ungrouped';
     const wi = bmMeta.wi ? `#${bmMeta.wi}` : '';
+    const prTitle = bmMeta.prTitle || '';
+    const prDesc = bmMeta.prDesc || '';
 
-    console.log(`${tp} ${wi} ${title}`);
-    console.log(`  branch: ${g.bookmark || '(none)'}`);
-    console.log(`  target: ${target}`);
-    console.log(`  commits: ${g.commits.length}`);
+    console.log(`═══ ${tp} ${wi} ${title} ═══`);
+    console.log(`  branch:   ${g.bookmark || '(none)'}`);
+    console.log(`  target:   ${target}`);
+    if (prTitle) console.log(`  PR title: ${prTitle}`);
+    if (prDesc) console.log(`  PR body:  ${prDesc.split('\n')[0]}${prDesc.includes('\n') ? '...' : ''}`);
+    console.log(`  commits:  ${g.commits.length}`);
     for (const c of g.commits) {
       console.log(`    ${c.changeId.slice(0, 8)} ${c.subject}`);
+      // Files changed
+      try {
+        const files = jj(`diff --summary -r ${c.changeId}`).split('\n').filter(Boolean);
+        for (const f of files) {
+          console.log(`      ${f}`);
+        }
+      } catch {}
     }
     console.log('');
   }
