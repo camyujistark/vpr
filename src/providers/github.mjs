@@ -28,7 +28,7 @@ export class GitHubProvider extends BaseProvider {
 
   get repo() { return this.config.repo; }
 
-  async createWorkItem(title, description = '') {
+createWorkItem(title, description = '') {
     const result = JSON.parse(ghRaw(
       `issue create --repo "${this.repo}" --title "${title.replace(/"/g, '\\"')}"` +
       (description ? ` --body "${description.replace(/"/g, '\\"')}"` : '') +
@@ -37,7 +37,7 @@ export class GitHubProvider extends BaseProvider {
     return { id: result.number, url: result.url };
   }
 
-  async getWorkItem(id) {
+getWorkItem(id) {
     const result = JSON.parse(ghRaw(
       `issue view ${id} --repo "${this.repo}" --json number,title,body,state,url`
     ));
@@ -50,7 +50,7 @@ export class GitHubProvider extends BaseProvider {
     };
   }
 
-  async updateWorkItem(id, fields) {
+updateWorkItem(id, fields) {
     const args = [];
     if (fields.title) args.push(`--title "${fields.title.replace(/"/g, '\\"')}"`);
     if (fields.description) args.push(`--body "${fields.description.replace(/"/g, '\\"')}"`);
@@ -62,7 +62,7 @@ export class GitHubProvider extends BaseProvider {
     }
   }
 
-  async createPR(sourceBranch, targetBranch, title, body, workItemId) {
+createPR(sourceBranch, targetBranch, title, body, workItemId) {
     const closes = workItemId ? `\n\nCloses #${workItemId}` : '';
     const result = JSON.parse(ghRaw(
       `pr create --repo "${this.repo}"` +
@@ -74,7 +74,7 @@ export class GitHubProvider extends BaseProvider {
     return { id: result.number, url: result.url };
   }
 
-  async getLatestPRIndex() {
+getLatestPRIndex() {
     try {
       const result = JSON.parse(ghRaw(
         `pr list --repo "${this.repo}" --limit 1 --json title`

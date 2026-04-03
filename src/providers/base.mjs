@@ -9,27 +9,27 @@ export class BaseProvider {
   }
 
   /** Create a work item / issue. Returns { id, url } */
-  async createWorkItem(title, description) {
+createWorkItem(title, description) {
     throw new Error('Not implemented');
   }
 
   /** Fetch work item details. Returns { id, title, description, state, url } */
-  async getWorkItem(id) {
+getWorkItem(id) {
     throw new Error('Not implemented');
   }
 
   /** Update work item. Returns updated item. */
-  async updateWorkItem(id, fields) {
+updateWorkItem(id, fields) {
     throw new Error('Not implemented');
   }
 
   /** Create a pull request. Returns { id, url } */
-  async createPR(sourceBranch, targetBranch, title, body, workItemId) {
+createPR(sourceBranch, targetBranch, title, body, workItemId) {
     throw new Error('Not implemented');
   }
 
   /** Get the latest PR index (for sequential numbering) */
-  async getLatestPRIndex() {
+getLatestPRIndex() {
     return 0;
   }
 

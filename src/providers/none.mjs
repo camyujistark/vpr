@@ -8,16 +8,15 @@ import { BaseProvider } from './base.mjs';
 export class NoneProvider extends BaseProvider {
   get name() { return 'local (no provider)'; }
 
-  async createWorkItem(title) {
-    // Generate a local ID
+  createWorkItem(title) {
     const id = Date.now();
     return { id, url: null };
   }
 
-  async getWorkItem(id) {
+  getWorkItem(id) {
     return { id, title: '', description: '', state: 'local', url: null };
   }
 
-  async updateWorkItem() {}
-  async createPR() { return { id: null, url: null }; }
+  updateWorkItem() {}
+  createPR() { return { id: null, url: null }; }
 }
