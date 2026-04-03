@@ -508,39 +508,31 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // Resolve drop target
-          // Drop on group header → insert after the first commit of that group
-          // Drop on a commit → insert after that commit
+          // "Put it here" — below cursor position
+          // Group header → top of group (before first commit)
+          // Commit → after that commit
           let targetChangeId = null;
           let rebaseFlag = '-A';
 
           if (item.type === 'group') {
+            // Top of group: before the first commit
             const groupCommits = items.filter(i => i.group === item.bookmark && i.type === 'commit');
             if (groupCommits.length > 0) {
-              // Insert before the first commit of the group
               targetChangeId = groupCommits[0].changeId;
               rebaseFlag = '-B';
             } else if (item.entry?.changeId) {
-              // Group has a bookmark tip but no child commits
               targetChangeId = item.entry.changeId;
-              rebaseFlag = '-A';
+              rebaseFlag = '-B';
             } else {
-              // Empty group (no bookmark, no commits) — find the previous group's tip
-              const groupIdx = items.indexOf(item);
-              for (let i = groupIdx - 1; i >= 0; i--) {
-                if (items[i].type === 'commit' || items[i].type === 'ungrouped') {
-                  targetChangeId = items[i].changeId;
-                  rebaseFlag = '-A';
-                  break;
-                }
-                if (items[i].type === 'group' && items[i].entry?.changeId) {
-                  targetChangeId = items[i].entry.changeId;
-                  rebaseFlag = '-A';
-                  break;
-                }
+              // Empty group — find previous group's last commit
+              for (let i = items.indexOf(item) - 1; i >= 0; i--) {
+                const prev = items[i];
+                if (prev.changeId) { targetChangeId = prev.changeId; rebaseFlag = '-A'; break; }
+                if (prev.entry?.changeId) { targetChangeId = prev.entry.changeId; rebaseFlag = '-A'; break; }
               }
             }
           } else {
+            // After this commit
             targetChangeId = item.changeId;
             rebaseFlag = '-A';
           }
