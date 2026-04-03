@@ -90,7 +90,9 @@ function loadEntries(base) {
     const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
 
     // Parse bookmarks (jj may list multiple separated by spaces)
-    const bookmarks = bookmarkStr?.trim().split(/\s+/).filter(b => b && b.startsWith('tp-')) || [];
+    // Match bookmarks that have metadata in .vpr/meta.json
+    const allBookmarks = bookmarkStr?.trim().split(/\s+/).filter(Boolean) || [];
+    const bookmarks = allBookmarks.filter(b => vprMeta.bookmarks?.[b]);
     const bookmark = bookmarks[0] || null;
 
     result.push({
@@ -146,8 +148,11 @@ function buildItems() {
   groups.sort((a, b) => {
     if (!a.bookmark) return 1;
     if (!b.bookmark) return -1;
-    const aNum = parseInt(a.bookmark.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(b.bookmark.replace(/\D/g, '')) || 0;
+    // Sort by TP index if available, otherwise by WI ID from bookmark name
+    const aMeta = vprMeta.bookmarks?.[a.bookmark] || {};
+    const bMeta = vprMeta.bookmarks?.[b.bookmark] || {};
+    const aNum = parseInt(aMeta.tpIndex?.replace(/\D/g, '')) || parseInt(a.bookmark.replace(/\D/g, '')) || 0;
+    const bNum = parseInt(bMeta.tpIndex?.replace(/\D/g, '')) || parseInt(b.bookmark.replace(/\D/g, '')) || 0;
     return aNum - bNum;
   });
 
