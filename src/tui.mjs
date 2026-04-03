@@ -15,7 +15,7 @@ import readline from 'readline';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { git, gitSafe, getBase as gitGetBase, getFilesForCommit, getDiffForCommit, getNumstatForCommit } from './git.mjs';
+import { git, gitSafe, jj, jjSafe, hasJj, getBase as gitGetBase, getFilesForCommit, getDiffForCommit, getNumstatForCommit, describeCommit } from './git.mjs';
 import { loadConfig, loadMeta, saveMeta } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
 
@@ -24,16 +24,31 @@ function getRemoteHead() {
 }
 
 function loadCommits(base, remoteHead) {
-  const raw = git(`log --reverse --format='%H%x09%s%x09%(trailers:key=VPR,valueonly,separator=%x2C)' ${base}..HEAD`);
+  let raw;
+  if (hasJj()) {
+    // jj log with template — cleaner than git format strings
+    // Get commits between base and current, excluding the working copy (@)
+    raw = jjSafe(`log --no-graph -r '${base}..@-' -T 'commit_id ++ "\\t" ++ description.first_line() ++ "\\t" ++ trailers().map(|t| if(t.key() == "VPR", t.value(), "")).join("") ++ "\\n"'`);
+    // If jj template fails (older version), fall back to git
+    if (!raw) {
+      raw = git(`log --reverse --format='%H%x09%s%x09%(trailers:key=VPR,valueonly,separator=%x2C)' ${base}..HEAD`);
+    }
+  } else {
+    raw = git(`log --reverse --format='%H%x09%s%x09%(trailers:key=VPR,valueonly,separator=%x2C)' ${base}..HEAD`);
+  }
   if (!raw) return [];
   const lines = raw.split('\n').filter(Boolean);
   const all = [];
   for (const line of lines) {
-    const [sha, subject, trailer] = line.split('\t');
+    const parts = line.split('\t');
+    const sha = parts[0]?.trim();
+    const subject = parts[1]?.trim();
+    const trailer = parts[2]?.trim();
+    if (!sha || !subject) continue;
     if (remoteHead) {
       try { execSync(`git merge-base --is-ancestor ${sha} ${remoteHead}`, { stdio: 'pipe', shell: '/bin/bash' }); continue; } catch {}
     }
-    const tp = trailer?.trim() || null;
+    const tp = trailer || null;
     const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
     all.push({
       sha, subject, tp,
@@ -44,7 +59,7 @@ function loadCommits(base, remoteHead) {
   }
   // Only show from the first VPR-tagged commit onwards (skip old realized work)
   const firstVprIdx = all.findIndex(c => c.tp);
-  if (firstVprIdx === -1) return all.slice(-20); // no VPRs, show last 20
+  if (firstVprIdx === -1) return all.slice(-20);
   return all.slice(firstVprIdx);
 }
 
@@ -504,13 +519,11 @@ function mergeVpr(input) {
 }
 
 function save() {
-  const base = getBase();
   const edits = [];
 
   for (const c of commits) {
-    // Check if subject changed or VPR trailer needs updating
     const currentSubject = git(`log -1 --format=%s ${c.sha}`);
-    const currentTrailer = git(`log -1 --format=%(trailers:key=VPR,valueonly) ${c.sha}`).trim();
+    const currentTrailer = git(`log -1 --format='%(trailers:key=VPR,valueonly)' ${c.sha}`).trim();
     const needsSubjectChange = currentSubject !== c.subject;
     const needsTrailerChange = (c.tp || '') !== (currentTrailer || '');
 
@@ -521,37 +534,48 @@ function save() {
 
   if (edits.length === 0) { message = `${DIM}No changes to save${RESET}`; dirty = false; return; }
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-'));
+  if (hasJj()) {
+    // jj: instant describe per commit — no rebase needed
+    let saved = 0;
+    for (const e of edits) {
+      try {
+        let msg = e.newSubject;
+        if (e.newTp) msg += `\n\nVPR: ${e.newTp}`;
+        describeCommit(e.sha, msg);
+        saved++;
+      } catch (err) {
+        message = `${RED}Failed to describe ${e.sha.slice(0, 8)}${RESET}`;
+        return;
+      }
+    }
+    message = `${GREEN}Saved ${saved} commit(s) via jj describe${RESET}`;
+    dirty = false;
+    cachedDiffs.clear();
+    const remoteHead = getRemoteHead();
+    commits = loadCommits(getBase(), remoteHead);
+    buildVprs();
+  } else {
+    // git fallback: interactive rebase (complex, fragile)
+    const base = getBase();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-'));
+    const sedCmds = edits.map(e => `s/^pick ${e.sha.slice(0, 7)}/reword ${e.sha.slice(0, 7)}/`).join('; ');
 
-  // Mark commits for reword
-  const sedCmds = edits.map(e => `s/^pick ${e.sha.slice(0, 7)}/reword ${e.sha.slice(0, 7)}/`).join('; ');
+    const mapFile = path.join(tmpDir, 'map.json');
+    const mapData = {};
+    for (const e of edits) {
+      mapData[e.sha.slice(0, 7)] = { subject: e.newSubject, tp: e.newTp };
+    }
+    fs.writeFileSync(mapFile, JSON.stringify(mapData));
 
-  // Build a mapping file: sha -> newSubject\tnewTp
-  const mapFile = path.join(tmpDir, 'map.json');
-  const mapData = {};
-  for (const e of edits) {
-    mapData[e.sha.slice(0, 7)] = { subject: e.newSubject, tp: e.newTp };
-  }
-  fs.writeFileSync(mapFile, JSON.stringify(mapData));
-
-  // Editor script: reads the commit msg file, looks up the short sha, rewrites
-  const editorScript = path.join(tmpDir, 'editor.sh');
-  fs.writeFileSync(editorScript, `#!/bin/bash
+    const editorScript = path.join(tmpDir, 'editor.sh');
+    fs.writeFileSync(editorScript, `#!/bin/bash
 MSG_FILE="$1"
-MAP_FILE="${mapFile}"
-SUBJECT=$(head -1 "$MSG_FILE")
-
-# Get current commit short sha
 SHORT_SHA=$(git log -1 --format=%h 2>/dev/null)
-
-# Read map with node (json parsing in bash is painful)
 RESULT=$(node -e "
   const map = require('${mapFile}');
   const sha = '$SHORT_SHA';
-  // Try matching by prefix
   for (const [k, v] of Object.entries(map)) {
     if (sha.startsWith(k) || k.startsWith(sha)) {
-      // Build new commit message: subject + blank line + trailer
       let msg = v.subject;
       if (v.tp) msg += '\\n\\nVPR: ' + v.tp;
       console.log(msg);
@@ -560,28 +584,26 @@ RESULT=$(node -e "
   }
   process.exit(1);
 " 2>/dev/null)
-
-if [ $? -eq 0 ] && [ -n "$RESULT" ]; then
-  echo "$RESULT" > "$MSG_FILE"
-fi
+if [ $? -eq 0 ] && [ -n "$RESULT" ]; then echo "$RESULT" > "$MSG_FILE"; fi
 `, { mode: 0o755 });
 
-  try {
-    execSync(`git rebase -i ${base}`, {
-      stdio: 'pipe',
-      env: { ...process.env, GIT_SEQUENCE_EDITOR: `sed -i '${sedCmds}'`, GIT_EDITOR: editorScript }
-    });
-    message = `${GREEN}Saved ${edits.length} commit(s)${RESET}`;
-    dirty = false;
-    cachedDiffs.clear();
-    const remoteHead = getRemoteHead();
-    commits = loadCommits(base, remoteHead);
-    buildVprs();
-  } catch {
-    try { execSync('git rebase --abort', { stdio: 'pipe' }); } catch {}
-    message = `${RED}Save failed — rebase aborted. Branch unchanged.${RESET}`;
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      execSync(`git rebase -i ${base}`, {
+        stdio: 'pipe',
+        env: { ...process.env, GIT_SEQUENCE_EDITOR: `sed -i '${sedCmds}'`, GIT_EDITOR: editorScript }
+      });
+      message = `${GREEN}Saved ${edits.length} commit(s) via git rebase${RESET}`;
+      dirty = false;
+      cachedDiffs.clear();
+      const remoteHead = getRemoteHead();
+      commits = loadCommits(base, remoteHead);
+      buildVprs();
+    } catch {
+      try { execSync('git rebase --abort', { stdio: 'pipe' }); } catch {}
+      message = `${RED}Save failed — rebase aborted. Branch unchanged.${RESET}`;
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   }
 }
 
