@@ -857,10 +857,10 @@ export function startTui(config, baseArg) {
 
       case 'return':
       case 'e': {
-        // Inline edit the highlighted field in the right pane
+        // Inline edit — works from group header or any commit in a group
         const eItem = items[cursor];
-        if (eItem?.type !== 'group') { message = `${RED}Select a group header${RESET}`; break; }
-        const eBm = eItem.bookmark;
+        const eBm = eItem?.type === 'group' ? eItem.bookmark : eItem?.group;
+        if (!eBm) { message = `${RED}No group selected${RESET}`; break; }
         const eMeta = vprMeta.bookmarks?.[eBm] || {};
         const fieldName = FIELD_NAMES[fieldIdx];
         const currentVal = eMeta[fieldName] || (fieldName === 'prTitle' ? eMeta.wiTitle : '') || '';
