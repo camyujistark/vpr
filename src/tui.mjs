@@ -593,19 +593,35 @@ export function startTui(config, baseArg) {
               e.bookmark && (e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId?.slice(0, 8)))
             );
 
-            // If picked is a bookmark tip and target is in the same group,
-            // just move the bookmark — don't rebase (avoids orphaning commits)
             const pickedGroup = items.find(i => i.changeId === picked)?.group;
             const targetGroup = items.find(i => i.changeId === targetChangeId)?.group;
+
+            fs.appendFileSync('/tmp/vpr-debug.log', `DROP: picked=${picked} pickedBm=${pickedEntry?.bookmark} pickedGroup=${pickedGroup} target=${targetChangeId} targetBm=${targetEntry?.bookmark} targetGroup=${targetGroup} sameGroup=${pickedGroup === targetGroup} flag=${rebaseFlag}\n`);
+
             if (pickedEntry?.bookmark && pickedGroup && pickedGroup === targetGroup) {
-              // Within-group: move bookmark to target, no rebase
-              jj(`bookmark set ${pickedEntry.bookmark} -r ${targetChangeId} --allow-backwards`);
-            } else {
-              // Cross-group or ungrouped: rebase
+              // Within-group tip move: rebase the commit, then fix the bookmark
+              // The bookmark must stay at the group's tip (last commit before next bookmark)
+              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
+
+              // Find the commit just before picked in the entries (it becomes the new tip)
+              const pickedIdx = entries.findIndex(e => e.changeId === picked || e.changeId?.startsWith(picked));
+              const newTipChangeId = (pickedIdx > 0) ? entries[pickedIdx - 1].changeId : null;
+
               jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
-              // If target was a bookmark tip, move it to picked (extending the group)
+              // Move bookmark to where it was minus the picked commit
+              // The new tip is the commit that was just before picked
+              if (newTipChangeId) {
+                fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: restore bookmark ${pickedEntry.bookmark} to previous tip ${newTipChangeId}\n`);
+                try { jj(`bookmark set ${pickedEntry.bookmark} -r ${newTipChangeId} --allow-backwards`); } catch {}
+              }
+            } else {
+              // Cross-group or ungrouped: rebase
+              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: cross-group rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
+              jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
+
               if (targetEntry?.bookmark && rebaseFlag === '-A') {
+                fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: move target bookmark ${targetEntry.bookmark} -> ${picked}\n`);
                 try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
