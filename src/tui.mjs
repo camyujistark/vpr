@@ -539,9 +539,19 @@ export function startTui(config, baseArg) {
               }
             }
           } else {
-            // After this commit
-            targetChangeId = item.changeId;
-            rebaseFlag = '-A';
+            // Check if this commit is a bookmark tip (group boundary)
+            const isBookmarkTip = entries.some(e =>
+              e.bookmark && (e.changeId === item.changeId || e.changeId?.startsWith(item.changeId?.slice(0, 8)))
+            );
+            if (isBookmarkTip) {
+              // Bookmark tip: insert before it to stay inside this group
+              targetChangeId = item.changeId;
+              rebaseFlag = '-B';
+            } else {
+              // Regular commit: insert after it
+              targetChangeId = item.changeId;
+              rebaseFlag = '-A';
+            }
           }
 
           if (!targetChangeId) {
