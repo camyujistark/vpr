@@ -347,7 +347,11 @@ function render() {
       const sel = idx === cursor;
 
       if (item.type === 'group') {
-        const label = `${item.bookmark}: ${item.title}`.slice(0, leftW - 6);
+        const tp = item.meta?.tpIndex || '';
+        const wi = item.meta?.wi || '';
+        const prefix = tp ? `${tp}` : item.bookmark;
+        const wiTag = wi ? ` (${wi})` : '';
+        const label = `${prefix}${wiTag}: ${item.title}`.slice(0, leftW - 6);
         leftCell = sel
           ? `${INVERT}${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`
           : `${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`;
