@@ -439,13 +439,15 @@ function handleInputKey(str, key) {
 // ── Inline field editor ─────────────────────────────────────────────────
 let editMode = false;
 let editBuffer = '';
-let editCursorPos = 0; // position in the buffer
+let editOriginal = ''; // for undo
+let editCursorPos = 0;
 let editFieldName = '';
 let editBookmark = '';
 
 function startFieldEdit(bookmark, fieldName, currentValue) {
   editMode = true;
   editBuffer = currentValue || '';
+  editOriginal = editBuffer;
   editCursorPos = editBuffer.length;
   editFieldName = fieldName;
   editBookmark = bookmark;
@@ -463,6 +465,13 @@ function handleEditKey(str, key) {
     mode = 'normal';
     message = `${GREEN}${FIELD_LABELS[FIELD_NAMES.indexOf(editFieldName)]} saved${RESET}`;
     process.stdout.write(HIDE_CURSOR);
+    render();
+    return;
+  }
+  if (key.name === 'z' && key.ctrl) {
+    // Undo — restore original
+    editBuffer = editOriginal;
+    editCursorPos = editBuffer.length;
     render();
     return;
   }
@@ -552,7 +561,7 @@ function getEditLines(rightW) {
   }
 
   lines.push('');
-  lines.push(`${DIM}type to edit · Enter newline · Esc save${RESET}`);
+  lines.push(`${DIM}type to edit · Enter newline · Ctrl+Z undo · Esc save${RESET}`);
 
   return { lines, cursorRow, cursorCol };
 }
