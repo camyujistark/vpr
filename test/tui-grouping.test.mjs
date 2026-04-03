@@ -237,6 +237,163 @@ describe('TUI grouping logic', () => {
   });
 });
 
+describe('drop on bookmark tip — insert below + move bookmark', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-tip-test-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate');
+    jj('config set --repo user.name "Test"');
+    jj('config set --repo user.email "test@test.com"');
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('inserting after bookmark tip + moving bookmark keeps commit inside group', () => {
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    makeCommit('feat: d');
+    const ids = getChangeIds();
+    // ids: [a, b, c, d]
+
+    // tp-1 caps a+b, tp-2 caps c+d
+    jj(`bookmark create tp-1 -r ${ids[1]}`);
+    jj(`bookmark create tp-2 -r ${ids[3]}`);
+
+    // Move d (tp-2 group) after b (tp-1 bookmark tip)
+    // Should: insert after b, then move tp-1 bookmark to d
+    jj(`rebase -r ${ids[3]} -A ${ids[1]}`);
+    jj(`bookmark set tp-1 -r ${ids[3]}`);
+
+    // Verify: d is now after b in the log
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    const bLine = lines.findIndex(l => l.includes('feat: b'));
+    const dLine = lines.findIndex(l => l.includes('feat: d'));
+    assert.ok(dLine > bLine, 'd should be after b');
+
+    // tp-1 bookmark should now be on d (new tip)
+    const dBookmarks = lines[dLine];
+    assert.ok(dBookmarks.includes('tp-1'), 'tp-1 should be on d (new tip)');
+
+    // b should no longer have tp-1
+    const bBookmarks = lines[bLine];
+    assert.ok(!bBookmarks.includes('tp-1'), 'b should not have tp-1 anymore');
+  });
+
+  it('d stays inside tp-1 group (between a and c) — tp-2 follows d then gets moved to tp-1', () => {
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    makeCommit('feat: d');
+    const ids = getChangeIds();
+
+    jj(`bookmark create tp-1 -r ${ids[1]}`);
+    jj(`bookmark create tp-2 -r ${ids[3]}`);
+
+    // Simulate VPR drop: delete tp-2 from picked commit, rebase, set tp-1 to new tip
+    jj('bookmark delete tp-2');
+    jj(`rebase -r ${ids[3]} -A ${ids[1]}`);
+    jj(`bookmark set tp-1 -r ${ids[3]}`);
+
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    // Order should be: a, b, d(tp-1), c
+    assert.ok(lines[0].includes('feat: a'), `first should be a, got: ${lines[0]}`);
+    assert.ok(lines[1].includes('feat: b'), `second should be b, got: ${lines[1]}`);
+    assert.ok(lines[2].includes('feat: d') && lines[2].includes('tp-1'), `third should be d with tp-1, got: ${lines[2]}`);
+    assert.ok(lines[3].includes('feat: c'), `fourth should be c, got: ${lines[3]}`);
+    // tp-2 was deleted — c has no bookmark (meta keeps the empty group)
+    assert.ok(!lines[3].includes('tp-2'), 'c should not have tp-2 (it was deleted)');
+  });
+});
+
+describe('drop into empty group', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-empty-test-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate');
+    jj('config set --repo user.name "Test"');
+    jj('config set --repo user.email "test@test.com"');
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('moving commit into position of empty group (between two bookmarks)', () => {
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    makeCommit('feat: c');
+    const ids = getChangeIds();
+
+    // tp-1 on a, tp-2 on b, tp-3 on c
+    jj(`bookmark create tp-1 -r ${ids[0]}`);
+    jj(`bookmark create tp-2 -r ${ids[1]}`);
+    jj(`bookmark create tp-3 -r ${ids[2]}`);
+
+    // Delete tp-2 bookmark (making it empty)
+    jj('bookmark delete tp-2');
+
+    // b is now between tp-1(a) and tp-3(c) with no bookmark
+    // To put a commit into "tp-2's position" we need to insert after tp-1's tip (a)
+    // Then recreate tp-2 bookmark on it
+
+    // Move c after a (simulating drop into empty tp-2 position)
+    jj(`rebase -r ${ids[2]} -A ${ids[0]}`);
+    jj(`bookmark create tp-2 -r ${ids[2]}`);
+
+    const log = jj(`log --no-graph --reversed -r 'main..@-' -T 'description.first_line() ++ " " ++ bookmarks ++ "\\n"'`);
+    const lines = log.split('\n').filter(Boolean);
+
+    // c should now be between a and b, with tp-2 on c
+    const cLine = lines.findIndex(l => l.includes('feat: c'));
+    assert.ok(lines[cLine].includes('tp-2'), `c should have tp-2, got: ${lines[cLine]}`);
+  });
+});
+
+describe('full move cycle: move out then back into empty group', () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpr-cycle-test-'));
+    origCwd = process.cwd();
+    execSync('git init -b main', { cwd: tmpDir, stdio: 'pipe' });
+    execSync('git commit --allow-empty -m "initial"', { cwd: tmpDir, stdio: 'pipe' });
+    jj('git init --colocate');
+    jj('config set --repo user.name "Test"');
+    jj('config set --repo user.email "test@test.com"');
+  });
+
+  afterEach(() => {
+    process.chdir(origCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('delete bookmark then recreate on same commit', () => {
+    makeCommit('feat: a');
+    makeCommit('feat: b');
+    const ids = getChangeIds();
+
+    jj(`bookmark create tp-1 -r ${ids[0]}`);
+    jj(`bookmark create tp-2 -r ${ids[1]}`);
+
+    jj('bookmark delete tp-2');
+    assert.ok(!getBookmarks()['tp-2'], 'tp-2 deleted');
+
+    jj(`bookmark create tp-2 -r ${ids[1]}`);
+    assert.ok(getBookmarks()['tp-2'], 'tp-2 recreated');
+  });
+});
+
 describe('ascending sort', () => {
   it('sorts tp-1, tp-2, tp-10 correctly (numeric not lexical)', () => {
     const groups = [
