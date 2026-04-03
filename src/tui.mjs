@@ -220,7 +220,9 @@ function getGroupSummary(item, rightW) {
     lines.push('│');
   }
 
-  lines.push(`╭─ ${item.bookmark}: ${item.title}`);
+  const tpLabel = meta.tpIndex ? `${BOLD}${meta.tpIndex}${RESET}  ` : '';
+  lines.push(`╭─ ${tpLabel}${item.title}`);
+  lines.push(`│  ${DIM}${item.bookmark}${RESET}`);
   lines.push('│');
 
   if (meta.wi) {
@@ -976,20 +978,31 @@ export function startTui(config, baseArg) {
               const wi = result?.then ? null : result;
               fs.appendFileSync('/tmp/vpr-debug.log', `C: wi = ${JSON.stringify(wi)}\n`);
               if (wi) {
-                const bm = nextBm;
+                // Branch name from WI ID + slug
+                const slug = title.toLowerCase()
+                  .replace(/[^a-z0-9]+/g, '-')
+                  .replace(/^-|-$/g, '')
+                  .slice(0, 40);
+                const bm = `feat/${wi.id}-${slug}`;
+                const tpIdx = `${prefix}-${idx}`;
                 vprMeta.nextIndex = idx + 1;
 
-                // Create jj bookmark
+                // Create jj bookmark (this becomes the git branch)
                 jj(`bookmark create ${bm} -r ${targetChangeId}`);
 
                 // Store metadata
                 if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
                 vprMeta.bookmarks[bm] = {
-                  wi: wi.id, wiTitle: title, wiDescription: desc, wiState: 'New',
+                  wi: wi.id,
+                  wiTitle: title,
+                  wiDescription: desc,
+                  wiState: 'New',
+                  tpIndex: tpIdx,
+                  prTitle: `${tpIdx}: ${title}`,
                 };
                 saveMeta(vprMeta);
                 reload();
-                message = `${GREEN}Created ${bm} with WI #${wi.id}${RESET}`;
+                message = `${GREEN}${tpIdx} → ${bm} (WI #${wi.id})${RESET}`;
               }
             } catch (err) { message = `${RED}Failed: ${(err?.stderr?.toString() || err?.message || '').slice(0, 80)}${RESET}`; }
             render();
