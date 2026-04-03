@@ -500,8 +500,19 @@ export function startTui(config, baseArg) {
           // Drop: rebase picked commit onto the bookmark's commit
           if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
 
-          // Resolve drop target
-          let targetChangeId = item.changeId || item.entry?.changeId || null;
+          // Resolve drop target and rebase strategy
+          let targetChangeId = null;
+          let rebaseFlag = '-A'; // default: insert after
+
+          if (item.type === 'group') {
+            // Drop on group header → insert before the bookmark tip (becomes part of the group)
+            targetChangeId = item.entry?.changeId;
+            rebaseFlag = '-B';
+          } else {
+            // Drop on a commit → insert after it
+            targetChangeId = item.changeId;
+            rebaseFlag = '-A';
+          }
 
           if (!targetChangeId) {
             message = `${RED}Navigate to a commit or group to drop${RESET}`;
@@ -515,8 +526,7 @@ export function startTui(config, baseArg) {
           }
 
           try {
-            message = `${DIM}Running: jj rebase -r ${picked.slice(0,8)} -A ${targetChangeId.slice(0,8)}${RESET}`;
-            const result = jj(`rebase -r ${picked} -A ${targetChangeId}`);
+            jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
             message = `${GREEN}Moved ${picked.slice(0, 8)} after ${targetChangeId.slice(0, 8)}${RESET}`;
             picked = null;
             reload();
