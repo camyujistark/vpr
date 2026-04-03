@@ -363,10 +363,10 @@ function render() {
         leftCell = sel ? `${INVERT}${label}${RESET}` : isPicked ? `${MAGENTA}${label}${RESET}` : label;
       } else if (item.type === 'ungrouped-header') {
         const label = `⚠ Ungrouped (${item.commitCount})`;
-        leftCell = sel ? `${INVERT}${YELLOW}${BOLD}${label}${RESET}` : `${YELLOW}${BOLD}${label}${RESET}`;
+        leftCell = sel ? `${INVERT}${MAGENTA}${BOLD}${label}${RESET}` : `${MAGENTA}${BOLD}${label}${RESET}`;
       } else if (item.type === 'ungrouped') {
         const label = `  ${item.changeId?.slice(0, 8) || ''} ${item.subject}`.slice(0, leftW - 2);
-        leftCell = sel ? `${INVERT}${YELLOW}${label}${RESET}` : `${YELLOW}${label}${RESET}`;
+        leftCell = sel ? `${INVERT}${label}${RESET}` : `${MAGENTA}${label}${RESET}`;
       }
     }
 
