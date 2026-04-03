@@ -46,6 +46,7 @@ let provider = null;
 let vprMeta = {};
 let entries = [];     // [{ type: 'bookmark'|'commit', changeId, sha, subject, bookmark, ccType, ccScope, ccDesc }]
 let cursor = 0;
+let picked = null;  // changeId of picked commit
 let message = '';
 let diffScroll = 0;
 let bodyH = 20;
@@ -216,8 +217,10 @@ function render() {
 
   // Header
   const bookmarkCount = entries.filter(e => e.bookmark).length;
-  out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}\n`;
-  out += `${DIM}j/k nav  J/K scroll  c create ticket  w edit ticket  p PR draft  x remove  : jj cmd  R refresh  q quit${RESET}\n`;
+  out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
+  if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
+  out += '\n';
+  out += `${DIM}j/k nav  J/K scroll  space move  c create ticket  w edit ticket  p PR draft  x remove  : jj cmd  R refresh  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -249,9 +252,11 @@ function render() {
           ? `${INVERT}${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`
           : `${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`;
       } else if (item.type === 'commit') {
+        const isPicked = picked && item.changeId?.startsWith(picked.slice(0, 8));
+        const prefix = isPicked ? `${MAGENTA}● ` : '  ';
         const typeTag = item.ccType ? `${DIM}[${item.ccType}]${RESET}` : '';
-        const label = `  ${item.changeId?.slice(0, 8) || ''} ${typeTag} ${item.ccDesc || item.subject}`.slice(0, leftW - 2);
-        leftCell = sel ? `${INVERT}${label}${RESET}` : label;
+        const label = `${prefix}${item.changeId?.slice(0, 8) || ''} ${typeTag} ${item.ccDesc || item.subject}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${label}${RESET}` : isPicked ? `${MAGENTA}${label}${RESET}` : label;
       } else if (item.type === 'ungrouped-header') {
         const label = `⚠ Ungrouped (${item.commitCount})`;
         leftCell = sel ? `${INVERT}${YELLOW}${BOLD}${label}${RESET}` : `${YELLOW}${BOLD}${label}${RESET}`;
@@ -465,6 +470,56 @@ export function startTui(config, baseArg) {
       case 'pagedown': diffScroll += bodyH; break;
       case 'pageup': diffScroll = Math.max(0, diffScroll - bodyH); break;
 
+      case 'space': {
+        const item = items[cursor];
+        if (!picked) {
+          // Pick up a commit
+          if (!item?.changeId || item.type === 'group' || item.type === 'ungrouped-header') {
+            message = `${RED}Select a commit to move${RESET}`;
+            break;
+          }
+          picked = item.changeId;
+          message = `${MAGENTA}Picked ${picked.slice(0, 8)} — navigate to a bookmark and press space${RESET}`;
+        } else {
+          // Drop: rebase picked commit onto the bookmark's commit
+          if (!item) { message = `${RED}Navigate to a target${RESET}`; break; }
+
+          let targetChangeId = null;
+          if (item.type === 'group') {
+            targetChangeId = item.entry?.changeId;
+          } else if (item.type === 'commit' && item.group) {
+            // Drop onto a commit within a group — rebase before it
+            targetChangeId = item.changeId;
+          }
+
+          if (!targetChangeId) {
+            message = `${RED}Navigate to a bookmark group or commit to drop${RESET}`;
+            break;
+          }
+
+          if (picked === targetChangeId) {
+            message = `${DIM}Same commit${RESET}`;
+            picked = null;
+            break;
+          }
+
+          try {
+            jj(`rebase -r ${picked} -A ${targetChangeId}`);
+            message = `${GREEN}Moved ${picked.slice(0, 8)} after ${targetChangeId.slice(0, 8)}${RESET}`;
+            picked = null;
+            reload();
+          } catch (err) {
+            message = `${RED}Rebase failed${RESET}`;
+            picked = null;
+          }
+        }
+        break;
+      }
+
+      case 'escape':
+        if (picked) { picked = null; message = `${DIM}Cancelled${RESET}`; }
+        break;
+
       case 'c': {
         // Create ticket + jj bookmark at current commit
         if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
@@ -567,8 +622,6 @@ export function startTui(config, baseArg) {
           return;
         }
         return; // unknown key, don't re-render
-
-      case 'escape': break;
 
       case 'q':
         process.stdout.write(SHOW_CURSOR + CLEAR);
