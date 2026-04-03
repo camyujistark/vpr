@@ -49,8 +49,11 @@ let cursor = 0;
 let picked = null;  // changeId of picked commit
 let message = '';
 let diffScroll = 0;
-let lastRightPaneKey = ''; // track what's in the right pane to avoid unnecessary resets
+let lastRightPaneKey = '';
 let bodyH = 20;
+let fieldIdx = 0; // which field is highlighted in the group summary
+const FIELD_NAMES = ['wiTitle', 'wiDescription', 'prTitle', 'prDesc'];
+const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Body'];
 
 // Caches
 const diffCache = new Map();
@@ -179,39 +182,58 @@ function buildItems() {
   return items;
 }
 
-// ── Right pane: group summary or diff ──────────────────────────────────
+// ── Right pane: group summary with selectable fields ─────────────────
 function getGroupSummary(item) {
   const meta = item.meta || {};
   const lines = [];
+  const SEL = `${INVERT}`;
+  const END = `${RESET}`;
 
   lines.push(`╭─ ${item.bookmark}: ${item.title}`);
   lines.push('│');
 
   if (meta.wi) {
-    lines.push(`│  WI:       #${meta.wi} [${meta.wiState || '?'}]`);
-    if (meta.wiTitle) lines.push(`│  Title:    ${meta.wiTitle}`);
-    if (meta.wiDescription) {
-      lines.push('│  Desc:');
-      for (const l of meta.wiDescription.split('\n')) lines.push(`│    ${l}`);
-    }
-  } else {
-    lines.push('│  WI:       (press c to create)');
+    lines.push(`│  WI: #${meta.wi} [${meta.wiState || '?'}]`);
   }
-
   lines.push('│');
+
+  // Field 0: Ticket Title
+  const f0 = fieldIdx === 0 ? SEL : '';
+  const f0e = fieldIdx === 0 ? END : '';
+  lines.push(`│  ${f0}Ticket Title${f0e}`);
+  lines.push(`│  ${f0}${meta.wiTitle || '(empty)'}${f0e}`);
+  lines.push('│');
+
+  // Field 1: Ticket Description
+  const f1 = fieldIdx === 1 ? SEL : '';
+  const f1e = fieldIdx === 1 ? END : '';
+  lines.push(`│  ${f1}Ticket Description${f1e}`);
+  const descLines = (meta.wiDescription || '(empty)').split('\n');
+  for (const l of descLines) lines.push(`│  ${f1}${l}${f1e}`);
+  lines.push('│');
+
   lines.push('│  ─── PR Draft ───');
   lines.push('│');
-  lines.push(`│  Title:    ${meta.prTitle || meta.wiTitle || '(press p to edit)'}`);
-  if (meta.prDesc) {
-    lines.push('│  Body:');
-    for (const l of meta.prDesc.split('\n')) lines.push(`│    ${l}`);
-  } else {
-    lines.push('│  Body:     (press p to edit)');
-  }
 
+  // Field 2: PR Title
+  const f2 = fieldIdx === 2 ? SEL : '';
+  const f2e = fieldIdx === 2 ? END : '';
+  lines.push(`│  ${f2}PR Title${f2e}`);
+  lines.push(`│  ${f2}${meta.prTitle || meta.wiTitle || '(empty)'}${f2e}`);
   lines.push('│');
-  lines.push(`│  Commits:  ${item.commitCount}`);
+
+  // Field 3: PR Body
+  const f3 = fieldIdx === 3 ? SEL : '';
+  const f3e = fieldIdx === 3 ? END : '';
+  lines.push(`│  ${f3}PR Body${f3e}`);
+  const bodyLines = (meta.prDesc || '(empty)').split('\n');
+  for (const l of bodyLines) lines.push(`│  ${f3}${l}${f3e}`);
+  lines.push('│');
+
+  lines.push(`│  Commits: ${item.commitCount}`);
   lines.push('╰─');
+  lines.push('');
+  lines.push(`${DIM}J/K select field  e edit  S save to provider${RESET}`);
 
   return lines;
 }
@@ -235,7 +257,7 @@ function render() {
   out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
   if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
   out += '\n';
-  out += `${DIM}j/k nav  J/K scroll  space move  b bookmark  c ticket  w edit  p PR  x remove  u undo  : jj  R refresh  q quit${RESET}\n`;
+  out += `${DIM}j/k nav  J/K field/scroll  space move  e edit  S sync  b bookmark  c ticket  x remove  u undo  : jj  q quit${RESET}\n`;
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -248,6 +270,7 @@ function render() {
   const rightPaneKey = currentItem?.type === 'group' ? `group:${currentItem.bookmark}` : `commit:${currentItem?.changeId || ''}`;
   if (rightPaneKey !== lastRightPaneKey) {
     diffScroll = 0;
+    if (!rightPaneKey.startsWith('group:')) fieldIdx = 0; // reset field selection when leaving a group
     lastRightPaneKey = rightPaneKey;
   }
   let rightLines = [];
@@ -498,10 +521,40 @@ export function startTui(config, baseArg) {
       render(); return;
     }
 
-    // Shift keys
-    if (key.name === 'j' && key.shift) { diffScroll += 3; render(); return; }
-    if (key.name === 'k' && key.shift) { diffScroll = Math.max(0, diffScroll - 3); render(); return; }
+    // Shift keys — context-sensitive
+    const currentItem = items[cursor];
+    if (key.name === 'j' && key.shift) {
+      if (currentItem?.type === 'group') {
+        fieldIdx = Math.min(FIELD_NAMES.length - 1, fieldIdx + 1);
+      } else {
+        diffScroll += 3;
+      }
+      render(); return;
+    }
+    if (key.name === 'k' && key.shift) {
+      if (currentItem?.type === 'group') {
+        fieldIdx = Math.max(0, fieldIdx - 1);
+      } else {
+        diffScroll = Math.max(0, diffScroll - 3);
+      }
+      render(); return;
+    }
     if (key.name === 'r' && key.shift) { reload(); render(); return; }
+    // S (shift+s) — save to provider
+    if (key.name === 's' && key.shift) {
+      if (currentItem?.type === 'group' && currentItem.bookmark) {
+        const sMeta = vprMeta.bookmarks?.[currentItem.bookmark];
+        if (sMeta?.wi && provider) {
+          try {
+            provider.updateWorkItem(sMeta.wi, { title: sMeta.wiTitle, description: sMeta.wiDescription });
+            message = `${GREEN}Synced ${currentItem.bookmark} to provider${RESET}`;
+          } catch { message = `${RED}Sync failed${RESET}`; }
+        } else {
+          message = `${DIM}No WI to sync${RESET}`;
+        }
+      }
+      render(); return;
+    }
 
     switch (key.name || str) {
       case 'up': case 'k':
@@ -645,6 +698,27 @@ export function startTui(config, baseArg) {
         if (picked) { picked = null; message = `${DIM}Cancelled${RESET}`; }
         break;
 
+      case 'e': {
+        // Edit the highlighted field on the group summary
+        const eItem = items[cursor];
+        if (eItem?.type !== 'group') { message = `${RED}Select a group header${RESET}`; break; }
+        const eBm = eItem.bookmark;
+        const eMeta = vprMeta.bookmarks?.[eBm] || {};
+        const fieldName = FIELD_NAMES[fieldIdx];
+        const fieldLabel = FIELD_LABELS[fieldIdx];
+        const isMultiline = fieldName === 'wiDescription' || fieldName === 'prDesc';
+        const currentVal = eMeta[fieldName] || (fieldName === 'prTitle' ? eMeta.wiTitle : '') || '';
+
+        startInput(`${eBm} — ${fieldLabel}`, currentVal, (val) => {
+          if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
+          if (!vprMeta.bookmarks[eBm]) vprMeta.bookmarks[eBm] = {};
+          vprMeta.bookmarks[eBm][fieldName] = val;
+          saveMeta(vprMeta);
+          message = `${GREEN}${fieldLabel} saved${RESET}`;
+        }, isMultiline);
+        return;
+      }
+
       case 'c': {
         // Create ticket + jj bookmark
         if (!provider) { message = `${RED}No provider configured${RESET}`; break; }
@@ -683,46 +757,7 @@ export function startTui(config, baseArg) {
         return;
       }
 
-      case 'w': {
-        // Edit ticket: title (Enter) → description (Ctrl+S) → saves
-        const wItem = items[cursor];
-        const wBm = wItem?.type === 'group' ? wItem.bookmark : wItem?.group;
-        if (!wBm) { message = `${RED}Select a bookmark group${RESET}`; break; }
-        const wMeta = vprMeta.bookmarks?.[wBm] || {};
-
-        startInput(`${wBm} title`, wMeta.wiTitle || '', (title) => {
-          startInput(`${wBm} description`, wMeta.wiDescription || '', (desc) => {
-            if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
-            vprMeta.bookmarks[wBm] = { ...vprMeta.bookmarks[wBm], wiTitle: title, wiDescription: desc };
-            // Sync to provider if WI exists
-            if (wMeta.wi && provider) {
-              try { provider.updateWorkItem(wMeta.wi, { title, description: desc }); } catch {}
-            }
-            saveMeta(vprMeta);
-            message = `${GREEN}Ticket saved${RESET}`;
-            reload();
-          }, true);
-        });
-        return;
-      }
-
-      case 'p': {
-        // Edit PR draft
-        const item = items[cursor];
-        const bm = item?.type === 'group' ? item.bookmark : item?.group;
-        if (!bm) { message = `${RED}Select a bookmark group${RESET}`; break; }
-        const meta = vprMeta.bookmarks?.[bm] || {};
-
-        startInput(`PR title (${bm})`, meta.prTitle || meta.wiTitle || '', (title) => {
-          startInput(`PR body (${bm})`, meta.prDesc || '', (body) => {
-            if (!vprMeta.bookmarks) vprMeta.bookmarks = {};
-            vprMeta.bookmarks[bm] = { ...vprMeta.bookmarks[bm], prTitle: title, prDesc: body };
-            saveMeta(vprMeta);
-            message = `${GREEN}PR draft saved${RESET}`;
-          }, true);
-        });
-        return;
-      }
+      // w and p removed — use J/K to select field, e to edit, S to sync
 
       case 'x': {
         // Remove bookmark + metadata
