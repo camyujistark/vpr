@@ -367,5 +367,122 @@ describe('vpr help', () => {
     assert.ok(output.includes('vpr delete'));
     assert.ok(output.includes('vpr list'));
     assert.ok(output.includes('vpr push'));
+    assert.ok(output.includes('vpr generate'));
+  });
+});
+
+describe('ungrouped commits', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('commits after last bookmark appear as ungrouped in list', () => {
+    makeCommit('feat: a');
+    runJSON('new "First group"');
+    // Make a commit after the bookmark — should be ungrouped
+    makeCommit('feat: ungrouped');
+
+    const { groups } = runJSON('list');
+    const ungrouped = groups.find(g => !g.bookmark);
+    assert.ok(ungrouped, 'should have an ungrouped group');
+    assert.strictEqual(ungrouped.commits.length, 1);
+    assert.strictEqual(ungrouped.commits[0].subject, 'feat: ungrouped');
+  });
+
+  it('children of @ are included in the entry range', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+    // Rebase a commit after @ (simulates ungroup)
+    makeCommit('feat: will-ungroup');
+    const lastBm = Object.keys(readMeta().bookmarks)[0];
+    jj(`rebase -r @- -A ${lastBm}`);
+    // The rebased commit should show as ungrouped
+    const { groups } = runJSON('list');
+    const ungrouped = groups.find(g => !g.bookmark);
+    assert.ok(ungrouped, 'ungrouped group should exist');
+    assert.ok(ungrouped.commits.length >= 1);
+  });
+});
+
+describe('rebase log', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('vpr list includes lastRebase field (null when no rebases)', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+
+    const result = runJSON('list');
+    assert.strictEqual(result.lastRebase, null);
+  });
+
+  it('lastRebase is populated after a squash via rebase-log.json', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+
+    // Manually write a rebase log entry
+    const logPath = path.join(tmpDir, '.vpr', 'rebase-log.json');
+    fs.writeFileSync(logPath, JSON.stringify([{
+      timestamp: new Date().toISOString(),
+      actions: [{ type: 'squash', changeId: 'abc12345', subject: 'feat: a', result: 'ok' }],
+    }]));
+
+    const result = runJSON('list');
+    assert.ok(result.lastRebase);
+    assert.strictEqual(result.lastRebase.actions.length, 1);
+    assert.strictEqual(result.lastRebase.actions[0].type, 'squash');
+  });
+});
+
+describe('vpr list prBody field', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('includes prBody when set in meta', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+    run('edit TP-1 --pr-desc "the story"');
+
+    // Set prBody manually in meta
+    const meta = readMeta();
+    const bm = Object.keys(meta.bookmarks)[0];
+    meta.bookmarks[bm].prBody = '## Summary\n- Did the thing';
+    fs.writeFileSync(path.join(tmpDir, '.vpr', 'meta.json'), JSON.stringify(meta, null, 2));
+
+    const { groups } = runJSON('list');
+    assert.strictEqual(groups[0].prBody, '## Summary\n- Did the thing');
+  });
+
+  it('prBody is null when not generated', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+
+    const { groups } = runJSON('list');
+    assert.strictEqual(groups[0].prBody, null);
+  });
+});
+
+describe('vpr generate', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('fails without a PR story', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+
+    assert.throws(() => run('generate TP-1'), /No PR story/);
+  });
+
+  it('fails without LLM configured', () => {
+    makeCommit('feat: a');
+    runJSON('new "Group"');
+    run('edit TP-1 --pr-desc "the story"');
+
+    // Set generateCmd to a nonexistent command
+    const configPath = path.join(tmpDir, '.vpr', 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    config.generateCmd = 'nonexistent-llm-binary-xyz';
+    fs.writeFileSync(configPath, JSON.stringify(config));
+
+    assert.throws(() => run('generate TP-1'), /Generation failed|ENOENT|not found/i);
   });
 });
