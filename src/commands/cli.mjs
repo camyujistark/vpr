@@ -224,7 +224,8 @@ export function cmdList() {
   const rebaseLog = loadRebaseLog();
   const lastRebase = rebaseLog.length > 0 ? rebaseLog[rebaseLog.length - 1] : null;
 
-  console.log(JSON.stringify({ groups: result, done, lastRebase }, null, 2));
+  const hold = meta.hold || [];
+  console.log(JSON.stringify({ groups: result, done, hold, lastRebase }, null, 2));
 }
 
 // ── vpr status ─────────────────────────────────────────────────────────
@@ -579,6 +580,47 @@ export function cmdGenerate(args) {
     console.error(`Generation failed: ${err?.stderr?.toString()?.slice(0, 100) || err.message}`);
     process.exit(1);
   }
+}
+
+// ── vpr hold <changeId> ───────────────────────────────────────────────
+export function cmdHold(args) {
+  const meta = loadMeta();
+  const changeId = args[0];
+  if (!changeId) { console.error('Usage: vpr hold <changeId>'); process.exit(1); }
+
+  if (!meta.hold) meta.hold = [];
+  if (meta.hold.includes(changeId)) {
+    console.log(JSON.stringify({ hold: changeId, status: 'already held' }));
+    return;
+  }
+  meta.hold.push(changeId);
+  saveMeta(meta);
+  console.log(JSON.stringify({ hold: changeId, status: 'held' }));
+}
+
+// ── vpr unhold <changeId> ─────────────────────────────────────────────
+export function cmdUnhold(args) {
+  const meta = loadMeta();
+  const changeId = args[0];
+  if (!changeId) { console.error('Usage: vpr unhold <changeId>'); process.exit(1); }
+
+  if (!meta.hold) meta.hold = [];
+  const idx = meta.hold.indexOf(changeId);
+  if (idx < 0) {
+    // Try partial match
+    const match = meta.hold.find(h => h.startsWith(changeId));
+    if (match) {
+      meta.hold.splice(meta.hold.indexOf(match), 1);
+      saveMeta(meta);
+      console.log(JSON.stringify({ unhold: match, status: 'released' }));
+      return;
+    }
+    console.log(JSON.stringify({ unhold: changeId, status: 'not held' }));
+    return;
+  }
+  meta.hold.splice(idx, 1);
+  saveMeta(meta);
+  console.log(JSON.stringify({ unhold: changeId, status: 'released' }));
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

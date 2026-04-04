@@ -101,6 +101,18 @@ switch (cmd) {
     break;
   }
 
+  case 'hold': {
+    const { cmdHold } = await import('../src/commands/cli.mjs');
+    cmdHold(args);
+    break;
+  }
+
+  case 'unhold': {
+    const { cmdUnhold } = await import('../src/commands/cli.mjs');
+    cmdUnhold(args);
+    break;
+  }
+
   case 'help':
   case '--help':
   case '-h': {
@@ -128,6 +140,8 @@ switch (cmd) {
     vpr send                          Push all + create PRs (interactive)
     vpr send --dry-run                Preview what would be pushed
     vpr generate <id>                 Generate PR description from story via LLM
+    vpr hold <changeId>               Put a commit on hold (parked, not in any PR)
+    vpr unhold <changeId>             Release a commit from hold
     vpr clean                         Move stale bookmarks (no commits) to done
 
   <id> can be: bookmark name, project index (e.g. tp-91), or partial match

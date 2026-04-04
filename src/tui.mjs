@@ -139,11 +139,18 @@ function buildItems() {
     return aNum - bNum;
   });
 
-  // Build flat display list
+  // Build flat display list — separate held commits into their own section
+  const holdSet = new Set(vprMeta.hold || []);
   const items = [];
+  const heldItems = [];
+
   for (const group of groups) {
     const meta = group.bookmark ? (vprMeta.bookmarks?.[group.bookmark] || {}) : {};
     const title = meta.wiTitle || meta.prTitle || group.commits[0]?.ccDesc || group.bookmark || 'ungrouped';
+
+    // Split commits into active and held
+    const activeCommits = group.commits.filter(c => !holdSet.has(c.changeId));
+    const heldCommits = group.commits.filter(c => holdSet.has(c.changeId));
 
     if (group.bookmark) {
       items.push({
@@ -151,20 +158,30 @@ function buildItems() {
         bookmark: group.bookmark,
         title,
         meta,
-        commitCount: group.commits.length,
-        entry: group.commits[group.commits.length - 1], // the bookmark commit (tip)
+        commitCount: activeCommits.length,
+        entry: activeCommits[activeCommits.length - 1] || group.commits[group.commits.length - 1],
       });
     } else {
-      items.push({ type: 'ungrouped-header', title: 'Ungrouped', commitCount: group.commits.length });
+      items.push({ type: 'ungrouped-header', title: 'Ungrouped', commitCount: activeCommits.length });
     }
 
-    for (const commit of group.commits) {
+    for (const commit of activeCommits) {
       items.push({
         ...commit,
         type: group.bookmark ? 'commit' : 'ungrouped',
         group: group.bookmark,
       });
     }
+
+    for (const commit of heldCommits) {
+      heldItems.push({ ...commit, type: 'hold', group: group.bookmark });
+    }
+  }
+
+  // Hold section at the bottom
+  if (heldItems.length > 0) {
+    items.push({ type: 'hold-header', title: 'On Hold', commitCount: heldItems.length });
+    items.push(...heldItems);
   }
 
   return items;
@@ -335,9 +352,11 @@ function render() {
     if (helpItem?.type === 'group') {
       out += `${DIM}j/k nav  J/K scroll  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
-      out += `${DIM}j/k nav  J/K scroll  Space move  U ungroup  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
-      out += `${DIM}j/k nav  Space move  n new  u undo  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  Space move  H hold  n new  u undo  q quit${RESET}\n`;
+    } else if (helpItem?.type === 'hold') {
+      out += `${DIM}j/k nav  H unhold  u undo  q quit${RESET}\n`;
     } else {
       out += `${DIM}j/k nav  n new  u undo  : jj  q quit${RESET}\n`;
     }
@@ -445,6 +464,12 @@ function render() {
         const prefix = isPicked ? `${MAGENTA}${BOLD}● ` : '  ';
         const label = `${prefix}${item.changeId?.slice(0, 8) || ''} ${item.subject}`.slice(0, leftW - 2);
         leftCell = sel ? `${INVERT}${label}${RESET}` : isPicked ? `${MAGENTA}${BOLD}${label}${RESET}` : `${MAGENTA}${label}${RESET}`;
+      } else if (item.type === 'hold-header') {
+        const label = `⏸ On Hold (${item.commitCount})`;
+        leftCell = sel ? `${INVERT}${DIM}${label}${RESET}` : `${DIM}${label}${RESET}`;
+      } else if (item.type === 'hold') {
+        const label = `  ${DIM}${item.changeId?.slice(0, 8) || ''} ${item.subject}${RESET}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${label}${RESET}` : `${DIM}${label}${RESET}`;
       }
     }
 
@@ -1160,6 +1185,26 @@ export function startTui(config, baseArg) {
       } catch (err) {
         const stderr = err?.stderr?.toString()?.slice(0, 80) || err.message?.slice(0, 80) || '';
         message = `${RED}Generation failed: ${stderr}${RESET}`;
+      }
+      render(); return;
+    }
+
+    // H (shift+h) — toggle hold on a commit
+    if (str === 'H') {
+      const hItem = mode === 'interactive' ? getInteractiveItems(items)[cursor] : currentItem;
+      if (!hItem?.changeId) { message = `${RED}Select a commit${RESET}`; render(); return; }
+      if (!vprMeta.hold) vprMeta.hold = [];
+      const idx = vprMeta.hold.indexOf(hItem.changeId);
+      if (idx >= 0) {
+        vprMeta.hold.splice(idx, 1);
+        saveMeta(vprMeta);
+        reload();
+        message = `${GREEN}Removed from hold: ${hItem.changeId.slice(0, 8)}${RESET}`;
+      } else {
+        vprMeta.hold.push(hItem.changeId);
+        saveMeta(vprMeta);
+        reload();
+        message = `${YELLOW}On hold: ${hItem.changeId.slice(0, 8)}${RESET}`;
       }
       render(); return;
     }
