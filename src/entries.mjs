@@ -16,9 +16,9 @@ const CC_RE = /^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))
  */
 export function loadEntries(base, { files = false } = {}) {
   const fileFlag = files ? ' -s' : '';
-  // Include @ and its children so ungrouped commits (rebased after last bookmark) are visible
+  // Include all descendant heads of base — catches ungrouped commits on sibling branches
   const raw = jjSafe(
-    `log --no-graph --reversed -r '${base}..(@ | children(@))'${fileFlag}` +
+    `log --no-graph --reversed -r '${base}..(visible_heads() & descendants(${base}))'${fileFlag}` +
     ` -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`
   );
   if (!raw) return [];
