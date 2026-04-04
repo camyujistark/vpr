@@ -497,8 +497,14 @@ function render() {
 
   // Footer
   out += `${DIM}${'─'.repeat(leftW)}┴${'─'.repeat(rightW)}${RESET}\n`;
-  if (message) { out += message + '\n'; message = ''; }
-  else out += '\n';
+  const doneCount = Object.keys(vprMeta.done || {}).length;
+  const holdCount = (vprMeta.hold || []).length;
+  const footerParts = [];
+  if (holdCount > 0) footerParts.push(`⏸ ${holdCount} held`);
+  if (doneCount > 0) footerParts.push(`${doneCount} done`);
+  const footerInfo = footerParts.length > 0 ? `  ${DIM}${footerParts.join('  ·  ')}${RESET}` : '';
+  if (message) { out += message + footerInfo + '\n'; message = ''; }
+  else out += footerInfo + '\n';
 
   // Show cursor in edit mode
   if (editMode && editCursorScreenRow >= 0) {
