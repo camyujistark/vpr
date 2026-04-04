@@ -136,10 +136,11 @@ function buildItems() {
     groups.push({ bookmark: null, commits: pending });
   }
 
-  // Add empty groups from meta that have no jj bookmark
+  // Add empty groups from active bookmarks (not done) that have no jj bookmark
   const activeBookmarks = new Set(groups.filter(g => g.bookmark).map(g => g.bookmark));
+  const doneBookmarks = new Set(Object.keys(vprMeta.done || {}));
   for (const [bm, meta] of Object.entries(vprMeta.bookmarks || {})) {
-    if (!activeBookmarks.has(bm)) {
+    if (!activeBookmarks.has(bm) && !doneBookmarks.has(bm)) {
       groups.push({ bookmark: bm, commits: [] });
     }
   }
@@ -930,35 +931,42 @@ export function startTui(config, baseArg) {
             const pickedGroup = items.find(i => i.changeId === picked)?.group;
             const targetGroup = items.find(i => i.changeId === targetChangeId)?.group;
 
-            fs.appendFileSync('/tmp/vpr-debug.log', `DROP: picked=${picked} pickedBm=${pickedEntry?.bookmark} pickedGroup=${pickedGroup} target=${targetChangeId} targetBm=${targetEntry?.bookmark} targetGroup=${targetGroup} sameGroup=${pickedGroup === targetGroup} flag=${rebaseFlag}\n`);
-
             if (pickedEntry?.bookmark && pickedGroup && pickedGroup === targetGroup) {
-              // Within-group tip move: use -B to put picked before target
-              // Then move bookmark to the new last commit in the group
-              // Adjacent (target right below tip): -B to swap them
-              // Non-adjacent (tip moving further up): -A to insert after target
+              // Within-group tip move: rebase picked, then reload to find real new tip
               const pickedIdx = entries.findIndex(e => e.changeId === picked || e.changeId?.startsWith(picked));
               const targetIdx = entries.findIndex(e => e.changeId === targetChangeId || e.changeId?.startsWith(targetChangeId));
               const isAdjacent = (pickedIdx - targetIdx === 1);
               const tipFlag = isAdjacent ? '-B' : '-A';
-              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: within-group tip move — rebase -r ${picked} ${tipFlag} ${targetChangeId} (adjacent=${isAdjacent})\n`);
               jj(`rebase -r ${picked} ${tipFlag} ${targetChangeId}`);
 
-              // Find the new last commit in the group (excluding picked, which moved earlier)
-              // After rebase, need to re-read. Use the group's items minus picked.
-              const groupCommits = items.filter(i => i.group === pickedGroup && i.type === 'commit');
-              const lastNonPicked = groupCommits.filter(i => i.changeId !== picked && !i.changeId?.startsWith(picked)).pop();
-              if (lastNonPicked) {
-                fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: move bookmark ${pickedEntry.bookmark} to new tip ${lastNonPicked.changeId}\n`);
-                try { jj(`bookmark set ${pickedEntry.bookmark} -r ${lastNonPicked.changeId} --allow-backwards`); } catch {}
+              // Reload entries to find the real new tip after rebase
+              // The bookmark followed the picked commit (jj tracks change IDs),
+              // but picked moved earlier in the group — find the actual last commit
+              const freshEntries = loadEntries(base);
+              const pickedBm = pickedEntry.bookmark;
+
+              // Walk the fresh entries: collect commits in this group
+              // (between previous known bookmark and the next known bookmark after ours)
+              let foundOurBm = false;
+              let lastInGroup = null;
+              for (const e of freshEntries) {
+                if (e.bookmark === pickedBm) {
+                  foundOurBm = true;
+                  lastInGroup = e;
+                } else if (foundOurBm) {
+                  if (e.bookmark && vprMeta.bookmarks?.[e.bookmark]) break; // hit next group
+                  lastInGroup = e;
+                }
+              }
+
+              if (lastInGroup && lastInGroup.changeId !== (freshEntries.find(e => e.bookmark === pickedBm)?.changeId)) {
+                try { jj(`bookmark set ${pickedBm} -r ${lastInGroup.changeId} --allow-backwards`); } catch {}
               }
             } else {
               // Cross-group or ungrouped: rebase
-              fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: cross-group rebase -r ${picked} ${rebaseFlag} ${targetChangeId}\n`);
               jj(`rebase -r ${picked} ${rebaseFlag} ${targetChangeId}`);
 
               if (targetEntry?.bookmark && rebaseFlag === '-A') {
-                fs.appendFileSync('/tmp/vpr-debug.log', `ACTION: move target bookmark ${targetEntry.bookmark} -> ${picked}\n`);
                 try { jj(`bookmark set ${targetEntry.bookmark} -r ${picked} --allow-backwards`); } catch {}
               }
             }
@@ -1004,23 +1012,11 @@ export function startTui(config, baseArg) {
         const prefix = config?.prefix || 'TP';
         const idx = vprMeta.nextIndex || 1;
         const nextBm = `${prefix.toLowerCase()}-${idx}`;
-        fs.appendFileSync('/tmp/vpr-debug.log', `C: starting title popup for ${nextBm}\n`);
         startInput(`${nextBm} — Ticket title: `, '', (title) => {
-          fs.appendFileSync('/tmp/vpr-debug.log', `C: title entered: "${title}", starting desc popup\n`);
-          startInput(`${nextBm} — Ticket description: `, '', (desc) => { // single-line, Enter confirms
-            fs.appendFileSync('/tmp/vpr-debug.log', `C: desc entered: "${desc}", creating WI with provider ${provider?.name}\n`);
+          startInput(`${nextBm} — Ticket description: `, '', (desc) => {
             try {
-              fs.appendFileSync('/tmp/vpr-debug.log', `C: calling createWorkItem("${title}", "${desc}") provider=${provider?.constructor?.name}\n`);
-              let result;
-              try {
-                result = provider.createWorkItem(title, desc);
-              } catch (e) {
-                fs.appendFileSync('/tmp/vpr-debug.log', `C: createWorkItem THREW: ${e?.message} ${e?.stderr?.toString()?.slice(0,200)}\n`);
-                throw e;
-              }
-              fs.appendFileSync('/tmp/vpr-debug.log', `C: createWorkItem returned: ${JSON.stringify(result)}\n`);
+              const result = provider.createWorkItem(title, desc);
               const wi = result?.then ? null : result;
-              fs.appendFileSync('/tmp/vpr-debug.log', `C: wi = ${JSON.stringify(wi)}\n`);
               if (wi) {
                 // Branch name from WI ID + slug
                 const slug = title.toLowerCase()
