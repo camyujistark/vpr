@@ -70,9 +70,11 @@ Creates `.vpr/config.json` (auto-added to `.gitignore`). The prefix names your P
 1. Make commits         jj commit -m "add auth middleware"
 2. Open TUI             vpr
 3. Create groups        n (creates ticket + bookmark per group)
-4. Move commits         Space to pick, Space to drop
-5. Write PR stories     Enter on the PR Story field
-6. Send                 vpr send (pushes branches, creates chained PRs)
+4. Move commits         Space to pick, Space to drop between groups
+5. Refine PRs           i to enter interactive mode on a group
+6. Write PR stories     s on a group header to edit the story
+7. Generate description S on a group header (uses LLM)
+8. Send                 vpr send (pushes branches, creates chained PRs)
 ```
 
 Each group becomes a git branch. PR 2 targets PR 1's branch, PR 3 targets PR 2's. Reviewers see only the diff for each slice.
@@ -80,29 +82,62 @@ Each group becomes a git branch. PR 2 targets PR 1's branch, PR 3 targets PR 2's
 ## TUI
 
 ```bash
-vpr           # open interactive mode
+vpr           # open TUI
 ```
 
-Split-pane: groups on the left, diff/metadata on the right.
+Split-pane: groups on the left, diff/metadata on the right. Three modes that layer: normal → interactive → file split. `Esc` goes back one level.
+
+### Normal mode
+
+Navigate groups and commits, edit PR metadata, move commits between groups.
+
+| Key | Context | Action |
+|-----|---------|--------|
+| `j/k` | All | Navigate |
+| `J/K` | All | Scroll right pane |
+| `Space` | Commit | Pick/drop commit to move between groups |
+| `U` | Commit | Ungroup — eject commit to backlog |
+| `t` | Group | Edit PR title |
+| `s` | Group | Edit PR story |
+| `S` | Group | Generate PR description from story via LLM |
+| `i` | Group/Commit | Enter interactive mode for this group |
+| `n` | All | New group (creates ticket + bookmark) |
+| `c` | Commit | Create new commit (`jj commit`) |
+| `u` | All | Undo (`jj undo`) |
+| `:` | All | Run arbitrary jj command |
+| `q` | All | Quit |
+
+### Interactive mode (`i` on a group)
+
+Zoom into a single PR to refine its story before pushing. Shows only that group's commits + ungrouped backlog below a separator.
 
 | Key | Action |
 |-----|--------|
-| `j/k` | Navigate commits and groups |
-| `J/K` | Scroll fields or diff |
-| `Enter` | Edit field inline |
-| `Space` | Pick/drop commit to reorder |
-| `n` | New group (creates ticket + bookmark) |
-| `d` | Delete commit or group |
-| `c` | Create new commit |
-| `s` | Squash commit into parent |
-| `f` | Split commit |
-| `u` | Undo (`jj undo`) |
-| `S` | Sync ticket to provider |
-| `b` | Set bookmark on commit |
-| `:` | Run arbitrary jj command |
-| `q` | Quit |
+| `Space` | Toggle select on commit |
+| `s` | Squash selected into parent (with confirmation) |
+| `S` | Enter file split mode (single selection) |
+| `d` | Drop selected commits (with confirmation) |
+| `r` | Reword commit message |
+| `o` | Reorder — pick then drop to new position |
+| `m` | Move ungrouped commit into this group |
+| `U` | Ungroup — eject commit to backlog |
+| `Esc`/`i` | Back to normal mode |
 
-Fields per group: **Ticket Title**, **Ticket Description**, **PR Title**, **PR Story**.
+### File split mode (`S` in interactive)
+
+Pick which files to split out of a commit into a new commit.
+
+| Key | Action |
+|-----|--------|
+| `Space` | Toggle select on file |
+| `Enter` | Execute split |
+| `Esc`/`i` | Back to interactive |
+
+### PR metadata
+
+Each group has: **PR Title** (`t`), **PR Story** (`s`), and **PR Description** (generated via `S`).
+
+The PR story is the key field — it's what you write to describe intent and context. The PR description is generated from the story + commits by an LLM. At send time, the generated description is used as the PR body (falls back to the story if no description was generated).
 
 ## CLI
 
@@ -112,12 +147,13 @@ For scripting and AI agents — all output is JSON where relevant.
 vpr new "Add auth" "OAuth2 login"       # Create ticket + bookmark
 vpr edit MY-1 --pr-title "MY-1: Auth"   # Set PR title
 vpr edit MY-1 --pr-desc "Adds OAuth2"   # Set PR story
+vpr generate MY-1                       # Generate PR description from story via LLM
 vpr move <sha> --after <sha>            # Reorder commits
 vpr squash <sha>                        # Squash into parent
 vpr split <sha>                         # Split commit interactively
 vpr delete <sha>                        # Abandon a commit
 vpr delete MY-1                         # Delete group + all commits
-vpr list                                # JSON: all groups with commits + files
+vpr list                                # JSON: all groups with commits + PR info
 vpr status                              # Colored chain summary
 vpr push                                # Push all bookmarks as git branches
 vpr push MY-1                           # Push one bookmark
@@ -131,14 +167,25 @@ vpr clean                               # Move stale bookmarks (no commits) to d
 
 `<id>` can be: bookmark name, prefix index (e.g. `MY-1`), or partial match.
 
-## PR Story
+## PR Story + Generation
 
-Each group has a **PR story** — your intent and context for the reviewer.
+Each group has a **PR story** (`prDesc`) — your intent and context. And a **PR description** (`prBody`) — the formatted body generated from the story.
 
-- **With an AI assistant:** at push time, the AI combines the story + commits + diff to write a polished PR description
-- **Without AI:** the story is used as-is for the PR body
-- **TUI:** select the PR Story field, press Enter to edit
-- **CLI:** `vpr edit <id> --pr-desc "your story"`
+- **Write the story:** TUI `s` on a group, or `vpr edit <id> --pr-desc "..."`
+- **Generate the description:** TUI `S` on a group, or `vpr generate <id>`
+- **At send time:** `prBody` is used as the PR body. Falls back to `prDesc` if no generation was done.
+
+### LLM Configuration
+
+Generation uses a configurable shell command. Set `generateCmd` in `.vpr/config.json`:
+
+```json
+{
+  "generateCmd": "claude -p"
+}
+```
+
+The command receives the prompt on stdin and outputs the PR description on stdout. Defaults to `claude -p` if the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) is installed. Any LLM CLI works — `ollama run`, `openai`, a custom script, etc.
 
 ## Providers
 
@@ -236,9 +283,10 @@ vpr/
 │   │   ├── azure-devops.mjs — Azure DevOps (az CLI)
 │   │   ├── github.mjs       — GitHub (gh CLI)
 │   │   └── none.mjs         — Local no-op
-│   ├── config.mjs           — .vpr/ config + meta management
+│   ├── config.mjs           — .vpr/ config + meta + rebase log management
+│   ├── entries.mjs          — Shared entry loading + grouping (used by CLI + TUI)
 │   ├── git.mjs              — jj/git helpers
-│   └── tui.mjs              — Terminal UI
+│   └── tui.mjs              — Terminal UI (normal, interactive, file split modes)
 └── test/                    — Node test runner specs
 ```
 
