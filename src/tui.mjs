@@ -21,7 +21,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jj, jjSafe, hasJj, git, gitSafe, getBase } from './git.mjs';
-import { loadConfig, loadMeta, saveMeta } from './config.mjs';
+import { loadConfig, loadMeta, saveMeta, appendRebaseLog } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
 import { loadEntries as sharedLoadEntries } from './entries.mjs';
 
@@ -45,9 +45,9 @@ const INVERT = `${ESC}7m`;
 // ── State ──────────────────────────────────────────────────────────────
 let provider = null;
 let vprMeta = {};
-let entries = [];     // [{ type: 'bookmark'|'commit', changeId, sha, subject, bookmark, ccType, ccScope, ccDesc }]
+let entries = [];     // [{ changeId, sha, subject, bookmark, ccType, ccScope, ccDesc }]
 let cursor = 0;
-let picked = null;  // changeId of picked commit
+let picked = null;  // changeId of picked commit (normal mode move)
 let message = '';
 let diffScroll = 0;
 let lastRightPaneKey = '';
@@ -55,6 +55,17 @@ let bodyH = 20;
 let fieldIdx = 0; // which field is highlighted in the group summary
 const FIELD_NAMES = ['wiTitle', 'wiDescription', 'prTitle', 'prDesc'];
 const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Story'];
+
+// ── Interactive mode state ────────────────────────────────────────────
+let interactiveGroup = null;  // bookmark name of the group being edited
+let selected = new Set();      // changeIds selected in interactive mode
+let reorderPicked = null;      // changeId being reordered in interactive mode
+
+// ── File split mode state ─────────────────────────────────────────────
+let splitFiles = [];           // [{ status, path }] files in the commit being split
+let splitSelected = new Set(); // indices of selected files
+let splitChangeId = null;      // changeId being split
+let splitCursor = 0;           // cursor in file_split mode
 
 // Caches
 const diffCache = new Map();
@@ -159,6 +170,26 @@ function buildItems() {
   return items;
 }
 
+// ── Interactive mode items ─────────────────────────────────────────────
+function getInteractiveItems(allItems) {
+  // Only commits belonging to the interactive group + separator + ungrouped
+  const result = [];
+  for (const item of allItems) {
+    if (item.type === 'commit' && item.group === interactiveGroup) {
+      result.push(item);
+    }
+  }
+  // Always show separator + ungrouped section
+  const ungrouped = allItems.filter(i => i.type === 'ungrouped');
+  result.push({ type: 'interactive-separator' });
+  if (ungrouped.length > 0) {
+    result.push(...ungrouped);
+  } else {
+    result.push({ type: 'interactive-empty', subject: '(no ungrouped commits)' });
+  }
+  return result;
+}
+
 // ── Right pane: group summary with selectable fields ─────────────────
 function getGroupSummary(item, rightW, targetBranch) {
   const meta = item.meta || {};
@@ -198,29 +229,29 @@ function getGroupSummary(item, rightW, targetBranch) {
   }
 
   const tpLabel = meta.tpIndex ? `${BOLD}${meta.tpIndex}${RESET}  ` : '';
-  lines.push(`╭─ ${tpLabel}${item.title}`);
-  lines.push(`│  ${DIM}${item.bookmark}${RESET}`);
+  const wiTag = meta.wi ? `${DIM}#${meta.wi}${RESET}` : '';
+  lines.push(`╭─ ${tpLabel}${wiTag}  ${DIM}${item.bookmark} → ${targetBranch || 'main'}${RESET}`);
+  lines.push(`│  ${meta.wiTitle || '(no ticket title)'}${meta.wiDescription ? `  ${DIM}— ${meta.wiDescription}${RESET}` : ''}`);
   lines.push('│');
 
-  if (meta.wi) {
-    lines.push(`│  ${DIM}WI: #${meta.wi} [${meta.wiState || '?'}]${RESET}`);
+  // PR Title + Story together
+  addField(FIELD_NAMES.indexOf('prTitle'), 'PR Title', meta.prTitle || meta.wiTitle);
+  addField(FIELD_NAMES.indexOf('prDesc'), 'PR Story', meta.prDesc);
+
+  // PR Description (generated) — always shown even if empty
+  lines.push(`│  ${DIM}── PR Description (Shift+S to generate) ──${RESET}`);
+  if (meta.prBody) {
+    const wrapW = Math.max(20, fieldW - 2);
+    for (const l of wordWrap(meta.prBody, wrapW)) lines.push(`│    ${l}`);
+  } else {
+    lines.push(`│    ${DIM}(empty — press Shift+S to generate from story)${RESET}`);
   }
-  lines.push(`│  ${DIM}Target: ${targetBranch || 'main'}${RESET}`);
   lines.push('│');
 
-  addField(0, 'Ticket Title', meta.wiTitle);
-  addField(1, 'Ticket Description', meta.wiDescription);
-
-  lines.push(`│  ${CYAN}${BOLD}▸ PR Draft${RESET}`);
-  lines.push('│');
-
-  addField(2, 'PR Title', meta.prTitle || meta.wiTitle);
-  addField(3, 'PR Story', meta.prDesc);
-
-  lines.push(`│  ${DIM}Commits: ${item.commitCount}${RESET}`);
+  lines.push(`│  ${DIM}${item.commitCount} commits${RESET}`);
   lines.push('╰─');
   lines.push('');
-  lines.push(`${DIM}J/K select field  e edit  S sync to provider${RESET}`);
+  lines.push(`${DIM}t edit title  s edit story  S generate description${RESET}`);
 
   return lines;
 }
@@ -276,11 +307,41 @@ function render() {
   let out = SYNC_START + CLEAR + HIDE_CURSOR;
 
   // Header
-  const bookmarkCount = entries.filter(e => e.bookmark).length;
-  out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
-  if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
-  out += '\n';
-  out += `${DIM}j/k nav  J/K field/scroll  space move  c commit  s squash  f split  e edit  d del  n new  S sync  u undo  : jj  q quit${RESET}\n`;
+  if (mode === 'file_split') {
+    const shortId = splitChangeId?.slice(0, 8) || '?';
+    out += `${BOLD}VPR${RESET}  ${YELLOW}[SPLIT: ${shortId}]${RESET}  ${DIM}${splitFiles.length} files, ${splitSelected.size} selected${RESET}\n`;
+    out += `${DIM}j/k nav  Space select  Enter split  Esc back${RESET}\n`;
+  } else if (mode === 'interactive') {
+    const iMeta = vprMeta.bookmarks?.[interactiveGroup] || {};
+    const iLabel = iMeta.tpIndex || interactiveGroup || '?';
+    const iTitle = iMeta.wiTitle || '';
+    const iItems = getInteractiveItems(items);
+    const iCurrent = iItems[cursor];
+    out += `${BOLD}VPR${RESET}  ${CYAN}[INTERACTIVE: ${iLabel}${iTitle ? ` — ${iTitle}` : ''}]${RESET}  ${DIM}${selected.size} selected${RESET}\n`;
+    if (iCurrent?.type === 'ungrouped') {
+      out += `${DIM}j/k nav  m move-in  Esc back${RESET}\n`;
+    } else if (iCurrent?.changeId) {
+      out += `${DIM}j/k nav  Space select  s squash  S split  d drop  r reword  o reorder  U ungroup  Esc back${RESET}\n`;
+    } else {
+      out += `${DIM}j/k nav  Esc back${RESET}\n`;
+    }
+  } else {
+    const bookmarkCount = entries.filter(e => e.bookmark).length;
+    out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
+    if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
+    out += '\n';
+    // Context-sensitive help
+    const helpItem = items[cursor];
+    if (helpItem?.type === 'group') {
+      out += `${DIM}j/k nav  J/K scroll  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+    } else if (helpItem?.type === 'commit') {
+      out += `${DIM}j/k nav  J/K scroll  Space move  U ungroup  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
+    } else if (helpItem?.type === 'ungrouped') {
+      out += `${DIM}j/k nav  Space move  n new  u undo  q quit${RESET}\n`;
+    } else {
+      out += `${DIM}j/k nav  n new  u undo  : jj  q quit${RESET}\n`;
+    }
+  }
   out += `${DIM}${'─'.repeat(leftW)}┬${'─'.repeat(rightW)}${RESET}\n`;
 
   // Scroll
@@ -289,7 +350,9 @@ function render() {
   if (cursor < scrollStart) scrollStart = cursor;
 
   // Right pane content — only reset scroll when content source changes
-  const currentItem = items[cursor];
+  const currentItem = (mode === 'interactive') ? getInteractiveItems(items)[cursor]
+    : (mode === 'file_split') ? null
+    : items[cursor];
   const rightPaneKey = currentItem?.type === 'group' ? `group:${currentItem.bookmark}` : `commit:${currentItem?.changeId || ''}`;
   if (rightPaneKey !== lastRightPaneKey) {
     diffScroll = 0;
@@ -315,12 +378,47 @@ function render() {
     rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
   }
 
-  // Body
+  // Body — build display items based on mode
+  let displayItems = items;
+  let displayCount = items.length;
+
+  if (mode === 'file_split') {
+    displayCount = splitFiles.length;
+  } else if (mode === 'interactive') {
+    // Show group commits + separator + ungrouped commits
+    displayItems = getInteractiveItems(items);
+    displayCount = displayItems.length;
+  }
+
   for (let row = 0; row < bodyH; row++) {
     const idx = scrollStart + row;
     let leftCell = '';
 
-    if (idx < items.length) {
+    if (mode === 'file_split' && idx < splitFiles.length) {
+      const file = splitFiles[idx];
+      const sel = idx === cursor;
+      const isSelected = splitSelected.has(idx);
+      const marker = isSelected ? `${GREEN}✓ ` : '  ';
+      const statusColor = file.status === 'A' ? GREEN : file.status === 'D' ? RED : DIM;
+      const label = `${marker}${statusColor}${file.status}${RESET} ${file.path}`.slice(0, leftW - 2);
+      leftCell = sel ? `${INVERT}${label}${RESET}` : label;
+    } else if (mode === 'interactive' && idx < displayItems.length) {
+      const item = displayItems[idx];
+      const sel = idx === cursor;
+
+      if (item.type === 'interactive-separator') {
+        leftCell = `${DIM}${'─'.repeat(Math.min(12, leftW - 15))} ungrouped ${'─'.repeat(Math.max(0, leftW - 25))}${RESET}`;
+      } else if (item.type === 'interactive-empty') {
+        leftCell = sel ? `${INVERT}${DIM}  (empty)${RESET}` : `${DIM}  (empty)${RESET}`;
+      } else {
+        const isSelected = selected.has(item.changeId);
+        const isReorderPicked = reorderPicked && item.changeId?.startsWith(reorderPicked.slice(0, 8));
+        const marker = isReorderPicked ? `${YELLOW}◆ ` : isSelected ? `${GREEN}● ` : '  ';
+        const typeTag = item.ccType ? `${DIM}[${item.ccType}]${RESET}` : '';
+        const label = `${marker}${item.changeId?.slice(0, 8) || ''} ${typeTag} ${item.ccDesc || item.subject}`.slice(0, leftW - 2);
+        leftCell = sel ? `${INVERT}${label}${RESET}` : isSelected ? `${GREEN}${label}${RESET}` : isReorderPicked ? `${YELLOW}${label}${RESET}` : label;
+      }
+    } else if (mode !== 'interactive' && mode !== 'file_split' && idx < items.length) {
       const item = items[idx];
       const sel = idx === cursor;
 
@@ -766,6 +864,223 @@ export function startTui(config, baseArg) {
       render(); return;
     }
 
+    // ── File split mode ──────────────────────────────────────────────
+    if (mode === 'file_split') {
+      if (key.name === 'escape' || str === 'i') {
+        mode = 'interactive';
+        splitFiles = []; splitSelected.clear(); splitChangeId = null; splitCursor = 0;
+        cursor = 0;
+        render(); return;
+      }
+      if (key.name === 'down' || str === 'j') { cursor = Math.min(splitFiles.length - 1, cursor + 1); render(); return; }
+      if (key.name === 'up' || str === 'k') { cursor = Math.max(0, cursor - 1); render(); return; }
+      if (str === ' ') {
+        if (splitSelected.has(cursor)) splitSelected.delete(cursor);
+        else splitSelected.add(cursor);
+        render(); return;
+      }
+      if (key.name === 'return') {
+        if (splitSelected.size === 0) { message = `${RED}Select files to split out${RESET}`; render(); return; }
+        const files = [...splitSelected].map(i => splitFiles[i].path);
+        startInput(`Split ${files.length} file(s) from ${splitChangeId?.slice(0, 8)}? (y/n)`, '', (answer) => {
+          if (answer !== 'y') { mode = 'file_split'; return; }
+          try {
+            const fileArgs = files.map(f => `"${f}"`).join(' ');
+            execSync(`JJ_EDITOR=true jj split -r ${splitChangeId} ${fileArgs}`, { stdio: 'pipe', shell: '/bin/bash' });
+            appendRebaseLog([{ type: 'split', changeId: splitChangeId, files, result: 'ok' }]);
+            mode = 'interactive';
+            splitFiles = []; splitSelected.clear(); splitChangeId = null;
+            reload();
+            message = `${GREEN}Split ${files.length} file(s)${RESET}`;
+          } catch (err) {
+            mode = 'file_split';
+            message = `${RED}Split failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        });
+        return;
+      }
+      render(); return;
+    }
+
+    // ── Interactive mode ────────────────────────────────────────────
+    if (mode === 'interactive') {
+      const iItems = getInteractiveItems(items);
+
+      if (key.name === 'escape' || str === 'i') {
+        mode = 'normal';
+        interactiveGroup = null; selected.clear(); reorderPicked = null;
+        cursor = 0;
+        render(); return;
+      }
+      if (key.name === 'down' || str === 'j') { cursor = Math.min(iItems.length - 1, cursor + 1); render(); return; }
+      if (key.name === 'up' || str === 'k') { cursor = Math.max(0, cursor - 1); render(); return; }
+      if (key.name === 'j' && key.shift) { diffScroll += 3; render(); return; }
+      if (key.name === 'k' && key.shift) { diffScroll = Math.max(0, diffScroll - 3); render(); return; }
+
+      const iItem = iItems[cursor];
+      if (!iItem || iItem.type === 'interactive-separator') { render(); return; }
+
+      // Space — toggle select
+      if (str === ' ') {
+        if (iItem?.changeId) {
+          if (selected.has(iItem.changeId)) selected.delete(iItem.changeId);
+          else selected.add(iItem.changeId);
+        }
+        render(); return;
+      }
+
+      // s — squash selected into parents
+      if (str === 's') {
+        if (selected.size === 0) { message = `${RED}Select commits to squash${RESET}`; render(); return; }
+        const count = selected.size;
+        startInput(`Squash ${count} commit(s) into parent? (y/n)`, '', (answer) => {
+          if (answer !== 'y') { mode = 'interactive'; return; }
+          const actions = [];
+          // Sort by position descending (newest first)
+          const sorted = [...selected].sort((a, b) => {
+            const aIdx = entries.findIndex(e => e.changeId === a);
+            const bIdx = entries.findIndex(e => e.changeId === b);
+            return bIdx - aIdx;
+          });
+          for (const cid of sorted) {
+            const entry = entries.find(e => e.changeId === cid);
+            try {
+              jj(`squash -r ${cid}`);
+              actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'ok' });
+            } catch (err) {
+              actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'failed', error: (err?.stderr?.toString() || '').slice(0, 80) });
+            }
+          }
+          if (actions.length > 0) appendRebaseLog(actions);
+          selected.clear();
+          mode = 'interactive';
+          reload();
+          const ok = actions.filter(a => a.result === 'ok').length;
+          const fail = actions.filter(a => a.result === 'failed').length;
+          message = fail > 0
+            ? `${YELLOW}Squashed ${ok}/${actions.length} (${fail} failed)${RESET}`
+            : `${GREEN}Squashed ${ok} commit(s)${RESET}`;
+        });
+        return;
+      }
+
+      // S — enter file_split
+      if (str === 'S') {
+        if (selected.size !== 1) { message = `${RED}Select exactly 1 commit to split${RESET}`; render(); return; }
+        const cid = [...selected][0];
+        try {
+          const raw = jj(`diff --summary -r ${cid}`);
+          splitFiles = raw.split('\n').filter(Boolean).map(line => {
+            const status = line.charAt(0);
+            const filePath = line.slice(2).trim();
+            return { status, path: filePath };
+          });
+          if (splitFiles.length === 0) { message = `${RED}No files in commit${RESET}`; render(); return; }
+          splitChangeId = cid;
+          splitSelected.clear();
+          splitCursor = 0;
+          cursor = 0;
+          mode = 'file_split';
+        } catch (err) {
+          message = `${RED}Failed to load files: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+        render(); return;
+      }
+
+      // d — drop selected
+      if (str === 'd') {
+        if (selected.size === 0) { message = `${RED}Select commits to drop${RESET}`; render(); return; }
+        const count = selected.size;
+        startInput(`Drop ${count} commit(s)? (y/n)`, '', (answer) => {
+          if (answer !== 'y') { mode = 'interactive'; return; }
+          const actions = [];
+          const sorted = [...selected].sort((a, b) => {
+            const aIdx = entries.findIndex(e => e.changeId === a);
+            const bIdx = entries.findIndex(e => e.changeId === b);
+            return bIdx - aIdx;
+          });
+          for (const cid of sorted) {
+            const entry = entries.find(e => e.changeId === cid);
+            try {
+              jj(`abandon ${cid}`);
+              actions.push({ type: 'drop', changeId: cid, subject: entry?.subject || '', result: 'ok' });
+            } catch (err) {
+              actions.push({ type: 'drop', changeId: cid, subject: entry?.subject || '', result: 'failed' });
+            }
+          }
+          if (actions.length > 0) appendRebaseLog(actions);
+          selected.clear();
+          mode = 'interactive';
+          reload();
+          message = `${GREEN}Dropped ${actions.filter(a => a.result === 'ok').length} commit(s)${RESET}`;
+        });
+        return;
+      }
+
+      // r — reword selected commit
+      if (str === 'r') {
+        if (selected.size !== 1) { message = `${RED}Select exactly 1 commit to reword${RESET}`; render(); return; }
+        const cid = [...selected][0];
+        const entry = entries.find(e => e.changeId === cid);
+        startInput('New message: ', entry?.subject || '', (newMsg) => {
+          mode = 'interactive';
+          if (!newMsg?.trim()) return;
+          try {
+            const escaped = newMsg.replace(/'/g, "'\\''");
+            jj(`describe ${cid} -m '${escaped}'`);
+            selected.clear();
+            reload();
+            message = `${GREEN}Reworded ${cid.slice(0, 8)}${RESET}`;
+          } catch (err) {
+            message = `${RED}Reword failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        });
+        return;
+      }
+
+      // o — reorder (pick/drop within group)
+      if (str === 'o') {
+        if (!iItem?.changeId) { render(); return; }
+        if (!reorderPicked) {
+          reorderPicked = iItem.changeId;
+          message = `${YELLOW}Picked ${iItem.changeId.slice(0, 8)} — navigate and press o to drop${RESET}`;
+        } else {
+          if (reorderPicked === iItem.changeId) {
+            reorderPicked = null;
+            message = `${DIM}Cancelled reorder${RESET}`;
+          } else {
+            try {
+              jj(`rebase -r ${reorderPicked} -A ${iItem.changeId}`);
+              reorderPicked = null;
+              reload();
+              message = `${GREEN}Reordered${RESET}`;
+            } catch (err) {
+              message = `${RED}Reorder failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+            }
+          }
+        }
+        render(); return;
+      }
+
+      // m — move ungrouped commit into this group
+      if (str === 'm') {
+        if (iItem?.type === 'ungrouped' && iItem?.changeId) {
+          try {
+            jj(`rebase -r ${iItem.changeId} -B ${interactiveGroup}`);
+            reload();
+            message = `${GREEN}Moved ${iItem.changeId.slice(0, 8)} into group${RESET}`;
+          } catch (err) {
+            message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        } else {
+          message = `${RED}Navigate to an ungrouped commit${RESET}`;
+        }
+        render(); return;
+      }
+
+      render(); return;
+    }
+
     // Ctrl+C in normal mode — quit
     if (key.name === 'c' && key.ctrl) {
       process.stdout.write(SHOW_CURSOR + CLEAR);
@@ -775,34 +1090,99 @@ export function startTui(config, baseArg) {
     // Shift keys — context-sensitive
     const currentItem = items[cursor];
     if (key.name === 'j' && key.shift) {
-      if (currentItem?.type === 'group') {
-        fieldIdx = Math.min(FIELD_NAMES.length - 1, fieldIdx + 1);
-      } else {
-        diffScroll += 3;
-      }
+      diffScroll += 3;
       render(); return;
     }
     if (key.name === 'k' && key.shift) {
-      if (currentItem?.type === 'group') {
-        fieldIdx = Math.max(0, fieldIdx - 1);
-      } else {
-        diffScroll = Math.max(0, diffScroll - 3);
-      }
+      diffScroll = Math.max(0, diffScroll - 3);
       render(); return;
     }
     if (key.name === 'r' && key.shift) { reload(); render(); return; }
-    // S (shift+s) — save to provider
+    // S (shift+s) — generate PR description from story via LLM
     if (key.name === 's' && key.shift) {
-      if (currentItem?.type === 'group' && currentItem.bookmark) {
-        const sMeta = vprMeta.bookmarks?.[currentItem.bookmark];
-        if (sMeta?.wi && provider) {
-          try {
-            provider.updateWorkItem(sMeta.wi, { title: sMeta.wiTitle, description: sMeta.wiDescription });
-            message = `${GREEN}Synced ${currentItem.bookmark} to provider${RESET}`;
-          } catch { message = `${RED}Sync failed${RESET}`; }
+      const gBm = currentItem?.type === 'group' ? currentItem.bookmark : currentItem?.group;
+      if (!gBm) { message = `${RED}Navigate to a group${RESET}`; render(); return; }
+      const gMeta = vprMeta.bookmarks?.[gBm] || {};
+      if (!gMeta.prDesc?.trim()) {
+        message = `${YELLOW}Write a PR story first (press s)${RESET}`;
+        render(); return;
+      }
+
+      // Find generate command: config > claude CLI > error
+      const generateCmd = config?.generateCmd || null;
+      let cmd = generateCmd;
+      if (!cmd) {
+        try { execSync('which claude', { stdio: 'pipe' }); cmd = 'claude -p'; } catch {}
+      }
+      if (!cmd) {
+        message = `${RED}No LLM configured. Add "generateCmd" to .vpr/config.json or install claude CLI${RESET}`;
+        render(); return;
+      }
+
+      // Build prompt with story + commits
+      const groupCommits = items.filter(i => i.group === gBm && i.type === 'commit');
+      const commitList = groupCommits.map(c => `- ${c.changeId?.slice(0, 8)} ${c.subject}`).join('\n');
+      const prompt = [
+        'Generate a concise PR description in markdown from the following.',
+        'Output ONLY the description body — no preamble, no "Here is", just the markdown.',
+        'Use ## Summary with 1-3 bullet points, then ## Changes with details grouped logically.',
+        '',
+        `PR Title: ${gMeta.prTitle || ''}`,
+        '',
+        'PR Story:',
+        gMeta.prDesc,
+        '',
+        'Commits:',
+        commitList,
+      ].join('\n');
+
+      message = `${DIM}Generating PR description...${RESET}`;
+      render();
+
+      // Run async-ish via spawn to not block TUI
+      try {
+        const result = execSync(cmd, {
+          input: prompt,
+          encoding: 'utf-8',
+          timeout: 60000,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          shell: '/bin/bash',
+        }).trim();
+
+        if (result) {
+          if (!vprMeta.bookmarks[gBm]) vprMeta.bookmarks[gBm] = {};
+          vprMeta.bookmarks[gBm].prBody = result;
+          saveMeta(vprMeta);
+          message = `${GREEN}PR description generated and saved${RESET}`;
         } else {
-          message = `${DIM}No WI to sync${RESET}`;
+          message = `${YELLOW}LLM returned empty response${RESET}`;
         }
+      } catch (err) {
+        const stderr = err?.stderr?.toString()?.slice(0, 80) || err.message?.slice(0, 80) || '';
+        message = `${RED}Generation failed: ${stderr}${RESET}`;
+      }
+      render(); return;
+    }
+
+    // U (shift+u) — ungroup: eject commit to after the last bookmark (truly ungrouped)
+    if (key.name === 'u' && key.shift) {
+      const uItem = mode === 'interactive' ? getInteractiveItems(items)[cursor] : currentItem;
+      if (!uItem?.changeId || !uItem?.group) {
+        message = `${RED}Select a commit in a group to ungroup${RESET}`;
+        render(); return;
+      }
+      // Find the last bookmark in the chain — rebase after it so commit is truly ungrouped
+      const lastBookmarked = [...entries].reverse().find(e => e.bookmark);
+      if (!lastBookmarked) {
+        message = `${RED}No bookmarks found${RESET}`;
+        render(); return;
+      }
+      try {
+        jj(`rebase -r ${uItem.changeId} -A ${lastBookmarked.changeId}`);
+        reload();
+        message = `${GREEN}Ungrouped ${uItem.changeId.slice(0, 8)}${RESET}`;
+      } catch (err) {
+        message = `${RED}Ungroup failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
       }
       render(); return;
     }
@@ -957,15 +1337,26 @@ export function startTui(config, baseArg) {
         break;
 
       case 'return':
-      case 'e': {
-        // Inline edit — works from group header or any commit in a group
-        const eItem = items[cursor];
-        const eBm = eItem?.type === 'group' ? eItem.bookmark : eItem?.group;
-        if (!eBm) { message = `${RED}No group selected${RESET}`; break; }
-        const eMeta = vprMeta.bookmarks?.[eBm] || {};
-        const fieldName = FIELD_NAMES[fieldIdx];
-        const currentVal = eMeta[fieldName] || (fieldName === 'prTitle' ? eMeta.wiTitle : '') || '';
-        startFieldEdit(eBm, fieldName, currentVal);
+      case 't': {
+        // Edit PR title
+        const tItem = items[cursor];
+        const tBm = tItem?.type === 'group' ? tItem.bookmark : tItem?.group;
+        if (!tBm) { message = `${RED}Navigate to a group${RESET}`; break; }
+        const tMeta = vprMeta.bookmarks?.[tBm] || {};
+        fieldIdx = FIELD_NAMES.indexOf('prTitle');
+        startFieldEdit(tBm, 'prTitle', tMeta.prTitle || tMeta.wiTitle || '');
+        render();
+        return;
+      }
+
+      case 's': {
+        // Edit PR story
+        const sItem = items[cursor];
+        const sBm = sItem?.type === 'group' ? sItem.bookmark : sItem?.group;
+        if (!sBm) { message = `${RED}Navigate to a group${RESET}`; break; }
+        const sMeta = vprMeta.bookmarks?.[sBm] || {};
+        fieldIdx = FIELD_NAMES.indexOf('prDesc');
+        startFieldEdit(sBm, 'prDesc', sMeta.prDesc || '');
         render();
         return;
       }
@@ -1063,20 +1454,19 @@ export function startTui(config, baseArg) {
         return;
       }
 
-      case 's': {
-        // Squash — merge selected commit into its parent
-        const sItem = items[cursor];
-        if (!sItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
-        runJjCommand(`squash -r ${sItem.changeId}`);
-        return;
-      }
-
-      case 'f': {
-        // Split — split selected commit interactively
-        const fItem = items[cursor];
-        if (!fItem?.changeId) { message = `${RED}Select a commit${RESET}`; break; }
-        runJjCommand(`split -r ${fItem.changeId}`);
-        return;
+      case 'i': {
+        // Enter interactive mode on current group
+        const iItem = items[cursor];
+        let groupBookmark = null;
+        if (iItem?.type === 'group') groupBookmark = iItem.bookmark;
+        else if (iItem?.group) groupBookmark = iItem.group;
+        if (!groupBookmark) { message = `${RED}Navigate to a group or commit within a group${RESET}`; break; }
+        interactiveGroup = groupBookmark;
+        selected.clear();
+        reorderPicked = null;
+        mode = 'interactive';
+        cursor = 0;
+        render(); return;
       }
 
       case 'c': {
