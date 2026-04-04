@@ -8,6 +8,15 @@ VPR sits on top of [jj (Jujutsu)](https://martinvonz.github.io/jj/) and uses boo
 
 Stacked PRs are great for review but painful to maintain. Real branches cascade-rebase, cherry-picks lose commits, and the bookkeeping is brutal. VPR treats PRs as a view layer — you work linearly, and it handles the branch/PR plumbing.
 
+## PR Ethos
+
+VPR is built around micro PRs that tell a story. Each group should be a small, reviewable chunk — not a dump of everything at once.
+
+- **One concern per PR** — a scaffold is a PR, a single component is a PR, wiring them together is a PR. Don't bundle.
+- **Tell a story** — chain PRs in an order that makes sense to someone reading them cold. Foundation first, then layers.
+- **Think about the reviewer** — step them through changes. Each PR should be understandable on its own.
+- **Docs travel with code** — if a PR adds a feature, its docs belong in the same PR.
+
 ## Built on jj
 
 VPR is a thin layer on top of [jj (Jujutsu)](https://martinvonz.github.io/jj/), a modern VCS that replaces git's index-based workflow with first-class rebase, conflict-free rewrites, and immutable change IDs.
