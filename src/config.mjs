@@ -56,6 +56,24 @@ export function saveMeta(meta) {
   fs.writeFileSync(metaPath(), JSON.stringify(meta, null, 2) + '\n');
 }
 
+// ── Rebase log ────────────────────────────────────────────────────────
+
+const REBASE_LOG_FILE = path.join(CONFIG_DIR, 'rebase-log.json');
+
+function rebaseLogPath() {
+  return path.join(repoRoot(), REBASE_LOG_FILE);
+}
+
+export function loadRebaseLog() {
+  try { return JSON.parse(fs.readFileSync(rebaseLogPath(), 'utf-8')); } catch { return []; }
+}
+
+export function appendRebaseLog(actions) {
+  const log = loadRebaseLog();
+  log.push({ timestamp: new Date().toISOString(), actions });
+  fs.writeFileSync(rebaseLogPath(), JSON.stringify(log, null, 2) + '\n');
+}
+
 /**
  * Default config templates per provider
  */
