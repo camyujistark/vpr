@@ -49,12 +49,13 @@ export function currentBranch() {
 
 export function getBase() {
   if (hasJj()) {
-    // Find the nearest ancestor with a remote bookmark (= last pushed commit)
-    const nearestRemote = jjSafe(`log --no-graph -r 'ancestors(@) & remote_bookmarks()' -T 'change_id.short() ++ "\\n"' --limit 1`);
+    // Find the nearest ancestor with a remote bookmark (= last pushed commit).
+    // Use commit_id (git SHA) to avoid ambiguity with divergent change IDs.
+    const nearestRemote = jjSafe(`log --no-graph -r 'ancestors(@) & remote_bookmarks()' -T 'commit_id.short() ++ "\\n"' --limit 1`);
     if (nearestRemote?.trim()) return nearestRemote.trim();
     // Fallback to remote main
     for (const ref of ['main@origin', 'master@origin']) {
-      if (jjSafe(`log --no-graph -r '${ref}' -T 'change_id.short()'`)) return ref;
+      if (jjSafe(`log --no-graph -r '${ref}' -T 'commit_id.short()'`)) return ref;
     }
     return 'trunk()';
   }

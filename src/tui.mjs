@@ -20,9 +20,10 @@ import readline from 'readline';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { jj, jjSafe, hasJj, git, gitSafe } from './git.mjs';
+import { jj, jjSafe, hasJj, git, gitSafe, getBase } from './git.mjs';
 import { loadConfig, loadMeta, saveMeta } from './config.mjs';
 import { createProvider } from './providers/index.mjs';
+import { loadEntries as sharedLoadEntries } from './entries.mjs';
 
 // ── ANSI ───────────────────────────────────────────────────────────────
 const ESC = '\x1b[';
@@ -75,39 +76,9 @@ function getCachedFiles(sha) {
   return filesCache.get(sha);
 }
 
-// ── Load jj log as flat list ───────────────────────────────────────────
+// ── Load jj log as flat list (delegates to shared entries.mjs) ─────────
 function loadEntries(base) {
-  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`);
-  if (!raw) return [];
-
-  const lines = raw.split('\n').filter(Boolean);
-  const result = [];
-
-  for (const line of lines) {
-    const [changeId, sha, bookmarkStr, subject] = line.split('\t');
-    if (!changeId || !subject) continue;
-
-    const ccMatch = subject.match(/^(feat|fix|chore|docs|test|refactor|ci|style|perf)(?:\(([^)]+)\))?:\s*(.*)$/);
-
-    // Parse bookmarks (jj may list multiple separated by spaces)
-    // Match bookmarks that have metadata in .vpr/meta.json
-    const allBookmarks = bookmarkStr?.trim().split(/\s+/).filter(Boolean) || [];
-    const bookmarks = allBookmarks.filter(b => vprMeta.bookmarks?.[b]);
-    const bookmark = bookmarks[0] || null;
-
-    result.push({
-      type: bookmark ? 'bookmark' : 'commit',
-      changeId: changeId.trim(),
-      sha: sha.trim(),
-      subject: subject.trim(),
-      bookmark,
-      ccType: ccMatch ? ccMatch[1] : null,
-      ccScope: ccMatch ? ccMatch[2] || null : null,
-      ccDesc: ccMatch ? ccMatch[3] : subject.trim(),
-    });
-  }
-
-  return result;
+  return sharedLoadEntries(base);
 }
 
 // ── Build grouped view ─────────────────────────────────────────────────
@@ -732,13 +703,11 @@ export function startTui(config, baseArg) {
   provider = createProvider(config);
   vprMeta = loadMeta();
 
-  // Determine base: user arg, or nearest remote bookmark ancestor, or trunk
+  // Determine base: user arg, or getBase() from shared git helpers
   if (baseArg) {
     base = baseArg;
   } else {
-    // Find the nearest ancestor commit that has a remote bookmark
-    const nearestRemote = jjSafe(`log --no-graph -r 'ancestors(@) & remote_bookmarks()' -T 'change_id.short() ++ "\\n"' --limit 1`);
-    base = nearestRemote?.trim() || 'trunk()';
+    base = getBase() || 'trunk()';
   }
   entries = loadEntries(base);
 
@@ -1053,7 +1022,7 @@ export function startTui(config, baseArg) {
 
       // w and p removed — use J/K to select field, e to edit, S to sync
 
-      case 'd': {
+      case 'D': {
         const dItem = items[cursor];
         if (dItem?.type === 'group') {
           // Delete entire group + all commits

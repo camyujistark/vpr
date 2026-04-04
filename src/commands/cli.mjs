@@ -8,6 +8,7 @@ import readline from 'readline';
 import { loadConfig, loadMeta, saveMeta } from '../config.mjs';
 import { jj, jjSafe, hasJj, getBase } from '../git.mjs';
 import { createProvider } from '../providers/index.mjs';
+import { loadEntries, groupEntries, findBookmark, resolveToBookmark } from '../entries.mjs';
 
 function requireJj() {
   if (!hasJj()) { console.error('VPR requires jj (jujutsu)'); process.exit(1); }
@@ -188,31 +189,8 @@ export function cmdList() {
   const config = requireConfig();
   const meta = loadMeta();
   const base = getBase() || 'main';
-  const entries = loadEntries(base);
-
-  // Group entries
-  const groups = [];
-  let pending = [];
-  for (const entry of entries) {
-    if (entry.bookmark) {
-      groups.push({ bookmark: entry.bookmark, commits: [...pending, entry] });
-      pending = [];
-    } else {
-      pending.push(entry);
-    }
-  }
-  if (pending.length > 0) groups.push({ bookmark: null, commits: pending });
-
-  // Sort by TP index
-  groups.sort((a, b) => {
-    if (!a.bookmark) return 1;
-    if (!b.bookmark) return -1;
-    const aMeta = meta.bookmarks?.[a.bookmark] || {};
-    const bMeta = meta.bookmarks?.[b.bookmark] || {};
-    const aNum = parseInt(aMeta.tpIndex?.replace(/\D/g, '')) || parseInt(a.bookmark.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(bMeta.tpIndex?.replace(/\D/g, '')) || parseInt(b.bookmark.replace(/\D/g, '')) || 0;
-    return aNum - bNum;
-  });
+  const entries = loadEntries(base, { files: true });
+  const groups = groupEntries(entries, meta);
 
   const result = groups.map((g, i) => {
     const bmMeta = g.bookmark ? (meta.bookmarks?.[g.bookmark] || {}) : {};
@@ -251,30 +229,8 @@ export function cmdStatus() {
   const config = requireConfig();
   const meta = loadMeta();
   const base = getBase() || 'main';
-  const entries = loadEntries(base);
-
-  const groups = [];
-  let pending = [];
-  for (const entry of entries) {
-    if (entry.bookmark) {
-      groups.push({ bookmark: entry.bookmark, commits: [...pending, entry] });
-      pending = [];
-    } else {
-      pending.push(entry);
-    }
-  }
-  if (pending.length > 0) groups.push({ bookmark: null, commits: pending });
-
-  groups.sort((a, b) => {
-    if (!a.bookmark) return 1;
-    if (!b.bookmark) return -1;
-    const aMeta = meta.bookmarks?.[a.bookmark] || {};
-    const bMeta = meta.bookmarks?.[b.bookmark] || {};
-    const aNum = parseInt(aMeta.tpIndex?.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(bMeta.tpIndex?.replace(/\D/g, '')) || 0;
-    return aNum - bNum;
-  });
-
+  const entries = loadEntries(base, { files: true });
+  const groups = groupEntries(entries, meta);
   const resolvedBase = resolveToBookmark(base);
   const totalGroups = groups.filter(g => g.bookmark).length;
 
@@ -367,30 +323,9 @@ export async function cmdSend(args) {
   const meta = loadMeta();
   const base = getBase() || 'main';
   const entries = loadEntries(base);
+  const groups = groupEntries(entries, meta);
   const dryRun = args.includes('--dry-run');
   const specificId = args.find(a => a !== '--dry-run');
-
-  const groups = [];
-  let pending = [];
-  for (const entry of entries) {
-    if (entry.bookmark) {
-      groups.push({ bookmark: entry.bookmark, commits: [...pending, entry] });
-      pending = [];
-    } else {
-      pending.push(entry);
-    }
-  }
-
-  // Sort by TP index
-  groups.sort((a, b) => {
-    if (!a.bookmark) return 1;
-    if (!b.bookmark) return -1;
-    const aMeta = meta.bookmarks?.[a.bookmark] || {};
-    const bMeta = meta.bookmarks?.[b.bookmark] || {};
-    const aNum = parseInt(aMeta.tpIndex?.replace(/\D/g, '')) || 0;
-    const bNum = parseInt(bMeta.tpIndex?.replace(/\D/g, '')) || 0;
-    return aNum - bNum;
-  });
 
   // Filter to specific ID if provided
   let sendGroups = groups.filter(g => g.bookmark);
@@ -514,8 +449,6 @@ export function cmdClean() {
   const meta = loadMeta();
   const base = getBase() || 'main';
   const entries = loadEntries(base);
-
-  const activeChangeIds = new Set(entries.map(e => e.changeId));
   const moved = [];
 
   for (const [bm, bmMeta] of Object.entries(meta.bookmarks || {})) {
@@ -557,56 +490,6 @@ export function cmdSplit(args) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-function resolveToBookmark(changeId) {
-  if (!changeId || changeId.includes('/') || changeId.includes('@')) return changeId;
-  try {
-    const bm = jj(`log --no-graph -r '${changeId}' -T 'bookmarks'`).trim().split(/\s+/)[0];
-    if (bm) return bm;
-  } catch {}
-  return changeId;
-}
-
-function findBookmark(meta, query) {
-  if (!query) return null;
-  // Exact match
-  if (meta.bookmarks?.[query]) return query;
-  // Match by TP index (e.g. "tp-91" or "TP-91")
-  const lower = query.toLowerCase();
-  for (const [bm, m] of Object.entries(meta.bookmarks || {})) {
-    if (m.tpIndex?.toLowerCase() === lower) return bm;
-    if (bm.toLowerCase() === lower) return bm;
-  }
-  // Partial match
-  for (const [bm, m] of Object.entries(meta.bookmarks || {})) {
-    if (bm.includes(query)) return bm;
-  }
-  return null;
-}
-
-function loadEntries(base) {
-  // Single jj call with -s to get file summaries too
-  const raw = jjSafe(`log --no-graph --reversed -r '${base}..@-' -s -T 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`);
-  if (!raw) return [];
-  const meta = loadMeta();
-  const entries = [];
-  let current = null;
-
-  for (const line of raw.split('\n')) {
-    // Commit line has tabs (from template)
-    if (line.includes('\t')) {
-      const [changeId, sha, bookmarkStr, subject] = line.split('\t');
-      const allBookmarks = bookmarkStr?.trim().split(/\s+/).filter(Boolean) || [];
-      const bookmark = allBookmarks.find(b => meta.bookmarks?.[b]) || null;
-      current = { changeId: changeId?.trim(), sha: sha?.trim(), subject: subject?.trim(), bookmark, files: [] };
-      entries.push(current);
-    } else if (current && line.trim()) {
-      // File summary line (e.g. "M api/server.ts")
-      current.files.push(line.trim());
-    }
-  }
-  return entries;
-}
-
 function validateChainOrder(groups, meta, base) {
   const errors = [];
   const resolvedBase = resolveToBookmark(base);
