@@ -233,7 +233,16 @@ export function cmdList() {
     };
   });
 
-  console.log(JSON.stringify(result, null, 2));
+  const done = Object.entries(meta.done || {}).map(([bm, m]) => ({
+    bookmark: bm,
+    tpIndex: m.tpIndex || null,
+    wi: m.wi || null,
+    wiTitle: m.wiTitle || null,
+    prTitle: m.prTitle || null,
+    prId: m.prId || null,
+  }));
+
+  console.log(JSON.stringify({ groups: result, done }, null, 2));
 }
 
 // ── vpr status ─────────────────────────────────────────────────────────
@@ -321,6 +330,12 @@ export function cmdStatus() {
       console.log(`  ${D}│${R} ${M}${c.changeId.slice(0, 8)}${R}  ${c.subject}`);
     }
     console.log('');
+  }
+
+  // Done
+  const doneCount = Object.keys(meta.done || {}).length;
+  if (doneCount > 0) {
+    console.log(`  ${D}${doneCount} done${R}\n`);
   }
 }
 
@@ -476,6 +491,13 @@ export async function cmdSend(args) {
           console.log(`  WI #${m.wi} → ${doneState}`);
         } catch {}
       }
+
+      // Move bookmark to done
+      if (!meta.done) meta.done = {};
+      meta.done[g.bookmark] = { ...m, prId: prResult.id };
+      delete meta.bookmarks[g.bookmark];
+      saveMeta(meta);
+      console.log(`  Moved ${m.tpIndex || g.bookmark} → done`);
     } catch (err) {
       console.error(`  Failed to create PR: ${err?.stderr?.toString()?.slice(0, 100) || err.message}`);
     }
@@ -483,6 +505,36 @@ export async function cmdSend(args) {
 
   rl.close();
   console.log('\nDone.');
+}
+
+// ── vpr clean ─────────────────────────────────────────────────────────
+export function cmdClean() {
+  requireJj();
+  const config = requireConfig();
+  const meta = loadMeta();
+  const base = getBase() || 'main';
+  const entries = loadEntries(base);
+
+  const activeChangeIds = new Set(entries.map(e => e.changeId));
+  const moved = [];
+
+  for (const [bm, bmMeta] of Object.entries(meta.bookmarks || {})) {
+    // Check if this bookmark has any commits in the current chain
+    const hasCommits = entries.some(e => e.bookmark === bm);
+    if (!hasCommits) {
+      if (!meta.done) meta.done = {};
+      meta.done[bm] = bmMeta;
+      delete meta.bookmarks[bm];
+      moved.push(bmMeta.tpIndex || bm);
+    }
+  }
+
+  if (moved.length > 0) {
+    saveMeta(meta);
+    console.log(`Moved ${moved.length} to done: ${moved.join(', ')}`);
+  } else {
+    console.log('Nothing to clean');
+  }
 }
 
 // ── vpr squash <changeId> ──────────────────────────────────────────────

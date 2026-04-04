@@ -89,6 +89,12 @@ switch (cmd) {
     break;
   }
 
+  case 'clean': {
+    const { cmdClean } = await import('../src/commands/cli.mjs');
+    cmdClean();
+    break;
+  }
+
   case 'help':
   case '--help':
   case '-h': {
@@ -115,6 +121,7 @@ switch (cmd) {
     vpr push [bookmark]               Push bookmarks as git branches
     vpr send                          Push all + create PRs (interactive)
     vpr send --dry-run                Preview what would be pushed
+    vpr clean                         Move stale bookmarks (no commits) to done
 
   <id> can be: bookmark name, project index (e.g. tp-91), or partial match
 `);
