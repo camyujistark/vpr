@@ -47,8 +47,13 @@ vpr delete <id>           # entire group + commits
 
 ### View
 ```bash
-vpr list                  # JSON array of groups with commits, targets, PR info
-vpr status                # human-readable chain summary
+vpr list                  # JSON: { groups: [...], done: [...] }
+vpr status                # human-readable chain summary (shows done count)
+```
+
+### Clean up stale bookmarks
+```bash
+vpr clean                 # move bookmarks with no commits to done
 ```
 
 ### Push

@@ -232,24 +232,25 @@ describe('vpr list', () => {
   beforeEach(setup);
   afterEach(teardown);
 
-  it('returns JSON array of groups', () => {
+  it('returns JSON with groups and done arrays', () => {
     makeCommit('feat: a');
     runJSON('new "First group"');
     makeCommit('feat: b');
     runJSON('new "Second group"');
 
-    const groups = runJSON('list');
-    assert.ok(Array.isArray(groups));
-    assert.strictEqual(groups.length, 2);
-    assert.strictEqual(groups[0].tpIndex, 'TP-1');
-    assert.strictEqual(groups[1].tpIndex, 'TP-2');
+    const result = runJSON('list');
+    assert.ok(Array.isArray(result.groups));
+    assert.ok(Array.isArray(result.done));
+    assert.strictEqual(result.groups.length, 2);
+    assert.strictEqual(result.groups[0].tpIndex, 'TP-1');
+    assert.strictEqual(result.groups[1].tpIndex, 'TP-2');
   });
 
   it('each group has commits array', () => {
     makeCommit('feat: a');
     runJSON('new "Group"');
 
-    const groups = runJSON('list');
+    const { groups } = runJSON('list');
     assert.ok(groups[0].commits.length >= 1);
     assert.ok(groups[0].commits[0].changeId);
     assert.ok(groups[0].commits[0].subject);
@@ -261,7 +262,7 @@ describe('vpr list', () => {
     makeCommit('feat: b');
     runJSON('new "Second"');
 
-    const groups = runJSON('list');
+    const { groups } = runJSON('list');
     // First group targets base (main)
     assert.ok(groups[0].target);
     // Second group targets first group's bookmark
@@ -273,7 +274,7 @@ describe('vpr list', () => {
     runJSON('new "Test"');
     runJSON('edit tp-1 --pr-title "Custom PR" --pr-desc "## Summary"');
 
-    const groups = runJSON('list');
+    const { groups } = runJSON('list');
     assert.strictEqual(groups[0].prTitle, 'Custom PR');
     assert.strictEqual(groups[0].prDesc, '## Summary');
   });

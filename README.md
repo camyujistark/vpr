@@ -124,6 +124,7 @@ vpr push MY-1                           # Push one bookmark
 vpr send                                # Push + create PRs (interactive)
 vpr send MY-1                           # Send one PR
 vpr send --dry-run                      # Preview without pushing
+vpr clean                               # Move stale bookmarks (no commits) to done
 ```
 
 **Aliases:** `s` = status, `l` = list, `n` = new, `e` = edit, `m` = move, `d` = delete
@@ -203,6 +204,7 @@ main
 2. **Pushes** each bookmark as a git branch
 3. **Creates PRs** — each targeting the previous branch
 4. **Closes tickets** — marks issues/work items as done
+5. **Archives** — moves sent bookmarks from `bookmarks` to `done` in meta.json
 
 jj handles rebase mechanics. Reorder commits and jj auto-rebases descendants. Bookmarks follow their commits. VPR reads the topology.
 
