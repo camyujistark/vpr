@@ -38,8 +38,12 @@ export function cmdNew(args) {
   const desc = args[1] || '';
   if (!title) { console.error('Usage: vpr new "title" ["description"]'); process.exit(1); }
 
-  // Find target commit
-  const target = args[2] || '@-';
+  // Find target commit: explicit arg > @ if it has a description > @-
+  let target = args[2];
+  if (!target) {
+    const atDesc = jjSafe(`log --no-graph -r @ -T 'description.first_line()'`)?.trim();
+    target = atDesc ? '@' : '@-';
+  }
 
   const wi = provider.createWorkItem(title, desc);
   if (!wi?.id) { console.error('Failed to create work item'); process.exit(1); }
