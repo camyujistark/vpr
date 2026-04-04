@@ -95,6 +95,12 @@ switch (cmd) {
     break;
   }
 
+  case 'generate': {
+    const { cmdGenerate } = await import('../src/commands/cli.mjs');
+    cmdGenerate(args);
+    break;
+  }
+
   case 'help':
   case '--help':
   case '-h': {
@@ -121,9 +127,14 @@ switch (cmd) {
     vpr push [bookmark]               Push bookmarks as git branches
     vpr send                          Push all + create PRs (interactive)
     vpr send --dry-run                Preview what would be pushed
+    vpr generate <id>                 Generate PR description from story via LLM
     vpr clean                         Move stale bookmarks (no commits) to done
 
   <id> can be: bookmark name, project index (e.g. tp-91), or partial match
+
+  Config (.vpr/config.json):
+    "generateCmd": "claude -p"   LLM command (stdin prompt, stdout result)
+                                        Defaults to claude CLI if installed
 `);
     break;
   }

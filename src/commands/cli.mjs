@@ -5,7 +5,7 @@
 
 import { execSync } from 'child_process';
 import readline from 'readline';
-import { loadConfig, loadMeta, saveMeta } from '../config.mjs';
+import { loadConfig, loadMeta, saveMeta, loadRebaseLog } from '../config.mjs';
 import { jj, jjSafe, hasJj, getBase } from '../git.mjs';
 import { createProvider } from '../providers/index.mjs';
 import { loadEntries, groupEntries, findBookmark, resolveToBookmark } from '../entries.mjs';
@@ -202,6 +202,7 @@ export function cmdList() {
       wiTitle: bmMeta.wiTitle || null,
       prTitle: bmMeta.prTitle || null,
       prDesc: bmMeta.prDesc || null,
+      prBody: bmMeta.prBody || null,
       target: prevGroup?.bookmark || resolveToBookmark(base),
       commits: g.commits.map(c => ({
         changeId: c.changeId,
@@ -220,7 +221,10 @@ export function cmdList() {
     prId: m.prId || null,
   }));
 
-  console.log(JSON.stringify({ groups: result, done }, null, 2));
+  const rebaseLog = loadRebaseLog();
+  const lastRebase = rebaseLog.length > 0 ? rebaseLog[rebaseLog.length - 1] : null;
+
+  console.log(JSON.stringify({ groups: result, done, lastRebase }, null, 2));
 }
 
 // ── vpr status ─────────────────────────────────────────────────────────
@@ -292,6 +296,19 @@ export function cmdStatus() {
   const doneCount = Object.keys(meta.done || {}).length;
   if (doneCount > 0) {
     console.log(`  ${D}${doneCount} done${R}\n`);
+  }
+
+  // Last rebase
+  const rebaseLog = loadRebaseLog();
+  if (rebaseLog.length > 0) {
+    const last = rebaseLog[rebaseLog.length - 1];
+    const ago = Math.round((Date.now() - new Date(last.timestamp).getTime()) / 60000);
+    if (ago < 60) {
+      const types = {};
+      for (const a of last.actions) types[a.type] = (types[a.type] || 0) + 1;
+      const summary = Object.entries(types).map(([t, n]) => `${n} ${t}`).join(', ');
+      console.log(`  ${D}Last rebase: ${last.actions.length} actions (${summary}) — ${ago}m ago${R}\n`);
+    }
   }
 }
 
@@ -415,7 +432,8 @@ export async function cmdSend(args) {
     // Create PR via provider
     const provider = createProvider(config);
     try {
-      const prResult = provider.createPR(g.bookmark, target, m.prTitle || '', m.prDesc || '', m.wi);
+      const prBody = m.prBody || m.prDesc || '';
+      const prResult = provider.createPR(g.bookmark, target, m.prTitle || '', prBody, m.wi);
       console.log(`  PR created: #${prResult.id}`);
 
       // Close work item
@@ -487,6 +505,80 @@ export function cmdSplit(args) {
   // Split needs interactive diff editor
   execSync(`jj split -r ${changeId}`, { stdio: 'inherit', shell: '/bin/bash' });
   console.log(JSON.stringify({ split: changeId }));
+}
+
+// ── vpr generate <id> ─────────────────────────────────────────────────
+export function cmdGenerate(args) {
+  requireJj();
+  const config = requireConfig();
+  const meta = loadMeta();
+  const target = args[0];
+
+  if (!target) { console.error('Usage: vpr generate <id>'); process.exit(1); }
+
+  const bookmark = findBookmark(meta, target);
+  if (!bookmark) { console.error(`Not found: ${target}`); process.exit(1); }
+
+  const bmMeta = meta.bookmarks[bookmark];
+  if (!bmMeta.prDesc?.trim()) {
+    console.error(`No PR story for ${bmMeta.tpIndex || bookmark}. Set it with: vpr edit ${target} --pr-desc "..."`);
+    process.exit(1);
+  }
+
+  // Find generate command
+  let cmd = config.generateCmd || null;
+  if (!cmd) {
+    try { execSync('which claude', { stdio: 'pipe' }); cmd = 'claude -p'; } catch {}
+  }
+  if (!cmd) {
+    console.error('No LLM configured. Add "generateCmd" to .vpr/config.json or install claude CLI');
+    process.exit(1);
+  }
+
+  // Build prompt
+  const base = getBase() || 'main';
+  const entries = loadEntries(base, { files: true });
+  const groups = groupEntries(entries, meta);
+  const group = groups.find(g => g.bookmark === bookmark);
+  const commitList = (group?.commits || []).map(c => `- ${c.changeId?.slice(0, 8)} ${c.subject}`).join('\n');
+
+  const prompt = [
+    'Generate a concise PR description in markdown from the following.',
+    'Output ONLY the description body — no preamble, no "Here is", just the markdown.',
+    'Use ## Summary with 1-3 bullet points, then ## Changes with details grouped logically.',
+    '',
+    `PR Title: ${bmMeta.prTitle || ''}`,
+    '',
+    'PR Story:',
+    bmMeta.prDesc,
+    '',
+    'Commits:',
+    commitList,
+  ].join('\n');
+
+  console.error(`Generating PR description for ${bmMeta.tpIndex || bookmark}...`);
+
+  try {
+    const result = execSync(cmd, {
+      input: prompt,
+      encoding: 'utf-8',
+      timeout: 60000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: '/bin/bash',
+    }).trim();
+
+    if (!result) {
+      console.error('LLM returned empty response');
+      process.exit(1);
+    }
+
+    bmMeta.prBody = result;
+    saveMeta(meta);
+    console.log(JSON.stringify({ bookmark, generated: true, prBody: result }));
+  } catch (err) {
+    console.error(`Generation failed: ${err?.stderr?.toString()?.slice(0, 100) || err.message}`);
+    process.exit(1);
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
