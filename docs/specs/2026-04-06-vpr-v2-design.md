@@ -26,16 +26,15 @@ Items are parallel. VPRs within an item are linear. At push time, items are line
     "ding-app": {
       "wi": 17065,
       "wiTitle": "Ding Convertor app",
-      "branch": "vpr/ding-app",
       "vprs": {
-        "vpr/ding-app/scaffold": {
+        "scaffold": {
           "prTitle": "Scaffold",
-          "prStory": "Sets up the app shell with auth...",
+          "prPrompt": "Sets up the app shell with auth...",
           "prBody": null
         },
-        "vpr/ding-app/components": {
+        "components": {
           "prTitle": "Components",
-          "prStory": "Ports AudioPlayer, Uploader...",
+          "prPrompt": "Ports AudioPlayer, Uploader...",
           "prBody": "## Summary\n..."
         }
       }
@@ -43,7 +42,7 @@ Items are parallel. VPRs within an item are linear. At push time, items are line
   },
   "hold": [],
   "sent": {
-    "vpr/ding-app/scaffold": { "prId": 4952 }
+    "feat/17065-ding-scaffold": { "prId": 4952 }
   },
   "eventLog": [
     { "ts": "2026-04-06T...", "actor": "claude", "action": "add", "item": "ding-app", "vpr": "scaffold" },
@@ -62,9 +61,31 @@ Items are parallel. VPRs within an item are linear. At push time, items are line
 
 ### Bookmark convention
 
+During development, bookmarks are simple names:
 ```
-vpr/{item-name}                  item branch (parallel off trunk)
-vpr/{item-name}/{vpr-name}       VPR boundary (linear within item)
+scaffold                         simple jj bookmark
+components
+transit-idempotent
+```
+
+At `vpr send`, bookmarks are renamed with the work item ID:
+```
+scaffold  →  feat/17065-ding-scaffold
+components → feat/17065-ding-components
+```
+
+After send, the VPR entry moves from `items` to `sent` and the meta is cleaned up. Fresh slate for new work.
+
+### meta.json after send
+
+```json
+{
+  "items": {},
+  "sent": {
+    "feat/17065-ding-scaffold": { "prId": 4952 },
+    "feat/17065-ding-components": { "prId": 4953 }
+  }
+}
 ```
 
 ## Architecture
@@ -121,7 +142,7 @@ Single function that reads jj graph + meta.json and returns unified state. Both 
         {
           bookmark: 'vpr/ding-app/scaffold',
           prTitle: 'Scaffold',
-          prStory: '...',
+          prPrompt: '...',
           prBody: null,
           commits: [ { changeId, subject, conflict } ],
           sent: false,
@@ -150,7 +171,7 @@ vpr ticket done <name>              mark item as done
 # VPRs
 vpr add "Scaffold"                  create VPR in current item
 vpr add "Scaffold" --item ding-app  create VPR in specific item
-vpr edit <vpr> --story "..."        write PR story
+vpr edit <vpr> --prompt "..."        write PR story
 vpr edit <vpr> --title "..."        set PR title
 vpr remove <vpr>                    dissolve VPR (commits ungrouped)
 vpr list                            JSON: items → VPRs → commits + eventLog
@@ -259,14 +280,14 @@ Opens `$EDITOR` with all items/VPRs:
 # ═══════════════════════════════════
 
 ## Scaffold
---- PR Story ---
+--- Prompt ---
 Sets up the app shell with auth, vite, MSW, smoke test.
 
 --- PR Description ---
 
 
 ## Components
---- PR Story ---
+--- Prompt ---
 Ports AudioPlayer, Uploader, ConversionView.
 
 --- PR Description ---
@@ -277,7 +298,7 @@ Ports AudioPlayer, Uploader, ConversionView.
 # ═══════════════════════════════════
 
 ## Idempotent scaffold
---- PR Story ---
+--- Prompt ---
 
 --- PR Description ---
 
@@ -335,7 +356,7 @@ Steps through checks, then pushes.
 ```bash
 vpr ticket new "..."        create item
 vpr add "..."               add VPR
-vpr edit <vpr> --story "..."  write story
+vpr edit <vpr> --prompt "..."  write story
 jj new -m "..."             make commits (normal jj)
 vpr generate --all          generate descriptions
 ```
