@@ -360,7 +360,9 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  E edit all  S generate  O reorder  d dissolve  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      const hasConflict = items.some(i => i.group === helpItem.bookmark && i.type === 'commit' && conflictSet.has(i.changeId));
+      const conflictHint = hasConflict ? `  ${RED}x auto-fix${RESET}` : '';
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  E edit all  S generate  O reorder  d dissolve  i interactive  n new  u undo  : jj  q quit${RESET}${conflictHint}\n`;
     } else if (helpItem?.type === 'commit') {
       out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
@@ -1281,6 +1283,49 @@ export function startTui(config, baseArg) {
         }
       });
       return;
+    }
+
+    // x — auto-fix conflict by moving group after its dependency
+    if (str === 'x' && currentItem?.type === 'group') {
+      const bm = currentItem.bookmark;
+      const groupCommits = items.filter(i => i.group === bm && i.type === 'commit');
+      const conflicted = groupCommits.filter(c => conflictSet.has(c.changeId));
+      if (conflicted.length === 0) { message = `${DIM}No conflicts in this group${RESET}`; render(); return; }
+
+      // Find what this group's conflict depends on — check jj's conflict description
+      const conflictCommit = conflicted[0];
+      // Get the conflict details to find the other side
+      const conflictInfo = jjSafe(`log --no-graph -r '${conflictCommit.changeId}' -T 'description.first_line()'`) || '';
+
+      // Strategy: try moving this group one position down — if that resolves the conflict, done
+      const allGroups = items.filter(i => i.type === 'group');
+      const gIdx = allGroups.findIndex(g => g.bookmark === bm);
+      if (gIdx >= allGroups.length - 1) { message = `${RED}Already at bottom — can't move further${RESET}`; render(); return; }
+
+      const nextGroup = allGroups[gIdx + 1];
+      const nextEntry = entries.find(e => e.bookmark === nextGroup.bookmark);
+      const firstCommit = groupCommits[0];
+      if (!firstCommit || !nextEntry) { render(); return; }
+
+      message = `${DIM}Moving ${currentItem.meta?.tpIndex || bm} after ${nextGroup.meta?.tpIndex || nextGroup.bookmark}...${RESET}`;
+      render();
+
+      try {
+        jj(`rebase -s ${firstCommit.changeId} -A ${nextEntry.changeId}`);
+        _renumberIndexes(config, vprMeta, base);
+        reload();
+        const newIdx = buildItems().findIndex(i => i.type === 'group' && i.bookmark === bm);
+        if (newIdx >= 0) cursor = newIdx;
+
+        if (conflictSet.size === 0) {
+          message = `${GREEN}Conflict resolved — moved after ${nextGroup.meta?.tpIndex || nextGroup.bookmark}${RESET}`;
+        } else {
+          message = `${YELLOW}Moved — but ${conflictSet.size} conflict(s) remain${RESET}`;
+        }
+      } catch (err) {
+        message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+      }
+      render(); return;
     }
 
     // O — open editor to reorder groups (like git rebase -i)
