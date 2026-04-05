@@ -60,6 +60,7 @@ const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Stor
 let interactiveGroup = null;  // bookmark name of the group being edited
 let selected = new Set();      // changeIds selected in interactive mode
 let reorderPicked = null;      // changeId being reordered in interactive mode
+let rightPaneView = 'diff';    // 'diff' or 'files' — toggle with f
 
 // ── File split mode state ─────────────────────────────────────────────
 let splitFiles = [];           // [{ status, path }] files in the commit being split
@@ -330,6 +331,7 @@ function render() {
   let out = SYNC_START + CLEAR + HIDE_CURSOR;
 
   // Header
+  const viewLabel = rightPaneView === 'files' ? 'f diff' : 'f files';
   if (mode === 'file_split') {
     const shortId = splitChangeId?.slice(0, 8) || '?';
     out += `${BOLD}VPR${RESET}  ${YELLOW}[SPLIT: ${shortId}]${RESET}  ${DIM}${splitFiles.length} files, ${splitSelected.size} selected${RESET}\n`;
@@ -344,7 +346,7 @@ function render() {
     if (iCurrent?.type === 'ungrouped') {
       out += `${DIM}j/k nav  m move-in  Esc back${RESET}\n`;
     } else if (iCurrent?.changeId) {
-      out += `${DIM}j/k nav  Space select  s squash  S split  d drop  r reword  o reorder  U ungroup  Esc back${RESET}\n`;
+      out += `${DIM}j/k nav  ${viewLabel}  Space select  s squash  S split  d drop  r reword  o reorder  U ungroup  Esc back${RESET}\n`;
     } else {
       out += `${DIM}j/k nav  Esc back${RESET}\n`;
     }
@@ -356,11 +358,11 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
-      out += `${DIM}j/k nav  J/K scroll  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
-      out += `${DIM}j/k nav  Space move  H hold  n new  u undo  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  ${viewLabel}  Space move  H hold  n new  u undo  q quit${RESET}\n`;
     } else if (helpItem?.type === 'hold') {
       out += `${DIM}j/k nav  H unhold  u undo  q quit${RESET}\n`;
     } else {
@@ -400,7 +402,19 @@ function render() {
     const targetBranch = prevGroup?.bookmark || base;
     rightLines = getGroupSummary(currentItem, rightW, targetBranch);
   } else if (currentItem?.sha) {
-    rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
+    if (rightPaneView === 'files') {
+      const fileList = getCachedFiles(currentItem.changeId || currentItem.sha);
+      rightLines = [`${BOLD}Files changed${RESET}`, ''];
+      for (const f of fileList) {
+        const type = f.charAt(0);
+        const color = type === 'A' ? GREEN : type === 'D' ? RED : DIM;
+        rightLines.push(`${color}${f}${RESET}`);
+      }
+      if (fileList.length === 0) rightLines.push(`${DIM}(no files)${RESET}`);
+      rightLines.push('', `${DIM}f toggle to diff view${RESET}`);
+    } else {
+      rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
+    }
   }
 
   // Body — build display items based on mode
@@ -999,10 +1013,10 @@ export function startTui(config, baseArg) {
         return;
       }
 
-      // S — enter file_split
+      // S — enter file_split (works on cursor or single selection)
       if (str === 'S') {
-        if (selected.size !== 1) { message = `${RED}Select exactly 1 commit to split${RESET}`; render(); return; }
-        const cid = [...selected][0];
+        const cid = selected.size === 1 ? [...selected][0] : iItem?.changeId;
+        if (!cid) { message = `${RED}Select a commit to split${RESET}`; render(); return; }
         try {
           const raw = jj(`diff --summary -r ${cid}`);
           splitFiles = raw.split('\n').filter(Boolean).map(line => {
@@ -1052,10 +1066,10 @@ export function startTui(config, baseArg) {
         return;
       }
 
-      // r — reword selected commit
+      // r — reword commit (works on cursor or single selection)
       if (str === 'r') {
-        if (selected.size !== 1) { message = `${RED}Select exactly 1 commit to reword${RESET}`; render(); return; }
-        const cid = [...selected][0];
+        const cid = selected.size === 1 ? [...selected][0] : iItem?.changeId;
+        if (!cid) { message = `${RED}Select a commit to reword${RESET}`; render(); return; }
         const entry = entries.find(e => e.changeId === cid);
         startInput('New message: ', entry?.subject || '', (newMsg) => {
           mode = 'interactive';
@@ -1196,6 +1210,13 @@ export function startTui(config, baseArg) {
         const stderr = err?.stderr?.toString()?.slice(0, 80) || err.message?.slice(0, 80) || '';
         message = `${RED}Generation failed: ${stderr}${RESET}`;
       }
+      render(); return;
+    }
+
+    // f — toggle right pane between diff and file view
+    if (str === 'f' && mode !== 'file_split') {
+      rightPaneView = rightPaneView === 'diff' ? 'files' : 'diff';
+      diffScroll = 0;
       render(); return;
     }
 
