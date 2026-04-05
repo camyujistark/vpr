@@ -354,7 +354,8 @@ function render() {
     }
   } else {
     const bookmarkCount = entries.filter(e => e.bookmark).length;
-    out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}`;
+    const linearTag = isLinear ? '' : `  ${YELLOW}⑂ branched${RESET}`;
+    out += `${BOLD}VPR${RESET}  ${DIM}${bookmarkCount} bookmarks, ${entries.length} commits${RESET}${linearTag}`;
     if (picked) out += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
     out += '\n';
     // Context-sensitive help
@@ -844,21 +845,40 @@ function runJjCommand(cmd) {
 let base = '';
 
 let conflictSet = new Set();
+let isLinear = true;
+
+function _checkLinear() {
+  // Check for forks: any commit in the chain with multiple children
+  const raw = jjSafe(`log --no-graph --reversed -r '${base}..(visible_heads() & descendants(${base}))' -T 'change_id.short() ++ "\\t" ++ parents.map(|p| p.change_id().short()).join(",") ++ "\\n"'`);
+  if (!raw) return true;
+  const childCount = new Map();
+  for (const line of raw.split('\n')) {
+    if (!line.includes('\t')) continue;
+    const [, parentsStr] = line.split('\t');
+    for (const pid of parentsStr.split(',').filter(Boolean)) {
+      childCount.set(pid.trim(), (childCount.get(pid.trim()) || 0) + 1);
+    }
+  }
+  return ![...childCount.values()].some(c => c > 1);
+}
 
 function reload() {
   vprMeta = loadMeta();
   entries = loadEntries(base);
   diffCache.clear();
   filesCache.clear();
-  // Refresh conflict set
   conflictSet = new Set(
     (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '').split('\n').filter(Boolean)
   );
+  isLinear = _checkLinear();
   const items = buildItems();
   cursor = Math.min(cursor, Math.max(0, items.length - 1));
   const conflictCount = entries.filter(e => conflictSet.has(e.changeId)).length;
-  message = conflictCount > 0
-    ? `${YELLOW}${conflictCount} conflict(s) — resolve with jj resolve${RESET}`
+  const warnings = [];
+  if (conflictCount > 0) warnings.push(`${conflictCount} conflict(s)`);
+  if (!isLinear) warnings.push('not linear — run vpr linearize');
+  message = warnings.length > 0
+    ? `${YELLOW}${warnings.join(' · ')}${RESET}`
     : `${GREEN}Refreshed${RESET}`;
 }
 
@@ -921,6 +941,7 @@ export function startTui(config, baseArg) {
   conflictSet = new Set(
     (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '').split('\n').filter(Boolean)
   );
+  isLinear = _checkLinear();
 
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
