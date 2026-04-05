@@ -1849,7 +1849,8 @@ export function startTui(config, baseArg) {
         try {
           jj('undo');
           reload();
-          message = `${GREEN}Undone${RESET}`;
+          // reload() sets message with conflict/linear warnings — prepend "Undone"
+          message = `${GREEN}Undone${RESET}` + (conflictSet.size > 0 ? `  ${YELLOW}${conflictSet.size} conflict(s) remain${RESET}` : '');
         } catch (err) {
           message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
         }
