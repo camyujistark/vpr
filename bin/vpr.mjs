@@ -101,6 +101,12 @@ switch (cmd) {
     break;
   }
 
+  case 'log': {
+    const { cmdLog } = await import('../src/commands/cli.mjs');
+    cmdLog(args);
+    break;
+  }
+
   case 'sort': {
     const { cmdSort } = await import('../src/commands/cli.mjs');
     await cmdSort(args);
@@ -146,6 +152,7 @@ switch (cmd) {
     vpr send                          Push all + create PRs (interactive)
     vpr send --dry-run                Preview what would be pushed
     vpr generate <id>                 Generate PR description from story via LLM
+    vpr log [N]                       Show jj commit graph with VPR bookmarks (default: 30)
     vpr sort                          Auto-detect dependency issues and reorder chain
     vpr sort --dry-run                Preview reordering without applying
     vpr hold <changeId>               Put a commit on hold (parked, not in any PR)

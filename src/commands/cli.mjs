@@ -627,6 +627,50 @@ export function cmdUnhold(args) {
   console.log(JSON.stringify({ unhold: changeId, status: 'released' }));
 }
 
+// ── vpr log ───────────────────────────────────────────────────────────
+export function cmdLog(args) {
+  requireJj();
+  const meta = loadMeta();
+  const base = getBase() || 'main';
+
+  const C = '\x1b[36m';   // cyan
+  const G = '\x1b[32m';   // green
+  const Y = '\x1b[33m';   // yellow
+  const R = '\x1b[0m';    // reset
+  const D = '\x1b[2m';    // dim
+  const B = '\x1b[1m';    // bold
+  const RED = '\x1b[31m';
+
+  // Use jj log with a custom template showing VPR info
+  const template = [
+    'if(bookmarks, ',
+    '  if(conflict, "' + RED + '! " , "  ") ',
+    '  ++ surround("' + C + B + '", "' + R + '", ',
+    '    bookmarks.map(|b| b.name()).join(" ") ',
+    '  ) ',
+    '  ++ " " ++ description.first_line() ',
+    ',',
+    '  if(conflict, "' + RED + '! " , "  ") ',
+    '  ++ change_id.short() ++ " " ++ description.first_line()',
+    ')',
+  ].join('');
+
+  const limit = args.find(a => /^\d+$/.test(a)) || '30';
+
+  try {
+    const output = jj(`log --limit ${limit} -r '${base}..(visible_heads() & descendants(${base}))' -T '${template.replace(/'/g, "'\\''")}'`);
+    console.log(output);
+  } catch {
+    // Fallback to simpler template
+    try {
+      const output = jj(`log --limit ${limit} -r '${base}..(visible_heads() & descendants(${base}))'`);
+      console.log(output);
+    } catch (err) {
+      console.error('Failed to show log:', err?.stderr?.toString()?.slice(0, 100) || '');
+    }
+  }
+}
+
 // ── vpr sort [--dry-run] ──────────────────────────────────────────────
 export async function cmdSort(args) {
   requireJj();
