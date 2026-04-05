@@ -360,7 +360,7 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  {/} reorder  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
       out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
@@ -848,6 +848,48 @@ function reload() {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────
+// Debounced renumber — waits for moves to settle before renumbering
+let _renumberTimer = null;
+function _debouncedRenumber(cfg, meta, baseRef) {
+  if (_renumberTimer) clearTimeout(_renumberTimer);
+  _renumberTimer = setTimeout(() => {
+    _renumberTimer = null;
+    _renumberIndexes(cfg, meta, baseRef);
+    render();
+  }, 600);
+}
+
+// Renumber TP indexes after reordering groups in the chain
+function _renumberIndexes(cfg, meta, baseRef) {
+  const fresh = sharedLoadEntries(baseRef);
+  const groups = [];
+  let pending = [];
+  for (const entry of fresh) {
+    if (entry.bookmark && meta.bookmarks?.[entry.bookmark]) {
+      groups.push({ bookmark: entry.bookmark });
+      pending = [];
+    } else {
+      pending.push(entry);
+    }
+  }
+  const prefix = cfg?.prefix || 'TP';
+  const doneIndexes = Object.values(meta.done || {}).map(d => parseInt(d.tpIndex?.replace(/\D/g, '')) || 0);
+  let idx = doneIndexes.length > 0 ? Math.max(...doneIndexes) + 1 : 1;
+  for (const g of groups) {
+    const bm = meta.bookmarks[g.bookmark];
+    if (!bm) continue;
+    const newTp = `${prefix}-${idx}`;
+    const oldTp = bm.tpIndex;
+    if (oldTp !== newTp) {
+      bm.tpIndex = newTp;
+      bm.prTitle = bm.prTitle?.replace(oldTp, newTp) || `${newTp}: ${bm.wiTitle}`;
+    }
+    idx++;
+  }
+  meta.nextIndex = idx;
+  saveMeta(meta);
+}
+
 export function startTui(config, baseArg) {
   if (!hasJj()) { process.stderr.write('VPR requires jj (jujutsu). Install it first.\n'); process.exit(1); }
 
@@ -1148,6 +1190,50 @@ export function startTui(config, baseArg) {
       render(); return;
     }
     if (key.name === 'r' && key.shift) { reload(); render(); return; }
+
+    // { / } — move group up/down in chain (only on group headers)
+    if ((str === '{' || str === '}') && currentItem?.type === 'group') {
+      const bm = currentItem.bookmark;
+      const allGroups = items.filter(i => i.type === 'group');
+      const gIdx = allGroups.findIndex(g => g.bookmark === bm);
+      const myCommits = items.filter(i => i.type === 'commit' && i.group === bm);
+
+      if (str === '{') {
+        if (gIdx <= 0) { message = `${DIM}Already at top${RESET}`; render(); return; }
+        const prevGroup = allGroups[gIdx - 1];
+        const prevCommits = items.filter(i => i.type === 'commit' && i.group === prevGroup.bookmark);
+        const firstPrev = prevCommits[0];
+        if (!firstPrev) { render(); return; }
+        try {
+          for (const c of myCommits) jj(`rebase -r ${c.changeId} -B ${firstPrev.changeId}`);
+          reload();
+          const newIdx = buildItems().findIndex(i => i.type === 'group' && i.bookmark === bm);
+          if (newIdx >= 0) cursor = newIdx;
+          _debouncedRenumber(config, vprMeta, base);
+          message = `${GREEN}Moved up${RESET}`;
+        } catch (err) {
+          message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+      } else {
+        if (gIdx >= allGroups.length - 1) { message = `${DIM}Already at bottom${RESET}`; render(); return; }
+        const nextGroup = allGroups[gIdx + 1];
+        const nextCommits = items.filter(i => i.type === 'commit' && i.group === nextGroup.bookmark);
+        const lastNext = nextCommits[nextCommits.length - 1] || nextGroup.entry;
+        if (!lastNext) { render(); return; }
+        try {
+          for (const c of [...myCommits].reverse()) jj(`rebase -r ${c.changeId} -A ${lastNext.changeId}`);
+          reload();
+          const newIdx = buildItems().findIndex(i => i.type === 'group' && i.bookmark === bm);
+          if (newIdx >= 0) cursor = newIdx;
+          _debouncedRenumber(config, vprMeta, base);
+          message = `${GREEN}Moved down${RESET}`;
+        } catch (err) {
+          message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+      }
+      render(); return;
+    }
+
     // S (shift+s) — generate PR description from story via LLM
     if (key.name === 's' && key.shift) {
       const gBm = currentItem?.type === 'group' ? currentItem.bookmark : currentItem?.group;
