@@ -178,6 +178,12 @@ function buildItems() {
     }
   }
 
+  // Always show ungrouped section if not already present
+  const hasUngroupedHeader = items.some(i => i.type === 'ungrouped-header');
+  if (!hasUngroupedHeader) {
+    items.push({ type: 'ungrouped-header', title: 'Ungrouped', commitCount: 0 });
+  }
+
   // Hold section at the bottom
   if (heldItems.length > 0) {
     items.push({ type: 'hold-header', title: 'On Hold', commitCount: heldItems.length });
