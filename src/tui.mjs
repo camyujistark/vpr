@@ -331,7 +331,7 @@ function render() {
   let out = SYNC_START + CLEAR + HIDE_CURSOR;
 
   // Header
-  const viewLabel = rightPaneView === 'files' ? 'f diff' : 'f files';
+  const viewLabel = rightPaneView === 'files' ? 'v diff' : 'v files';
   if (mode === 'file_split') {
     const shortId = splitChangeId?.slice(0, 8) || '?';
     out += `${BOLD}VPR${RESET}  ${YELLOW}[SPLIT: ${shortId}]${RESET}  ${DIM}${splitFiles.length} files, ${splitSelected.size} selected${RESET}\n`;
@@ -413,7 +413,7 @@ function render() {
         rightLines.push(`${color}${f}${RESET}`);
       }
       if (fileList.length === 0) rightLines.push(`${DIM}(no files)${RESET}`);
-      rightLines.push('', `${DIM}f toggle to diff view${RESET}`);
+      rightLines.push('', `${DIM}v toggle to diff view${RESET}`);
     } else {
       rightLines = getCachedDiff(currentItem.changeId || currentItem.sha).split('\n');
     }
@@ -967,6 +967,7 @@ export function startTui(config, baseArg) {
       if (key.name === 'up' || str === 'k') { cursor = Math.max(0, cursor - 1); render(); return; }
       if (key.name === 'j' && key.shift) { diffScroll += 3; render(); return; }
       if (key.name === 'k' && key.shift) { diffScroll = Math.max(0, diffScroll - 3); render(); return; }
+      if (str === 'v') { rightPaneView = rightPaneView === 'diff' ? 'files' : 'diff'; diffScroll = 0; render(); return; }
 
       const iItem = iItems[cursor];
       if (!iItem || iItem.type === 'interactive-separator') { render(); return; }
@@ -1213,8 +1214,8 @@ export function startTui(config, baseArg) {
       render(); return;
     }
 
-    // f — toggle right pane between diff and file view
-    if (str === 'f' && mode !== 'file_split') {
+    // v — toggle right pane between diff and file view
+    if (str === 'v' && mode !== 'file_split') {
       rightPaneView = rightPaneView === 'diff' ? 'files' : 'diff';
       diffScroll = 0;
       render(); return;
