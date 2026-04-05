@@ -360,7 +360,7 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  {/} reorder  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  {/} move  O reorder  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
       out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
@@ -1232,6 +1232,71 @@ export function startTui(config, baseArg) {
         }
       }
       render(); return;
+    }
+
+    // O — open editor to reorder groups (like git rebase -i)
+    if (str === 'O') {
+      const allGroups = items.filter(i => i.type === 'group');
+      if (allGroups.length < 2) { message = `${DIM}Nothing to reorder${RESET}`; render(); return; }
+
+      // Build editor content — one line per group, bookmark as the key
+      const lines = allGroups.map(g => {
+        const m = vprMeta.bookmarks?.[g.bookmark] || {};
+        return `${g.bookmark}  # ${m.tpIndex || ''} ${m.wiTitle || g.title}`;
+      });
+      const header = [
+        '# Reorder groups by moving lines. Lines starting with # are ignored.',
+        '# Save and close to apply. Empty file or unchanged = cancel.',
+        '',
+      ];
+
+      openEditor(header.join('\n') + lines.join('\n') + '\n', (result) => {
+        // Parse result — extract bookmark names (ignore comments and empty lines)
+        const newOrder = result.split('\n')
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('#'))
+          .map(l => l.split(/\s+/)[0]); // first word is the bookmark
+
+        // Validate
+        const oldOrder = allGroups.map(g => g.bookmark);
+        if (newOrder.length !== oldOrder.length || !newOrder.every(b => oldOrder.includes(b))) {
+          message = `${RED}Invalid reorder — bookmarks don't match${RESET}`;
+          return;
+        }
+        if (newOrder.join(',') === oldOrder.join(',')) {
+          message = `${DIM}No changes${RESET}`;
+          return;
+        }
+
+        // Rebase to match new order — work bottom-up
+        // Strategy: for each group in new order (from second to last), rebase after the previous
+        message = `${DIM}Reordering...${RESET}`;
+        render();
+
+        try {
+          for (let i = 1; i < newOrder.length; i++) {
+            const bm = newOrder[i];
+            const prevBm = newOrder[i - 1];
+            const group = allGroups.find(g => g.bookmark === bm);
+            const groupCommits = items.filter(it => it.type === 'commit' && it.group === bm);
+            // Find the tip of the previous group (its bookmark commit)
+            const prevTip = items.find(it => it.type === 'commit' && it.bookmark === prevBm)
+              || items.filter(it => it.type === 'commit' && it.group === prevBm).pop();
+            if (!prevTip) continue;
+
+            for (const c of groupCommits) {
+              jj(`rebase -r ${c.changeId} -A ${prevTip.changeId}`);
+            }
+          }
+
+          _renumberIndexes(config, vprMeta, base);
+          reload();
+          message = `${GREEN}Reordered ${newOrder.length} groups${RESET}`;
+        } catch (err) {
+          message = `${RED}Reorder failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+      });
+      return;
     }
 
     // S (shift+s) — generate PR description from story via LLM
