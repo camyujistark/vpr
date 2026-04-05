@@ -1324,7 +1324,21 @@ export function startTui(config, baseArg) {
 
           _renumberIndexes(config, vprMeta, base);
           reload();
-          message = `${GREEN}Reordered ${newOrder.length} groups${RESET}`;
+
+          // Check for conflicts after reorder (single jj call)
+          const conflictIds = new Set(
+            (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '')
+              .split('\n').filter(Boolean)
+          );
+          const conflicted = entries.filter(e => conflictIds.has(e.changeId));
+
+          if (conflicted.length > 0) {
+            const conflictList = conflicted.slice(0, 5).map(c => `  ${c.changeId?.slice(0, 8)} ${c.subject}`).join('\n');
+            const more = conflicted.length > 5 ? `\n  ... and ${conflicted.length - 5} more` : '';
+            message = `${YELLOW}Reordered ${newOrder.length} groups — ${conflicted.length} conflict(s):\n${conflictList}${more}\n\nResolve with: jj resolve -r <changeId>${RESET}`;
+          } else {
+            message = `${GREEN}Reordered ${newOrder.length} groups — no conflicts${RESET}`;
+          }
         } catch (err) {
           message = `${RED}Reorder failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
         }
