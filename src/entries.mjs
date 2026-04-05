@@ -59,7 +59,7 @@ export function loadEntries(base, { files = false } = {}) {
 /**
  * Group entries by bookmark. Bookmark is at the TIP of a group.
  * Accumulates pending commits; when a bookmark is hit, it caps that group.
- * Returns sorted by TP index (ascending), ungrouped at the end.
+ * Returns in jj chain order (oldest first), ungrouped at the end.
  */
 export function groupEntries(entries, meta) {
   const groups = [];
@@ -77,8 +77,11 @@ export function groupEntries(entries, meta) {
     groups.push({ bookmark: null, commits: pending });
   }
 
+  // Keep jj chain order — only push ungrouped to the end
   groups.sort((a, b) => {
-    if (!a.bookmark) return 1;
+    if (!a.bookmark && b.bookmark) return 1;
+    if (a.bookmark && !b.bookmark) return -1;
+    return 0; // preserve jj order for bookmarked groups
     if (!b.bookmark) return -1;
     const aMeta = meta.bookmarks?.[a.bookmark] || {};
     const bMeta = meta.bookmarks?.[b.bookmark] || {};
