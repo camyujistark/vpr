@@ -360,7 +360,7 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  E edit all  S generate  O reorder  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  E edit all  S generate  O reorder  d dissolve  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
       out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
@@ -1674,44 +1674,27 @@ export function startTui(config, baseArg) {
 
       // w and p removed — use J/K to select field, e to edit, S to sync
 
-      case 'D': {
+      case 'd': {
+        // Dissolve group — remove bookmark, commits become ungrouped. Ticket ID preserved for reuse.
         const dItem = items[cursor];
-        if (dItem?.type === 'group') {
-          // Delete entire group + all commits
-          const dMeta = vprMeta.bookmarks?.[dItem.bookmark] || {};
-          const dLabel = dMeta.tpIndex || dItem.bookmark;
-          startInput(`Delete ${dLabel} and all its commits? (y/n)`, '', (answer) => {
-            if (answer !== 'y') return;
-            try {
-              const groupCommits = items.filter(i => i.group === dItem.bookmark && i.type === 'commit');
-              for (const c of groupCommits) {
-                try { jj(`abandon ${c.changeId}`); } catch {}
-              }
-              try { jj(`bookmark delete ${dItem.bookmark}`); } catch {}
-              if (vprMeta.bookmarks?.[dItem.bookmark]) delete vprMeta.bookmarks[dItem.bookmark];
-              saveMeta(vprMeta);
-              reload();
-              message = `${GREEN}Deleted ${dLabel}${RESET}`;
-            } catch (err) {
-              message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
-            }
-          });
-        } else if (dItem?.changeId) {
-          // Delete single commit
-          startInput(`Abandon ${dItem.changeId.slice(0, 8)}? (y/n)`, '', (answer) => {
-            if (answer !== 'y') return;
-            try {
-              jj(`abandon ${dItem.changeId}`);
-              reload();
-              message = `${GREEN}Abandoned ${dItem.changeId.slice(0, 8)}${RESET}`;
-            } catch (err) {
-              message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
-            }
-          });
-        } else {
-          message = `${RED}Nothing to delete${RESET}`;
-          break;
-        }
+        if (dItem?.type !== 'group') { message = `${RED}Navigate to a group${RESET}`; break; }
+        const dBm = dItem.bookmark;
+        const dMeta = vprMeta.bookmarks?.[dBm] || {};
+        const dLabel = dMeta.tpIndex || dBm;
+        startInput(`Dissolve ${dLabel}? Commits become ungrouped. (y/n)`, '', (answer) => {
+          if (answer !== 'y') return;
+          try {
+            // Delete the jj bookmark — commits stay, just become ungrouped
+            try { jj(`bookmark delete ${dBm}`); } catch {}
+            // Remove from active bookmarks, keep ticket ID available
+            if (vprMeta.bookmarks?.[dBm]) delete vprMeta.bookmarks[dBm];
+            saveMeta(vprMeta);
+            reload();
+            message = `${GREEN}Dissolved ${dLabel} — commits ungrouped, ticket #${dMeta.wi || '?'} available for reuse${RESET}`;
+          } catch (err) {
+            message = `${RED}Failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+          }
+        });
         return;
       }
 
