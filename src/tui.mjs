@@ -360,7 +360,7 @@ function render() {
     // Context-sensitive help
     const helpItem = items[cursor];
     if (helpItem?.type === 'group') {
-      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  {/} move  O reorder  t title  s story  S generate  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
+      out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  t title  s story  E edit all  S generate  O reorder  i interactive  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'commit') {
       out += `${DIM}j/k nav  J/K scroll  ${viewLabel}  Space move  U ungroup  H hold  i interactive  c commit  n new  u undo  : jj  q quit${RESET}\n`;
     } else if (helpItem?.type === 'ungrouped') {
@@ -1191,47 +1191,80 @@ export function startTui(config, baseArg) {
     }
     if (key.name === 'r' && key.shift) { reload(); render(); return; }
 
-    // { / } — move group up/down in chain (only on group headers)
-    if ((str === '{' || str === '}') && currentItem?.type === 'group') {
-      const bm = currentItem.bookmark;
-      const allGroups = items.filter(i => i.type === 'group');
-      const gIdx = allGroups.findIndex(g => g.bookmark === bm);
-      const myCommits = items.filter(i => i.type === 'commit' && i.group === bm);
+    // E — open editor to edit all group fields (ticket title, PR title, PR story, PR description)
+    if (str === 'E') {
+      const eBm = currentItem?.type === 'group' ? currentItem.bookmark : currentItem?.group;
+      if (!eBm) { message = `${RED}Navigate to a group${RESET}`; render(); return; }
+      const eMeta = vprMeta.bookmarks?.[eBm] || {};
 
-      if (str === '{') {
-        if (gIdx <= 0) { message = `${DIM}Already at top${RESET}`; render(); return; }
-        const prevGroup = allGroups[gIdx - 1];
-        const prevCommits = items.filter(i => i.type === 'commit' && i.group === prevGroup.bookmark);
-        const firstPrev = prevCommits[0];
-        if (!firstPrev) { render(); return; }
-        try {
-          for (const c of myCommits) jj(`rebase -r ${c.changeId} -B ${firstPrev.changeId}`);
-          reload();
-          const newIdx = buildItems().findIndex(i => i.type === 'group' && i.bookmark === bm);
-          if (newIdx >= 0) cursor = newIdx;
-          _debouncedRenumber(config, vprMeta, base);
-          message = `${GREEN}Moved up${RESET}`;
-        } catch (err) {
-          message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+      const content = [
+        '# Edit group fields. Each section starts with --- label ---',
+        '# Save and close to apply. Lines starting with # are ignored.',
+        '',
+        '--- Ticket Title ---',
+        eMeta.wiTitle || '',
+        '',
+        '--- PR Title ---',
+        eMeta.prTitle || eMeta.wiTitle || '',
+        '',
+        '--- PR Story ---',
+        eMeta.prDesc || '',
+        '',
+        '--- PR Description ---',
+        eMeta.prBody || '',
+        '',
+      ].join('\n');
+
+      openEditor(content, (result) => {
+        // Parse sections
+        const sections = {};
+        let currentSection = null;
+        let currentLines = [];
+
+        for (const line of result.split('\n')) {
+          if (line.startsWith('#')) continue;
+          const sectionMatch = line.match(/^---\s*(.+?)\s*---$/);
+          if (sectionMatch) {
+            if (currentSection) sections[currentSection] = currentLines.join('\n').trim();
+            currentSection = sectionMatch[1];
+            currentLines = [];
+          } else if (currentSection) {
+            currentLines.push(line);
+          }
         }
-      } else {
-        if (gIdx >= allGroups.length - 1) { message = `${DIM}Already at bottom${RESET}`; render(); return; }
-        const nextGroup = allGroups[gIdx + 1];
-        const nextCommits = items.filter(i => i.type === 'commit' && i.group === nextGroup.bookmark);
-        const lastNext = nextCommits[nextCommits.length - 1] || nextGroup.entry;
-        if (!lastNext) { render(); return; }
-        try {
-          for (const c of [...myCommits].reverse()) jj(`rebase -r ${c.changeId} -A ${lastNext.changeId}`);
-          reload();
-          const newIdx = buildItems().findIndex(i => i.type === 'group' && i.bookmark === bm);
-          if (newIdx >= 0) cursor = newIdx;
-          _debouncedRenumber(config, vprMeta, base);
-          message = `${GREEN}Moved down${RESET}`;
-        } catch (err) {
-          message = `${RED}Move failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        if (currentSection) sections[currentSection] = currentLines.join('\n').trim();
+
+        // Apply changes
+        let changed = false;
+        if (!vprMeta.bookmarks[eBm]) vprMeta.bookmarks[eBm] = {};
+        const bm = vprMeta.bookmarks[eBm];
+
+        if (sections['Ticket Title'] !== undefined && sections['Ticket Title'] !== (bm.wiTitle || '')) {
+          bm.wiTitle = sections['Ticket Title'];
+          changed = true;
         }
-      }
-      render(); return;
+        if (sections['PR Title'] !== undefined && sections['PR Title'] !== (bm.prTitle || '')) {
+          bm.prTitle = sections['PR Title'];
+          changed = true;
+        }
+        if (sections['PR Story'] !== undefined && sections['PR Story'] !== (bm.prDesc || '')) {
+          bm.prDesc = sections['PR Story'];
+          changed = true;
+        }
+        if (sections['PR Description'] !== undefined && sections['PR Description'] !== (bm.prBody || '')) {
+          bm.prBody = sections['PR Description'];
+          changed = true;
+        }
+
+        if (changed) {
+          saveMeta(vprMeta);
+          reload();
+          message = `${GREEN}Updated fields for ${bm.tpIndex || eBm}${RESET}`;
+        } else {
+          message = `${DIM}No changes${RESET}`;
+        }
+      });
+      return;
     }
 
     // O — open editor to reorder groups (like git rebase -i)
