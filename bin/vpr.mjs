@@ -101,6 +101,12 @@ switch (cmd) {
     break;
   }
 
+  case 'linearize': {
+    const { cmdLinearize } = await import('../src/commands/cli.mjs');
+    await cmdLinearize(args);
+    break;
+  }
+
   case 'log': {
     const { cmdLog } = await import('../src/commands/cli.mjs');
     cmdLog(args);
@@ -152,6 +158,8 @@ switch (cmd) {
     vpr send                          Push all + create PRs (interactive)
     vpr send --dry-run                Preview what would be pushed
     vpr generate <id>                 Generate PR description from story via LLM
+    vpr linearize                     Flatten sibling branches into a single linear chain
+    vpr linearize --dry-run           Preview without applying
     vpr log [N]                       Show jj commit graph with VPR bookmarks (default: 30)
     vpr sort                          Auto-detect dependency issues and reorder chain
     vpr sort --dry-run                Preview reordering without applying

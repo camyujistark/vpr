@@ -627,6 +627,122 @@ export function cmdUnhold(args) {
   console.log(JSON.stringify({ unhold: changeId, status: 'released' }));
 }
 
+// ── vpr linearize ─────────────────────────────────────────────────────
+export async function cmdLinearize(args) {
+  requireJj();
+  const config = requireConfig();
+  const meta = loadMeta();
+  const base = getBase() || 'main';
+  const dryRun = args.includes('--dry-run');
+
+  // Detect forks: find commits with multiple children in the chain
+  const range = `${base}..(visible_heads() & descendants(${base}))`;
+  const raw = jjSafe(`log --no-graph --reversed -r '${range}' -T 'change_id.short() ++ "\\t" ++ parents.map(|p| p.change_id().short()).join(",") ++ "\\n"'`);
+  if (!raw) { console.log('Nothing to linearize'); return; }
+
+  // Build parent→children map
+  const children = new Map();
+  const allIds = [];
+  for (const line of raw.split('\n')) {
+    if (!line.includes('\t')) continue;
+    const [cid, parentsStr] = line.split('\t');
+    allIds.push(cid.trim());
+    for (const pid of parentsStr.split(',').filter(Boolean)) {
+      const p = pid.trim();
+      if (!children.has(p)) children.set(p, []);
+      children.get(p).push(cid.trim());
+    }
+  }
+
+  // Find fork points — parents with multiple children in the chain
+  const forks = [];
+  for (const [parent, kids] of children) {
+    if (kids.length > 1) {
+      forks.push({ parent, children: kids });
+    }
+  }
+
+  if (forks.length === 0) {
+    console.log('Chain is already linear — no forks detected.');
+    return;
+  }
+
+  console.log(`\nFound ${forks.length} fork(s) in the chain:\n`);
+  for (const f of forks) {
+    const parentDesc = jjSafe(`log --no-graph -r '${f.parent}' -T 'description.first_line()'`)?.trim() || '';
+    console.log(`  ${f.parent.slice(0, 8)}: ${parentDesc}`);
+    console.log(`    → ${f.children.length} branches:`);
+    for (const kid of f.children) {
+      const kidDesc = jjSafe(`log --no-graph -r '${kid}' -T 'description.first_line()'`)?.trim() || '';
+      console.log(`      ${kid.slice(0, 8)}: ${kidDesc}`);
+    }
+    console.log('');
+  }
+
+  console.log('Linearize will rebase sibling branches onto the main line sequentially.');
+  if (dryRun) { console.log('Dry run — no changes.'); return; }
+
+  const rl = (await import('readline')).createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise(r => rl.question('Apply? (y/n) ', r));
+  rl.close();
+  if (answer !== 'y') { console.log('Cancelled.'); return; }
+
+  // For each fork, pick the "main" child (the one with more descendants or the first in chain order)
+  // and rebase the other children after the main branch's tip
+  let rebased = 0;
+  for (const f of forks) {
+    // Find which child has the most descendants — that's the main line
+    let mainChild = f.children[0];
+    let mainCount = 0;
+    for (const kid of f.children) {
+      const count = parseInt(jjSafe(`log --no-graph -r 'descendants(${kid})' -T '"x"'`)?.length || '0');
+      if (count > mainCount) { mainCount = count; mainChild = kid; }
+    }
+
+    // Rebase other children after the last descendant of the main child
+    const mainTip = jjSafe(`log --no-graph -r 'heads(descendants(${mainChild}))' -T 'change_id.short()' --limit 1`)?.trim();
+    if (!mainTip) continue;
+
+    for (const kid of f.children) {
+      if (kid === mainChild) continue;
+      try {
+        jj(`rebase -s ${kid} -A ${mainTip}`);
+        rebased++;
+        console.log(`  Rebased ${kid.slice(0, 8)} after ${mainTip.slice(0, 8)}`);
+      } catch (err) {
+        console.error(`  Failed to rebase ${kid.slice(0, 8)}: ${err?.stderr?.toString()?.slice(0, 60) || ''}`);
+      }
+    }
+  }
+
+  if (rebased === 0) { console.log('Nothing to rebase.'); return; }
+
+  // Renumber
+  const freshEntries = loadEntries(base);
+  const freshGroups = groupEntries(freshEntries, meta).filter(g => g.bookmark && meta.bookmarks?.[g.bookmark]);
+  const prefix = config.prefix || 'TP';
+  const doneIndexes = Object.values(meta.done || {}).map(d => parseInt(d.tpIndex?.replace(/\D/g, '')) || 0);
+  let idx = doneIndexes.length > 0 ? Math.max(...doneIndexes) + 1 : 1;
+  for (const g of freshGroups) {
+    const bm = meta.bookmarks[g.bookmark];
+    if (!bm) continue;
+    const newTp = `${prefix}-${idx}`;
+    bm.tpIndex = newTp;
+    bm.prTitle = `${newTp}: ${bm.wiTitle}`;
+    idx++;
+  }
+  meta.nextIndex = idx;
+  saveMeta(meta);
+
+  // Check conflicts
+  const conflictIds = (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '').split('\n').filter(Boolean);
+  if (conflictIds.length > 0) {
+    console.log(`\n⚠ ${conflictIds.length} conflict(s) after linearize. Resolve with: jj resolve -r <changeId>`);
+  } else {
+    console.log(`\nDone — ${rebased} branch(es) linearized. No conflicts.`);
+  }
+}
+
 // ── vpr log ───────────────────────────────────────────────────────────
 export function cmdLog(args) {
   requireJj();
