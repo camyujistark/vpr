@@ -56,6 +56,9 @@ let fieldIdx = 0; // which field is highlighted in the group summary
 const FIELD_NAMES = ['wiTitle', 'wiDescription', 'prTitle', 'prDesc'];
 const FIELD_LABELS = ['Ticket Title', 'Ticket Description', 'PR Title', 'PR Story'];
 
+// ── Restore point for multi-step operations ──────────────────────────
+let restorePoint = null; // jj operation ID to restore to on multi-undo
+
 // ── Interactive mode state ────────────────────────────────────────────
 let interactiveGroup = null;  // bookmark name of the group being edited
 let selected = new Set();      // changeIds selected in interactive mode
@@ -1383,9 +1386,46 @@ export function startTui(config, baseArg) {
           return;
         }
 
-        // Rebase to match new order
-        // Strategy: rebase each group's bookmark (tip) after the previous group's bookmark
-        // using -s (source) to move the subtree, then detach it from its old children
+        // Pre-flight: check for shared files between groups that would be reordered
+        const groupFiles = {};
+        for (const g of allGroups) {
+          const commits = items.filter(it => it.type === 'commit' && it.group === g.bookmark);
+          const files = new Set();
+          for (const c of commits) {
+            for (const f of (getCachedFiles(c.changeId || c.sha) || [])) {
+              files.add(f.replace(/^[MADR]\s+/, ''));
+            }
+          }
+          groupFiles[g.bookmark] = files;
+        }
+        // Find files modified by multiple groups
+        const sharedFiles = [];
+        const allFiles = new Map();
+        for (const [bm, files] of Object.entries(groupFiles)) {
+          for (const f of files) {
+            if (!allFiles.has(f)) allFiles.set(f, []);
+            allFiles.get(f).push(bm);
+          }
+        }
+        for (const [f, bms] of allFiles) {
+          if (bms.length > 1) sharedFiles.push(f);
+        }
+        if (sharedFiles.length > 0) {
+          const warn = sharedFiles.slice(0, 5).join(', ');
+          const more = sharedFiles.length > 5 ? ` (+${sharedFiles.length - 5} more)` : '';
+          message = `${YELLOW}⚠ ${sharedFiles.length} file(s) modified by multiple groups: ${warn}${more}\nConflicts likely. Continue? Press O again to confirm, or u to undo after.${RESET}`;
+          render();
+          // Don't block — the user can press O again or u to undo
+          // Save restore point so multi-undo works
+          restorePoint = jjSafe(`op log --limit 1 -T 'self.id()'`)?.trim();
+          // Continue with reorder (user was warned)
+        }
+
+        // Save restore point before reorder
+        if (!restorePoint) {
+          restorePoint = jjSafe(`op log --limit 1 -T 'self.id()'`)?.trim();
+        }
+
         message = `${DIM}Reordering...${RESET}`;
         render();
 
@@ -1845,21 +1885,21 @@ export function startTui(config, baseArg) {
         return; // unknown key, don't re-render
 
       case 'u': {
-        // Undo last jj operation
+        // Undo — if restore point exists (from reorder), restore to it. Otherwise single undo.
         try {
-          jj('undo');
-          reload();
-          // reload() sets message with conflict/linear warnings — prepend "Undone"
-          message = `${GREEN}Undone${RESET}` + (conflictSet.size > 0 ? `  ${YELLOW}${conflictSet.size} conflict(s) remain${RESET}` : '');
+          if (restorePoint) {
+            jj(`op restore ${restorePoint}`);
+            restorePoint = null;
+            reload();
+            message = `${GREEN}Restored to pre-reorder state${RESET}`;
+          } else {
+            jj('undo');
+            reload();
+            message = `${GREEN}Undone${RESET}` + (conflictSet.size > 0 ? `  ${YELLOW}${conflictSet.size} conflict(s) remain${RESET}` : '');
+          }
         } catch (err) {
           message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
         }
-        break;
-      }
-
-      case 'u': {
-        try { jj('undo'); reload(); message = `${GREEN}Undone${RESET}`; }
-        catch (err) { message = `${RED}Undo failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`; }
         break;
       }
 
