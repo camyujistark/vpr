@@ -333,7 +333,7 @@ function render() {
   if (mode === 'file_split') {
     const shortId = splitChangeId?.slice(0, 8) || '?';
     out += `${BOLD}VPR${RESET}  ${YELLOW}[SPLIT: ${shortId}]${RESET}  ${DIM}${splitFiles.length} files, ${splitSelected.size} selected${RESET}\n`;
-    out += `${DIM}j/k nav  Space select  Enter split  Esc back${RESET}\n`;
+    out += `${DIM}j/k nav  Space select  y/Enter split  Esc back${RESET}\n`;
   } else if (mode === 'interactive') {
     const iMeta = vprMeta.bookmarks?.[interactiveGroup] || {};
     const iLabel = iMeta.tpIndex || interactiveGroup || '?';
@@ -916,25 +916,23 @@ export function startTui(config, baseArg) {
         else splitSelected.add(cursor);
         render(); return;
       }
-      if (key.name === 'return') {
-        if (splitSelected.size === 0) { message = `${RED}Select files to split out${RESET}`; render(); return; }
+      if (key.name === 'return' || str === 'y') {
+        if (splitSelected.size === 0) { message = `${RED}Select files to split out (Space to select)${RESET}`; render(); return; }
         const files = [...splitSelected].map(i => splitFiles[i].path);
-        startInput(`Split ${files.length} file(s) from ${splitChangeId?.slice(0, 8)}? (y/n)`, '', (answer) => {
-          if (answer !== 'y') { mode = 'file_split'; return; }
-          try {
-            const fileArgs = files.map(f => `"${f}"`).join(' ');
-            execSync(`JJ_EDITOR=true jj split -r ${splitChangeId} ${fileArgs}`, { stdio: 'pipe', shell: '/bin/bash' });
-            appendRebaseLog([{ type: 'split', changeId: splitChangeId, files, result: 'ok' }]);
-            mode = 'interactive';
-            splitFiles = []; splitSelected.clear(); splitChangeId = null;
-            reload();
-            message = `${GREEN}Split ${files.length} file(s)${RESET}`;
-          } catch (err) {
-            mode = 'file_split';
-            message = `${RED}Split failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
-          }
-        });
-        return;
+        try {
+          message = `${DIM}Splitting ${files.length} file(s)...${RESET}`;
+          render();
+          const fileArgs = files.map(f => `"${f}"`).join(' ');
+          execSync(`JJ_EDITOR=true jj split -r ${splitChangeId} ${fileArgs}`, { stdio: 'pipe', shell: '/bin/bash' });
+          appendRebaseLog([{ type: 'split', changeId: splitChangeId, files, result: 'ok' }]);
+          mode = 'interactive';
+          splitFiles = []; splitSelected.clear(); splitChangeId = null;
+          reload();
+          message = `${GREEN}Split ${files.length} file(s)${RESET}`;
+        } catch (err) {
+          message = `${RED}Split failed: ${(err?.stderr?.toString() || '').slice(0, 60)}${RESET}`;
+        }
+        render(); return;
       }
       render(); return;
     }
