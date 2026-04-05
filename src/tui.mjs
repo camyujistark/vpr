@@ -468,16 +468,20 @@ function render() {
         const wi = item.meta?.wi || '';
         const prefix = tp ? `${tp}` : item.bookmark;
         const wiTag = wi ? ` (${wi})` : '';
+        // Check if any commit in this group has a conflict
+        const groupConflict = items.some(i => i.group === item.bookmark && i.type === 'commit' && conflictSet.has(i.changeId));
+        const conflictTag = groupConflict ? ` ${RED}!${RESET}` : '';
         const label = `${prefix}${wiTag}: ${item.title}`.slice(0, leftW - 6);
         leftCell = sel
-          ? `${INVERT}${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`
-          : `${CYAN}${BOLD}${label}${RESET} ${DIM}(${item.commitCount})${RESET}`;
+          ? `${INVERT}${CYAN}${BOLD}${label}${RESET}${conflictTag} ${DIM}(${item.commitCount})${RESET}`
+          : `${CYAN}${BOLD}${label}${RESET}${conflictTag} ${DIM}(${item.commitCount})${RESET}`;
       } else if (item.type === 'commit') {
         const isPicked = picked && item.changeId?.startsWith(picked.slice(0, 8));
-        const prefix = isPicked ? `${MAGENTA}● ` : '  ';
+        const isConflict = conflictSet.has(item.changeId);
+        const prefix = isConflict ? `${RED}! ` : isPicked ? `${MAGENTA}● ` : '  ';
         const typeTag = item.ccType ? `${DIM}[${item.ccType}]${RESET}` : '';
         const label = `${prefix}${item.changeId?.slice(0, 8) || ''} ${typeTag} ${item.ccDesc || item.subject}`.slice(0, leftW - 2);
-        leftCell = sel ? `${INVERT}${label}${RESET}` : isPicked ? `${MAGENTA}${label}${RESET}` : label;
+        leftCell = sel ? `${INVERT}${label}${RESET}` : isConflict ? `${RED}${label}${RESET}` : isPicked ? `${MAGENTA}${label}${RESET}` : label;
       } else if (item.type === 'ungrouped-header') {
         const label = `⚠ Ungrouped (${item.commitCount})`;
         leftCell = sel ? `${INVERT}${MAGENTA}${BOLD}${label}${RESET}` : `${MAGENTA}${BOLD}${label}${RESET}`;
@@ -837,14 +841,23 @@ function runJjCommand(cmd) {
 // ── Reload ─────────────────────────────────────────────────────────────
 let base = '';
 
+let conflictSet = new Set();
+
 function reload() {
   vprMeta = loadMeta();
   entries = loadEntries(base);
   diffCache.clear();
   filesCache.clear();
+  // Refresh conflict set
+  conflictSet = new Set(
+    (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '').split('\n').filter(Boolean)
+  );
   const items = buildItems();
   cursor = Math.min(cursor, Math.max(0, items.length - 1));
-  message = `${GREEN}Refreshed${RESET}`;
+  const conflictCount = entries.filter(e => conflictSet.has(e.changeId)).length;
+  message = conflictCount > 0
+    ? `${YELLOW}${conflictCount} conflict(s) — resolve with jj resolve${RESET}`
+    : `${GREEN}Refreshed${RESET}`;
 }
 
 // ── Main ───────────────────────────────────────────────────────────────
@@ -903,6 +916,9 @@ export function startTui(config, baseArg) {
     base = getBase() || 'trunk()';
   }
   entries = loadEntries(base);
+  conflictSet = new Set(
+    (jjSafe(`log --no-graph -r 'conflicts()' -T 'change_id.short() ++ "\\n"'`) || '').split('\n').filter(Boolean)
+  );
 
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
