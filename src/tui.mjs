@@ -1301,25 +1301,35 @@ export function startTui(config, baseArg) {
           return;
         }
 
-        // Rebase to match new order — work bottom-up
-        // Strategy: for each group in new order (from second to last), rebase after the previous
+        // Rebase to match new order
+        // Strategy: rebase each group's bookmark (tip) after the previous group's bookmark
+        // using -s (source) to move the subtree, then detach it from its old children
         message = `${DIM}Reordering...${RESET}`;
         render();
 
         try {
-          for (let i = 1; i < newOrder.length; i++) {
+          // Build a map of bookmark → first commit in group
+          const groupFirstCommit = {};
+          for (const g of allGroups) {
+            const commits = items.filter(it => it.type === 'commit' && it.group === g.bookmark);
+            if (commits.length > 0) groupFirstCommit[g.bookmark] = commits[0];
+          }
+
+          // Rebase from last to first (bottom-up) to avoid moving things that later get moved again
+          for (let i = newOrder.length - 1; i >= 1; i--) {
             const bm = newOrder[i];
             const prevBm = newOrder[i - 1];
-            const group = allGroups.find(g => g.bookmark === bm);
-            const groupCommits = items.filter(it => it.type === 'commit' && it.group === bm);
-            // Find the tip of the previous group (its bookmark commit)
-            const prevTip = items.find(it => it.type === 'commit' && it.bookmark === prevBm)
-              || items.filter(it => it.type === 'commit' && it.group === prevBm).pop();
-            if (!prevTip) continue;
+            const firstCommit = groupFirstCommit[bm];
+            if (!firstCommit) continue;
 
-            for (const c of groupCommits) {
-              jj(`rebase -r ${c.changeId} -A ${prevTip.changeId}`);
-            }
+            // Find where the previous group's bookmark points
+            const prevEntry = entries.find(e => e.bookmark === prevBm);
+            if (!prevEntry) continue;
+
+            // Rebase the first commit of this group (and descendants) after the previous bookmark
+            try {
+              jj(`rebase -s ${firstCommit.changeId} -A ${prevEntry.changeId}`);
+            } catch {}
           }
 
           _renumberIndexes(config, vprMeta, base);
