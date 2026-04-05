@@ -346,7 +346,9 @@ function render() {
     if (iCurrent?.type === 'ungrouped') {
       out += `${DIM}j/k nav  m move-in  Esc back${RESET}\n`;
     } else if (iCurrent?.changeId) {
-      out += `${DIM}j/k nav  ${viewLabel}  Space select  s squash  S split  d drop  r reword  o reorder  U ungroup  Esc back${RESET}\n`;
+      out += selected.size > 0
+        ? `${DIM}j/k nav  ${viewLabel}  Space select  s squash  d drop  r reword  o reorder  U ungroup  Esc back${RESET}\n`
+        : `${DIM}j/k nav  ${viewLabel}  Space select  s split  r reword  o reorder  U ungroup  Esc back${RESET}\n`;
     } else {
       out += `${DIM}j/k nav  Esc back${RESET}\n`;
     }
@@ -978,45 +980,43 @@ export function startTui(config, baseArg) {
         render(); return;
       }
 
-      // s — squash selected into parents
-      if (str === 's') {
-        if (selected.size === 0) { message = `${RED}Select commits to squash${RESET}`; render(); return; }
-        const count = selected.size;
-        startInput(`Squash ${count} commit(s) into parent? (y/n)`, '', (answer) => {
-          if (answer !== 'y') { mode = 'interactive'; return; }
-          const actions = [];
-          // Sort by position descending (newest first)
-          const sorted = [...selected].sort((a, b) => {
-            const aIdx = entries.findIndex(e => e.changeId === a);
-            const bIdx = entries.findIndex(e => e.changeId === b);
-            return bIdx - aIdx;
-          });
-          for (const cid of sorted) {
-            const entry = entries.find(e => e.changeId === cid);
-            try {
-              jj(`squash -r ${cid}`);
-              actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'ok' });
-            } catch (err) {
-              actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'failed', error: (err?.stderr?.toString() || '').slice(0, 80) });
+      // s — context-sensitive: split (no selection) or squash (with selection)
+      if (str === 's' || str === 'S') {
+        if (selected.size > 0) {
+          // Squash selected into parents
+          const count = selected.size;
+          startInput(`Squash ${count} commit(s) into parent? (y/n)`, '', (answer) => {
+            if (answer !== 'y') { mode = 'interactive'; return; }
+            const actions = [];
+            const sorted = [...selected].sort((a, b) => {
+              const aIdx = entries.findIndex(e => e.changeId === a);
+              const bIdx = entries.findIndex(e => e.changeId === b);
+              return bIdx - aIdx;
+            });
+            for (const cid of sorted) {
+              const entry = entries.find(e => e.changeId === cid);
+              try {
+                jj(`squash -r ${cid}`);
+                actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'ok' });
+              } catch (err) {
+                actions.push({ type: 'squash', changeId: cid, subject: entry?.subject || '', result: 'failed', error: (err?.stderr?.toString() || '').slice(0, 80) });
+              }
             }
-          }
-          if (actions.length > 0) appendRebaseLog(actions);
-          selected.clear();
-          mode = 'interactive';
-          reload();
-          const ok = actions.filter(a => a.result === 'ok').length;
-          const fail = actions.filter(a => a.result === 'failed').length;
-          message = fail > 0
-            ? `${YELLOW}Squashed ${ok}/${actions.length} (${fail} failed)${RESET}`
-            : `${GREEN}Squashed ${ok} commit(s)${RESET}`;
-        });
-        return;
-      }
-
-      // S — enter file_split (works on cursor or single selection)
-      if (str === 'S') {
-        const cid = selected.size === 1 ? [...selected][0] : iItem?.changeId;
-        if (!cid) { message = `${RED}Select a commit to split${RESET}`; render(); return; }
+            if (actions.length > 0) appendRebaseLog(actions);
+            selected.clear();
+            mode = 'interactive';
+            reload();
+            const ok = actions.filter(a => a.result === 'ok').length;
+            const fail = actions.filter(a => a.result === 'failed').length;
+            message = fail > 0
+              ? `${YELLOW}Squashed ${ok}/${actions.length} (${fail} failed)${RESET}`
+              : `${GREEN}Squashed ${ok} commit(s)${RESET}`;
+          });
+          return;
+        }
+        // No selection — split cursor commit (enter file_split)
+        const cid = iItem?.changeId;
+        if (!cid) { message = `${RED}Select a commit${RESET}`; render(); return; }
         try {
           const raw = jj(`diff --summary -r ${cid}`);
           splitFiles = raw.split('\n').filter(Boolean).map(line => {
