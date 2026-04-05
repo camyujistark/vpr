@@ -6,7 +6,7 @@
 import { execSync } from 'child_process';
 import readline from 'readline';
 import { loadConfig, loadMeta, saveMeta, loadRebaseLog } from '../config.mjs';
-import { jj, jjSafe, hasJj, getBase } from '../git.mjs';
+import { jj, jjSafe, hasJj, getBase, getDiffForCommit } from '../git.mjs';
 import { createProvider } from '../providers/index.mjs';
 import { loadEntries, groupEntries, findBookmark, resolveToBookmark } from '../entries.mjs';
 
@@ -625,6 +625,189 @@ export function cmdUnhold(args) {
   meta.hold.splice(idx, 1);
   saveMeta(meta);
   console.log(JSON.stringify({ unhold: changeId, status: 'released' }));
+}
+
+// ── vpr sort [--dry-run] ──────────────────────────────────────────────
+export async function cmdSort(args) {
+  requireJj();
+  const config = requireConfig();
+  const meta = loadMeta();
+  const base = getBase() || 'main';
+  const entries = loadEntries(base, { files: true });
+  const groups = groupEntries(entries, meta);
+  const dryRun = args.includes('--dry-run');
+
+  // Only analyze groups with bookmarks (skip ungrouped)
+  const activeGroups = groups.filter(g => g.bookmark && meta.bookmarks?.[g.bookmark]);
+  if (activeGroups.length < 2) { console.log('Nothing to sort (< 2 groups)'); return; }
+
+  // Load root package.json deps to exclude common packages
+  const rootPkgs = new Set();
+  try {
+    const rootPkg = JSON.parse(jjSafe(`file show -r ${base} package.json`) || '{}');
+    for (const section of ['dependencies', 'devDependencies']) {
+      for (const pkg of Object.keys(rootPkg[section] || {})) rootPkgs.add(pkg);
+    }
+  } catch {}
+
+  // Collect what each group adds
+  const fileOrigin = new Map();  // file path → group index
+  const pkgOrigin = new Map();   // npm package → group index
+
+  for (let i = 0; i < activeGroups.length; i++) {
+    const g = activeGroups[i];
+    for (const commit of g.commits) {
+      for (const file of (commit.files || [])) {
+        if (file.startsWith('A ')) fileOrigin.set(file.slice(2).trim(), i);
+      }
+      // Check package.json additions
+      const hasPackageJson = (commit.files || []).some(f => f.includes('package.json'));
+      if (hasPackageJson) {
+        try {
+          const diff = getDiffForCommit(commit.changeId || commit.sha);
+          for (const line of diff.split('\n')) {
+            if (line.startsWith('+') && !line.startsWith('+++')) {
+              // Match dependency lines: "package-name": "^1.0.0" (must have semver-like value)
+              const pkgMatch = line.match(/"(@?[a-z][a-z0-9._-]*(?:\/[a-z][a-z0-9._-]*)?)"\s*:\s*"[\^~>=<*]/);
+              if (pkgMatch && !rootPkgs.has(pkgMatch[1])) pkgOrigin.set(pkgMatch[1], i);
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  // Find ordering issues: group at position i references something added by group at position j where j > i
+  const issues = [];
+  for (let i = 0; i < activeGroups.length; i++) {
+    const g = activeGroups[i];
+    for (const commit of g.commits) {
+      let diff;
+      try { diff = getDiffForCommit(commit.changeId || commit.sha); } catch { continue; }
+
+      // Check file references
+      for (const [file, originIdx] of fileOrigin) {
+        // Match on full path or import-style path (e.g. from './components/AudioPlayer' or '@transit/ui/StepFlow')
+        const importPath = file.replace(/\.(tsx?|jsx?|css)$/, '');  // strip extension for import matching
+        if (originIdx !== i && originIdx > i && (diff.includes(file) || diff.includes(importPath))) {
+          const originGroup = activeGroups[originIdx];
+          const originMeta = meta.bookmarks[originGroup.bookmark] || {};
+          const thisMeta = meta.bookmarks[g.bookmark] || {};
+          issues.push({
+            depGroup: originIdx,
+            depTp: originMeta.tpIndex || originGroup.bookmark,
+            depTitle: originMeta.wiTitle || '',
+            consumerGroup: i,
+            consumerTp: thisMeta.tpIndex || g.bookmark,
+            reason: `uses ${file} (added by ${originMeta.tpIndex || originGroup.bookmark})`,
+          });
+        }
+      }
+
+      // Check package references — only match actual import/require statements
+      for (const [pkg, originIdx] of pkgOrigin) {
+        const importPattern = new RegExp(`(from\\s+['"]${pkg.replace('/', '\\/')}|require\\(['"]${pkg.replace('/', '\\/')}|@import\\s+["']${pkg.replace('/', '\\/')})`);
+        if (originIdx !== i && originIdx > i && importPattern.test(diff)) {
+          const originGroup = activeGroups[originIdx];
+          const originMeta = meta.bookmarks[originGroup.bookmark] || {};
+          const thisMeta = meta.bookmarks[g.bookmark] || {};
+          issues.push({
+            depGroup: originIdx,
+            depTp: originMeta.tpIndex || originGroup.bookmark,
+            depTitle: originMeta.wiTitle || '',
+            consumerGroup: i,
+            consumerTp: thisMeta.tpIndex || g.bookmark,
+            reason: `imports ${pkg} (added by ${originMeta.tpIndex || originGroup.bookmark})`,
+          });
+        }
+      }
+    }
+  }
+
+  // Deduplicate issues by depGroup
+  const seen = new Set();
+  const uniqueIssues = issues.filter(issue => {
+    const key = `${issue.depGroup}->${issue.consumerGroup}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (uniqueIssues.length === 0) {
+    console.log('Chain order is correct — no dependency issues found.');
+    return;
+  }
+
+  // Show issues
+  console.log(`\nDependency analysis found ${uniqueIssues.length} ordering issue(s):\n`);
+  for (const issue of uniqueIssues) {
+    const targetPos = issue.consumerGroup;
+    console.log(`  ${issue.depTp}: ${issue.depTitle}`);
+    console.log(`    → move before ${issue.consumerTp} (position ${targetPos + 1})`);
+    console.log(`    reason: ${issue.reason}`);
+    console.log('');
+  }
+  console.log('Indexes will be renumbered after reordering.\n');
+
+  if (dryRun) {
+    console.log('Dry run — no changes made.');
+    return;
+  }
+
+  // Confirm
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise(r => rl.question('Apply? (y/n) ', r));
+  rl.close();
+  if (answer !== 'y') { console.log('Cancelled.'); return; }
+
+  // Execute: for each issue, rebase the dependency group's commits before the consumer
+  // Process unique dep groups, sorted by target position (earliest first)
+  const moveOps = [...new Map(uniqueIssues.map(i => [i.depGroup, i])).values()]
+    .sort((a, b) => a.consumerGroup - b.consumerGroup);
+
+  for (const op of moveOps) {
+    const depGroup = activeGroups[op.depGroup];
+    const consumerGroup = activeGroups[op.consumerGroup];
+    const firstConsumerCommit = consumerGroup.commits[0];
+    if (!firstConsumerCommit) continue;
+
+    // Rebase all commits in the dep group before the first consumer commit
+    for (const commit of depGroup.commits) {
+      try {
+        jj(`rebase -r ${commit.changeId} -B ${firstConsumerCommit.changeId}`);
+      } catch (err) {
+        console.error(`  Failed to rebase ${commit.changeId?.slice(0, 8)}: ${err?.stderr?.toString()?.slice(0, 60) || ''}`);
+      }
+    }
+    console.log(`  Moved ${op.depTp} before ${op.consumerTp}`);
+  }
+
+  // Renumber indexes
+  const freshEntries = loadEntries(base, { files: true });
+  const freshGroups = groupEntries(freshEntries, meta).filter(g => g.bookmark && meta.bookmarks?.[g.bookmark]);
+  const prefix = config.prefix || 'TP';
+  let idx = 1;
+
+  // Find the starting index from done items
+  const doneIndexes = Object.values(meta.done || {}).map(d => parseInt(d.tpIndex?.replace(/\D/g, '')) || 0);
+  if (doneIndexes.length > 0) idx = Math.max(...doneIndexes) + 1;
+
+  for (const g of freshGroups) {
+    const bm = meta.bookmarks[g.bookmark];
+    if (!bm) continue;
+    const newTp = `${prefix}-${idx}`;
+    const oldTp = bm.tpIndex;
+    if (oldTp !== newTp) {
+      bm.tpIndex = newTp;
+      bm.prTitle = bm.prTitle?.replace(oldTp, newTp) || `${newTp}: ${bm.wiTitle}`;
+      console.log(`  ${oldTp} → ${newTp}`);
+    }
+    idx++;
+  }
+  meta.nextIndex = idx;
+  saveMeta(meta);
+
+  console.log('\nDone. Run `vpr status` to verify.');
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
