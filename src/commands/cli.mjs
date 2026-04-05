@@ -38,7 +38,8 @@ export function cmdNew(args) {
   const desc = args[1] || '';
   if (!title) { console.error('Usage: vpr new "title" ["description"]'); process.exit(1); }
 
-  // Find target commit: explicit arg > @ if it has a description > @-
+  // Find target commit: explicit arg > @ if described > @- if not
+  // Always ensure linear chain — if @ is not on the chain tip, use @-
   let target = args[2];
   if (!target) {
     const atDesc = jjSafe(`log --no-graph -r @ -T 'description.first_line()'`)?.trim();
@@ -342,12 +343,23 @@ export function cmdPush(args) {
 export async function cmdSend(args) {
   requireJj();
   const config = requireConfig();
-  const meta = loadMeta();
+  let meta = loadMeta();
   const base = getBase() || 'main';
-  const entries = loadEntries(base);
-  const groups = groupEntries(entries, meta);
   const dryRun = args.includes('--dry-run');
   const specificId = args.find(a => a !== '--dry-run');
+
+  // Auto-linearize before sending
+  const conflictsBefore = (jjSafe(`log --no-graph -r 'conflicts()' -T 'x'`) || '').length;
+  if (conflictsBefore > 0) {
+    console.error(`⚠ ${conflictsBefore} conflict(s) in the chain. Resolve before sending.`);
+    if (!dryRun) process.exit(1);
+  }
+  // Check for forks and auto-linearize
+  await cmdLinearize(['--auto']);
+  meta = loadMeta(); // reload after linearize may have renumbered
+
+  const entries = loadEntries(base);
+  const groups = groupEntries(entries, meta);
 
   // Filter to specific ID if provided
   let sendGroups = groups.filter(g => g.bookmark);
@@ -634,6 +646,7 @@ export async function cmdLinearize(args) {
   const meta = loadMeta();
   const base = getBase() || 'main';
   const dryRun = args.includes('--dry-run');
+  const auto = args.includes('--auto');
 
   // Detect forks: find commits with multiple children in the chain
   const range = `${base}..(visible_heads() & descendants(${base}))`;
@@ -679,13 +692,15 @@ export async function cmdLinearize(args) {
     console.log('');
   }
 
-  console.log('Linearize will rebase sibling branches onto the main line sequentially.');
+  if (!auto) console.log('Linearize will rebase sibling branches onto the main line sequentially.');
   if (dryRun) { console.log('Dry run — no changes.'); return; }
 
-  const rl = (await import('readline')).createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await new Promise(r => rl.question('Apply? (y/n) ', r));
-  rl.close();
-  if (answer !== 'y') { console.log('Cancelled.'); return; }
+  if (!auto) {
+    const rl = (await import('readline')).createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise(r => rl.question('Apply? (y/n) ', r));
+    rl.close();
+    if (answer !== 'y') { console.log('Cancelled.'); return; }
+  }
 
   // For each fork, pick the "main" child (the one with more descendants or the first in chain order)
   // and rebase the other children after the main branch's tip
