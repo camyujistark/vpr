@@ -356,7 +356,8 @@ try {
     // No args — TUI not yet implemented
     // -----------------------------------------------------------------------
     case undefined: {
-      console.log('TUI not yet implemented');
+      const { startTui } = await import('../src/tui/tui.mjs');
+      await startTui();
       break;
     }
 
