@@ -81,6 +81,7 @@ VPR v2 — Virtual Pull Request Manager
 
   Commits:
     vpr log [N]                     jj graph
+    vpr squash <vpr>                Squash adjacent same-file commits
 
   AI:
     vpr generate <vpr>              Generate output from story
@@ -273,6 +274,30 @@ try {
         const result = await generate(query, { generateCmd: config.generateCmd });
         console.log(JSON.stringify(result, null, 2));
       }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr squash <vpr>
+    // -----------------------------------------------------------------------
+    case 'squash': {
+      const query = args[0];
+      if (!query) {
+        console.error('Usage: vpr squash <vpr>');
+        process.exit(1);
+      }
+      const { prepareSquash, buildSquashContent, parseSquashContent, executeSquash } = await import('../src/commands/squash.mjs');
+      const { openEditor } = await import('../src/tui/editor.mjs');
+
+      const { bookmark, candidates } = await prepareSquash(query);
+      const content = buildSquashContent(candidates);
+
+      openEditor(content, (result) => {
+        const actions = parseSquashContent(result);
+        const { squashed, kept, errors } = executeSquash(actions);
+        console.log(`Squashed ${squashed}, kept ${kept}${errors.length ? `, ${errors.length} errors` : ''}`);
+        for (const err of errors) console.error(`  ${err}`);
+      });
       break;
     }
 
