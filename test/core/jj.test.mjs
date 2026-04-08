@@ -8,7 +8,7 @@ import { join } from 'node:path';
 // We need to import the module under test. Since it caches hasJj(), we import fresh each test
 // by using dynamic import with a cache-busting query string isn't supported in Node ESM.
 // Instead we test in a single suite, resetting cwd as needed.
-import { jj, jjSafe, hasJj, getBase, getConflicts, getDiff, getFiles } from '../../src/core/jj.mjs';
+import { jj, jjSafe, hasJj, getBase, getBaseBranch, getConflicts, getDiff, getFiles } from '../../src/core/jj.mjs';
 
 let tmpDir;
 
@@ -75,6 +75,13 @@ describe('jj core helpers', () => {
       // In a fresh repo with no remote bookmarks, may return null or a root commit id
       // We just assert it doesn't throw and returns string or null
       assert.ok(result === null || typeof result === 'string');
+    });
+  });
+
+  describe('getBaseBranch()', () => {
+    it('returns null in a repo with no remote bookmarks', () => {
+      const result = getBaseBranch();
+      assert.strictEqual(result, null);
     });
   });
 

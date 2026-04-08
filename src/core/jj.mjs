@@ -64,7 +64,7 @@ export function hasJj() {
 export function getBase() {
   // Try ancestors with remote bookmarks (excluding the working copy itself)
   const remoteAncestor = jjSafe(
-    'log -r "ancestors(@, 1) & remote_bookmarks()" --no-graph --template "commit_id.short()" -n 1'
+    'log -r "ancestors(@) & remote_bookmarks()" --no-graph --template "commit_id.short()" -n 1'
   );
   if (remoteAncestor) return remoteAncestor;
 
@@ -87,6 +87,25 @@ export function getBase() {
   if (trunk) return trunk;
 
   return null;
+}
+
+/**
+ * Return the bookmark name of the nearest ancestor commit with a remote bookmark.
+ * Strips @origin suffix. Returns null if nothing found.
+ * @returns {string|null}
+ */
+export function getBaseBranch() {
+  const raw = jjSafe(
+    'log -r "ancestors(@) & remote_bookmarks()" --no-graph --template "bookmarks" -n 1'
+  );
+  if (!raw) return null;
+
+  // bookmarks template may return space-separated list like "main main@origin"
+  // Find the first one with @origin suffix and strip it, or use the first local one
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const remote = parts.find(b => b.includes('@'));
+  if (remote) return remote.replace(/@.*$/, '');
+  return parts[0] || null;
 }
 
 /**
