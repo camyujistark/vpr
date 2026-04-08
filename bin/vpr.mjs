@@ -7,6 +7,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { execSync } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +109,16 @@ VPR v2 — Virtual Pull Request Manager
 // ---------------------------------------------------------------------------
 
 const [, , cmd, ...args] = process.argv;
+
+// Check for git worktree — jj can't colocate in worktrees
+try {
+  const gitDir = execSync('git rev-parse --git-dir', { encoding: 'utf-8' }).trim();
+  if (gitDir.includes('.git/worktrees')) {
+    console.error('Error: VPR cannot run inside a git worktree (jj cannot colocate here).');
+    console.error('Hint: Run VPR from the main git repository, or cherry-pick commits to the target branch.');
+    process.exit(1);
+  }
+} catch { /* not a git repo — jj init will handle that */ }
 
 try {
   switch (cmd) {
