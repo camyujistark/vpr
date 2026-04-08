@@ -109,8 +109,13 @@ try {
     // vpr init
     // -----------------------------------------------------------------------
     case 'init': {
+      const flags = parseFlags(args);
       const { init } = await import('../src/commands/init.mjs');
-      await init();
+      const result = await init(flags);
+      for (const step of result.steps) {
+        console.log(`  ${step}`);
+      }
+      console.log('\nVPR initialized.');
       break;
     }
 
@@ -350,6 +355,15 @@ try {
         }
         const checks = await sendChecks(query);
         printChecks(checks);
+
+        // Show what send would do
+        const config = loadConfig() ?? {};
+        const { createProvider } = await import('../src/providers/index.mjs');
+        const provider = createProvider({ provider: 'none', ...config });
+        const result = await send(query, { provider, dryRun: true });
+        console.log(`\n  Branch: ${result.branchName}`);
+        console.log(`  Target: ${result.targetBranch}`);
+        console.log(`  Title:  ${result.prTitle}`);
         break;
       }
 
