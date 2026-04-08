@@ -80,7 +80,10 @@ getLatestPRIndex() {
         `pr list --repo "${this.repo}" --limit 1 --json title`
       ));
       if (result.length === 0) return 0;
-      const match = result[0].title?.match(new RegExp(`${this.config.prefix}-(\\d+)`));
+      const pattern = this.config.prefix
+        ? new RegExp(`${this.config.prefix}-(\\d+)`)
+        : /^(\d+)[:\s-]/;
+      const match = result[0].title?.match(pattern);
       return match ? parseInt(match[1]) : 0;
     } catch { return 0; }
   }

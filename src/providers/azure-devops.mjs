@@ -74,10 +74,13 @@ export class AzureDevOpsProvider extends BaseProvider {
     try {
       const prs = this._listActivePRs(5);
       if (prs.length === 0) return 0;
-      // Find the highest TP-XX from recent PR titles
       let max = 0;
       for (const pr of prs) {
-        const match = pr.title?.match(new RegExp(`${this.config.prefix}-(\\d+)`));
+        // Match "PREFIX-123" when prefix set, or "123 - " when no prefix
+        const pattern = this.config.prefix
+          ? new RegExp(`${this.config.prefix}-(\\d+)`)
+          : /^(\d+)[:\s-]/;
+        const match = pr.title?.match(pattern);
         if (match) max = Math.max(max, parseInt(match[1]));
       }
       return max;

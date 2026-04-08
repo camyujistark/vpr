@@ -252,7 +252,7 @@ describe('send()', () => {
 
       assert.strictEqual(result.dryRun, true);
       assert.strictEqual(result.branchName, 'feat/99-my-feature-nav-bar');
-      assert.strictEqual(result.prTitle, 'TP-42: Nav Bar');
+      assert.strictEqual(result.prTitle, '42: Nav Bar');
       assert.strictEqual(result.targetBranch, 'develop');
       assert.strictEqual(result.prId, null);
     });
@@ -269,7 +269,7 @@ describe('send()', () => {
     it('uses default tpIndex=1 when not specified', async () => {
       await seedMeta({ story: 'Story content' });
       const result = await send('my-feature/nav-bar', { provider: null, dryRun: true });
-      assert.strictEqual(result.prTitle, 'TP-1: Nav Bar');
+      assert.strictEqual(result.prTitle, '1: Nav Bar');
     });
 
     it('uses default targetBranch=main when not specified', async () => {
@@ -329,7 +329,7 @@ describe('send()', () => {
 
       // Verify plan has the correct structure
       assert.strictEqual(plan.branchName, 'feat/99-my-feature-nav-bar');
-      assert.strictEqual(plan.prTitle, 'TP-7: Nav Bar');
+      assert.strictEqual(plan.prTitle, '7: Nav Bar');
       assert.strictEqual(plan.prId, null);
 
       // Meta must be unchanged in dryRun
@@ -370,7 +370,7 @@ describe('send()', () => {
 
         // Result shape
         assert.strictEqual(result.branchName, 'feat/99-my-feature-nav-bar');
-        assert.strictEqual(result.prTitle, 'TP-5: Nav Bar');
+        assert.strictEqual(result.prTitle, '5: Nav Bar');
         assert.strictEqual(result.prId, null);
         assert.strictEqual(result.targetBranch, 'main');
 
@@ -378,7 +378,7 @@ describe('send()', () => {
         const meta = await loadMeta();
         assert.ok(!meta.items['my-feature'], 'item should be removed when all VPRs sent');
         assert.ok(meta.sent['feat/99-my-feature-nav-bar'], 'VPR should appear in sent');
-        assert.strictEqual(meta.sent['feat/99-my-feature-nav-bar'].prTitle, 'TP-5: Nav Bar');
+        assert.strictEqual(meta.sent['feat/99-my-feature-nav-bar'].prTitle, '5: Nav Bar');
 
         // Event log
         const ev = meta.eventLog[meta.eventLog.length - 1];

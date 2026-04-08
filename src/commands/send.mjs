@@ -142,7 +142,16 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   const branchName = `feat/${item.wi}-${slug}`;
 
   // 3. Generate PR title
-  const prTitle = `TP-${tpIndex}: ${vpr.title}`;
+  const prefix = provider?.config?.prefix;
+  const useIndex = provider?.config?.index !== false;
+  let prTitle;
+  if (!useIndex) {
+    prTitle = vpr.title;
+  } else if (prefix) {
+    prTitle = `${prefix}-${tpIndex}: ${vpr.title}`;
+  } else {
+    prTitle = `${tpIndex}: ${vpr.title}`;
+  }
 
   // 4. PR body
   const prBody = vpr.output || vpr.story || '';
