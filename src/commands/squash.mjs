@@ -13,6 +13,18 @@ function jjSquash(changeId) {
   }).trim();
 }
 
+/** Bulk squash multiple commits into a target in one jj operation. */
+function jjSquashBulk(fromIds, intoId, message) {
+  const fromExpr = fromIds.join(' | ');
+  const msgFlag = message ? ` -m ${JSON.stringify(message)}` : '';
+  return execSync(`jj squash --from "${fromExpr}" --into ${intoId}${msgFlag}`, {
+    encoding: 'utf-8',
+    shell: '/bin/bash',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, JJ_EDITOR: 'true' },
+  }).trim();
+}
+
 /**
  * Analyze commits in a VPR and group adjacent commits that touch the same files.
  * Returns a list of { action: 'squash'|'keep', commits: [...] } groups.
