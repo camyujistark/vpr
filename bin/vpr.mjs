@@ -63,6 +63,12 @@ function printChecks(checks) {
 const HELP = `
 VPR v2 — Virtual Pull Request Manager
 
+  Setup:
+    vpr init                            Initialize VPR in current repo
+    vpr init --provider azure-devops    With provider config
+      --org <url> --project <name>
+      --repo <name> --wiType <type>
+
   Items:
     vpr ticket new "title"          Create item + work item
     vpr ticket new 17065            Attach to existing work item
