@@ -4,6 +4,7 @@
 
 import { execSync } from 'child_process';
 import { BaseProvider } from './base.mjs';
+import { getBaseBranch } from '../core/jj.mjs';
 
 function az(cmd) {
   return JSON.parse(
@@ -71,14 +72,30 @@ export class AzureDevOpsProvider extends BaseProvider {
 
   getLatestPRIndex() {
     try {
-      const result = az(
-        `repos pr list --repository "${this.repo}" --top 1` +
-        ` --project "${this.project}" --organization "${this.org}"`
-      );
-      if (result.length === 0) return 0;
-      // Extract TP-XX from the latest PR title
-      const match = result[0].title?.match(new RegExp(`${this.config.prefix}-(\\d+)`));
-      return match ? parseInt(match[1]) : 0;
+      const prs = this._listActivePRs(5);
+      if (prs.length === 0) return 0;
+      // Find the highest TP-XX from recent PR titles
+      let max = 0;
+      for (const pr of prs) {
+        const match = pr.title?.match(new RegExp(`${this.config.prefix}-(\\d+)`));
+        if (match) max = Math.max(max, parseInt(match[1]));
+      }
+      return max;
     } catch { return 0; }
+  }
+
+  getChainTop() {
+    try {
+      const prs = this._listActivePRs(1);
+      if (prs.length === 0) return getBaseBranch() ?? 'main';
+      return prs[0].sourceRefName?.replace('refs/heads/', '') || getBaseBranch() || 'main';
+    } catch { return getBaseBranch() ?? 'main'; }
+  }
+
+  _listActivePRs(top = 5) {
+    return az(
+      `repos pr list --repository "${this.repo}" --status active --top ${top}` +
+      ` --project "${this.project}" --organization "${this.org}"`
+    );
   }
 }

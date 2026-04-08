@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { jj, jjSafe, getConflicts } from '../core/jj.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState } from '../core/state.mjs';
@@ -84,13 +85,24 @@ export async function sendChecks(query) {
  *   targetBranch: string
  * }>}
  */
-export async function send(query, { provider = null, dryRun = false, tpIndex = 1, targetBranch = 'main' } = {}) {
+export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch } = {}) {
   const meta = await loadMeta();
   const found = findVpr(meta, query);
   if (!found) throw new Error(`VPR not found: ${query}`);
 
   const { itemName, bookmark, vpr } = found;
   const item = meta.items[itemName];
+
+  // Auto-detect chain top and TP-index from provider if not explicitly set
+  if (provider && targetBranch === undefined) {
+    targetBranch = provider.getChainTop?.() ?? 'main';
+  }
+  if (provider && tpIndex === undefined) {
+    tpIndex = (provider.getLatestPRIndex?.() ?? 0) + 1;
+  }
+  const { getBaseBranch } = await import('../core/jj.mjs');
+  targetBranch = targetBranch ?? getBaseBranch() ?? 'main';
+  tpIndex = tpIndex ?? 1;
 
   // 1. Pre-flight checks — block on story or conflicts failures
   const checks = await sendChecks(query);
@@ -102,6 +114,27 @@ export async function send(query, { provider = null, dryRun = false, tpIndex = 1
   }
   if (!conflictsCheck.pass) {
     throw new Error(`Send blocked: ${conflictsCheck.message}`);
+  }
+
+  // 1b. Auto-squash: if the VPR has multiple commits, squash non-bookmark
+  //     commits into the bookmark commit so the PR has one clean commit.
+  const state = await buildState();
+  const stateItem = state.items.find(i => i.name === itemName);
+  const stateVpr = stateItem?.vprs.find(v => v.bookmark === bookmark);
+  const commits = stateVpr?.commits ?? [];
+
+  if (commits.length > 1 && !dryRun) {
+    const bookmarkCommit = commits[commits.length - 1]; // bookmark is always last (newest)
+    const toSquash = commits.slice(0, -1).map(c => c.changeId);
+    const fromExpr = toSquash.join(' | ');
+    try {
+      execSync(
+        `jj squash --from "${fromExpr}" --into ${bookmarkCommit.changeId} -m ${JSON.stringify(vpr.title)}`,
+        { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, JJ_EDITOR: 'true' } }
+      );
+    } catch (err) {
+      throw new Error(`Auto-squash failed: ${err.message}`);
+    }
   }
 
   // 2. Generate branch name: feat/{wi}-{slug}

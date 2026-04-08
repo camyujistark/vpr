@@ -3,6 +3,8 @@
  * Each provider implements these methods.
  */
 
+import { getBaseBranch } from '../core/jj.mjs';
+
 export class BaseProvider {
   constructor(config) {
     this.config = config;
@@ -31,6 +33,11 @@ createPR(sourceBranch, targetBranch, title, body, workItemId) {
   /** Get the latest PR index (for sequential numbering) */
 getLatestPRIndex() {
     return 0;
+  }
+
+  /** Get the chain top — source branch of the latest active PR */
+  getChainTop() {
+    return getBaseBranch() ?? 'main';
   }
 
   /** Provider display name */
