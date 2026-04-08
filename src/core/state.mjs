@@ -21,11 +21,11 @@ function parseLine(line) {
 
   // bookmarksRaw may be empty string, space-separated, or contain remote suffixes like "name@remote"
   // We only want the local bookmark names (no @suffix) that match VPR bookmark keys.
-  const bookmarks = bookmarksRaw
-    ? bookmarksRaw.split(' ').map(b => b.trim()).filter(b => b && !b.includes('@'))
-    : [];
+  const allBookmarks = bookmarksRaw ? bookmarksRaw.split(' ').map(b => b.trim()).filter(Boolean) : [];
+  const bookmarks = allBookmarks.filter(b => !b.includes('@'));
+  const hasRemote = allBookmarks.some(b => b.includes('@'));
 
-  return { changeId, sha, bookmarks, subject: subject.trim() };
+  return { changeId, sha, bookmarks, hasRemote, subject: subject.trim() };
 }
 
 /**
@@ -60,7 +60,20 @@ export async function buildState() {
     }
   }
 
-  // 3. Get conflicts
+  // 3. Find the top of the remote stack (highest remote bookmark ancestor of @)
+  //    and build the set of commits after it — only these are ungrouped candidates.
+  const remoteTop = jjSafe(
+    "log -r 'ancestors(@) & remote_bookmarks()' --no-graph --template 'commit_id.short()' -n 1"
+  );
+  const ungroupedBase = remoteTop || base;
+  const afterRemoteOutput = ungroupedBase ? jjSafe(
+    `log -r '${ungroupedBase}..@' --no-graph --template 'change_id.short() ++ "\\n"'`
+  ) : null;
+  const afterRemote = new Set(
+    afterRemoteOutput ? afterRemoteOutput.split('\n').map(s => s.trim()).filter(Boolean) : []
+  );
+
+  // 4. Get conflicts
   const conflicts = getConflicts();
 
   // 4. Load meta
@@ -70,18 +83,23 @@ export async function buildState() {
   const sent = meta.sent ?? {};
   const eventLog = meta.eventLog ?? [];
 
-  // 5. Build a lookup: bookmark name → { itemName, vprBookmark }
-  //    so we can claim commits efficiently.
+  // 5. Build lookups: bookmark → item, and changeId → vprBookmark (from claims)
   /** @type {Map<string, { itemName: string, vprBookmark: string }>} */
   const bookmarkIndex = new Map();
+  /** @type {Map<string, string>} changeId → vprBookmark */
+  const claimsIndex = new Map();
   for (const [itemName, itemData] of Object.entries(metaItems)) {
-    for (const vprBookmark of Object.keys(itemData.vprs ?? {})) {
+    for (const [vprBookmark, vprMeta] of Object.entries(itemData.vprs ?? {})) {
       bookmarkIndex.set(vprBookmark, { itemName, vprBookmark });
+      for (const changeId of (vprMeta.claims ?? [])) {
+        claimsIndex.set(changeId, vprBookmark);
+      }
     }
   }
 
   // 6. Partition commits into: claimed (by VPR bookmark), held, ungrouped
-  //    vprCommits: Map<vprBookmark, rawCommit[]>
+  //    Commits are oldest-first. A VPR bookmark on commit N claims all unclaimed
+  //    commits between the previous bookmark and N (inclusive).
   /** @type {Map<string, Array>} */
   const vprCommits = new Map();
   for (const vprBookmark of bookmarkIndex.keys()) {
@@ -90,6 +108,10 @@ export async function buildState() {
 
   const ungrouped = [];
   const holdCommits = [];
+  // Pending commits waiting for the next VPR bookmark to claim them.
+  // In a linear chain, all commits between two consecutive bookmarks belong
+  // to the later bookmark's VPR.
+  let pending = [];
 
   for (const commit of rawCommits) {
     // Check hold first
@@ -98,17 +120,40 @@ export async function buildState() {
       continue;
     }
 
-    // Check if any of this commit's bookmarks claim it for a VPR
-    let claimed = false;
-    for (const bm of commit.bookmarks) {
-      if (vprCommits.has(bm)) {
-        vprCommits.get(bm).push(commit);
-        claimed = true;
-        break; // a commit is claimed by the first matching VPR bookmark
+    // Check explicit claims first (user-assigned), then bookmark matches
+    let claimedBookmark = null;
+    if (claimsIndex.has(commit.changeId)) {
+      claimedBookmark = claimsIndex.get(commit.changeId);
+    }
+    if (!claimedBookmark) {
+      for (const bm of commit.bookmarks) {
+        if (bookmarkIndex.has(bm)) {
+          claimedBookmark = bm;
+          break;
+        }
       }
     }
 
-    if (!claimed) {
+    if (claimedBookmark) {
+      // This commit has a VPR bookmark — claim it plus pending commits
+      // that are after the remote top (not already pushed)
+      for (const p of pending) {
+        if (afterRemote.has(p.changeId)) {
+          vprCommits.get(claimedBookmark).push(p);
+        }
+      }
+      pending = [];
+      vprCommits.get(claimedBookmark).push(commit);
+    } else {
+      // No bookmark — accumulate as pending for the next bookmark to claim
+      pending.push(commit);
+    }
+  }
+
+  // Any remaining pending commits after the last bookmark are ungrouped
+  // (only those after the remote tip)
+  for (const commit of pending) {
+    if (afterRemote.has(commit.changeId)) {
       ungrouped.push(commit);
     }
   }
@@ -132,6 +177,7 @@ export async function buildState() {
         output: vprMeta.output ?? null,
         commits,
         sent: Object.prototype.hasOwnProperty.call(sent, vprBookmark),
+        held: Boolean(vprMeta.held),
         conflict: hasConflict,
       };
     });

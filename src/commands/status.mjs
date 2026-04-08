@@ -71,10 +71,10 @@ export async function status() {
     console.log();
   }
 
-  // Ungrouped commits
+  // Ungrouped commits (newest first for easy access)
   if (state.ungrouped.length > 0) {
     console.log(bold(yellow('ungrouped')));
-    for (const commit of state.ungrouped) {
+    for (const commit of [...state.ungrouped].reverse()) {
       console.log(`  ${gray(commit.changeId)}  ${commit.subject}`);
     }
     console.log();
