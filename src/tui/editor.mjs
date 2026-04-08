@@ -110,16 +110,16 @@ export function parseBulkEditContent(content, state) {
   };
 
   for (const raw of content.split('\n')) {
-    // Skip comment lines
-    if (raw.startsWith('#')) continue;
-
-    // VPR header: ## <title>
+    // VPR header: ## <title> — must check before single # skip
     if (raw.startsWith('## ')) {
       flush();
       currentVprIndex++;
       section = null;
       continue;
     }
+
+    // Skip comment lines (single # — checked after ## to not swallow VPR headers)
+    if (raw.startsWith('#')) continue;
 
     // Section markers
     if (raw === '--- Title ---') { flush(); section = 'title'; continue; }
@@ -186,9 +186,10 @@ export function parseReorderContent(content) {
  * Builds content for the `i` key — rebase-i style list of commits.
  *
  * @param {Array<{ changeId: string, subject: string, files: string[] }>} vprCommits
+ * @param {Array<{ changeId: string, subject: string, files: string[] }>} [ungroupedCommits]
  * @returns {string}
  */
-export function buildInteractiveContent(vprCommits) {
+export function buildInteractiveContent(vprCommits, ungroupedCommits) {
   const lines = [
     '# Interactive rebase',
     '# Commands: pick, squash, drop, reword "new message"',
@@ -201,6 +202,18 @@ export function buildInteractiveContent(vprCommits) {
       : '';
     const suffix = filesSummary ? `        ${filesSummary}` : '';
     lines.push(`pick ${commit.changeId} ${commit.subject}${suffix}`);
+  }
+
+  if (ungroupedCommits && ungroupedCommits.length > 0) {
+    lines.push('');
+    lines.push('# ─── Ungrouped (uncomment to include) ───');
+    for (const commit of ungroupedCommits) {
+      const filesSummary = commit.files && commit.files.length
+        ? `(${commit.files.slice(0, 3).join(', ')}${commit.files.length > 3 ? ', …' : ''})`
+        : '';
+      const suffix = filesSummary ? `        ${filesSummary}` : '';
+      lines.push(`# pick ${commit.changeId} ${commit.subject}${suffix}`);
+    }
   }
 
   return lines.join('\n');
