@@ -65,25 +65,36 @@ function renderItem(item) {
 
 function renderVpr(vpr) {
   let icon;
-  if (vpr.sent) icon = `${GREEN}✓${RESET}`;
+  if (vpr.held) icon = `${YELLOW}⏸${RESET}`;
+  else if (vpr.sent) icon = `${GREEN}✓${RESET}`;
   else if (vpr.conflict) icon = `${RED}!${RESET}`;
   else icon = `${DIM}·${RESET}`;
   const count = vpr.commitCount > 0 ? `${DIM} (${vpr.commitCount})${RESET}` : '';
-  return `  ${icon} ${vpr.title || vpr.bookmark}${count}`;
+  const label = vpr.held ? `${DIM}${vpr.title || vpr.bookmark}${RESET}` : (vpr.title || vpr.bookmark);
+  return `  ${icon} ${label}${count}`;
 }
 
-function renderCommit(commit) {
+function renderCommit(commit, picked) {
+  const isPicked = picked && commit.changeId?.startsWith(picked.slice(0, 12));
+  const prefix = isPicked ? `${MAGENTA}● ` : '      ';
   if (commit.conflict) {
-    return `      ${RED}! ${commit.changeId.slice(0, 8)} ${commit.subject}${RESET}`;
+    return `${prefix}${RED}! ${commit.changeId.slice(0, 8)} ${commit.subject}${RESET}`;
   }
-  return `      ${DIM}${commit.changeId.slice(0, 8)}${RESET} ${commit.subject}`;
+  if (isPicked) {
+    return `${prefix}${MAGENTA}${commit.changeId.slice(0, 8)} ${commit.subject}${RESET}`;
+  }
+  return `${prefix}${DIM}${commit.changeId.slice(0, 8)}${RESET} ${commit.subject}`;
 }
 
 function renderUngroupedHeader(item) {
   return `${YELLOW}  Ungrouped (${item.count})${RESET}`;
 }
 
-function renderUngrouped(item) {
+function renderUngrouped(item, picked) {
+  const isPicked = picked && item.changeId?.startsWith(picked.slice(0, 12));
+  if (isPicked) {
+    return `  ${MAGENTA}● ${item.changeId.slice(0, 8)} ${item.subject}${RESET}`;
+  }
   return `    ${DIM}${item.changeId.slice(0, 8)}${RESET} ${item.subject}`;
 }
 
@@ -96,13 +107,13 @@ function renderHold(item) {
 }
 
 /** Render a single tree row (without selection highlight). */
-function renderRow(item) {
+function renderRow(item, picked) {
   switch (item.type) {
     case 'item': return renderItem(item);
     case 'vpr': return renderVpr(item);
-    case 'commit': return renderCommit(item);
+    case 'commit': return renderCommit(item, picked);
     case 'ungrouped-header': return renderUngroupedHeader(item);
-    case 'ungrouped': return renderUngrouped(item);
+    case 'ungrouped': return renderUngrouped(item, picked);
     case 'hold-header': return renderHoldHeader(item);
     case 'hold': return renderHold(item);
     default: return '';
@@ -128,13 +139,14 @@ function helpLine(cursorItem, mode) {
 
   switch (cursorItem.type) {
     case 'item':
-      return `${DIM}j/k nav  J/K scroll  v files  n new item  a add vpr  E edit all  O reorder  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  E edit all  O reorder  q quit${RESET}`;
     case 'vpr':
-      return `${DIM}j/k nav  J/K scroll  v files  s story  E edit all  P send  d dissolve  i interactive  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  s story  g generate  H hold  P send  d dissolve  i interactive  q quit${RESET}`;
     case 'commit':
-      return `${DIM}j/k nav  J/K scroll  v files  H hold  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  space move  H hold  q quit${RESET}`;
     case 'ungrouped-header':
     case 'ungrouped':
+      return `${DIM}j/k nav  r rename  space move  H hold/unhold  q quit${RESET}`;
     case 'hold-header':
     case 'hold':
       return `${DIM}j/k nav  H hold/unhold  q quit${RESET}`;
@@ -156,8 +168,9 @@ function helpLine(cursorItem, mode) {
  * @param {string[]} rightContent — lines for the right pane
  * @param {string} mode         — current mode name
  * @param {string} message      — footer message (overrides help if non-empty)
+ * @param {string|null} picked  — changeId of commit being moved
  */
-export function render(state, treeItems, cursor, scrollStart, diffScroll, rightContent, mode, message) {
+export function render(state, treeItems, cursor, scrollStart, diffScroll, rightContent, mode, message, picked) {
   const cols = process.stdout.columns || 120;
   const rows = process.stdout.rows || 40;
 
@@ -173,13 +186,14 @@ export function render(state, treeItems, cursor, scrollStart, diffScroll, rightC
     (n, it) => n + it.vprs.reduce((m, v) => m + v.commits.length, 0),
     0,
   );
-  const header = `${BOLD}VPR${RESET}  ${itemCount} item${itemCount !== 1 ? 's' : ''}, ${vprCount} vpr${vprCount !== 1 ? 's' : ''}, ${commitCount} commit${commitCount !== 1 ? 's' : ''}`;
+  let header = `${BOLD}VPR${RESET}  ${itemCount} item${itemCount !== 1 ? 's' : ''}, ${vprCount} vpr${vprCount !== 1 ? 's' : ''}, ${commitCount} commit${commitCount !== 1 ? 's' : ''}`;
+  if (picked) header += `  ${MAGENTA}[MOVING: ${picked.slice(0, 8)}]${RESET}`;
 
   // ─── Build left pane lines ───────────────────────────────────────────
   const leftLines = [];
   const visibleEnd = scrollStart + bodyRows;
   for (let i = scrollStart; i < Math.min(visibleEnd, treeItems.length); i++) {
-    let line = renderRow(treeItems[i]);
+    let line = renderRow(treeItems[i], picked);
     if (i === cursor) {
       line = `${INVERT}${stripAnsi(line)}${RESET}`;
       line = fitWidth(line, leftWidth);

@@ -12,18 +12,23 @@
 export function buildTree(state) {
   const rows = [];
 
-  // Items → VPRs → Commits
+  // Items → active VPRs → Commits (held VPRs collected for bottom)
+  const heldVprs = [];
+
   for (const item of state.items) {
+    const activeVprs = item.vprs.filter(v => !v.held);
+    const itemHeldVprs = item.vprs.filter(v => v.held);
+
     rows.push({
       type: 'item',
       name: item.name,
       wi: item.wi,
       wiTitle: item.wiTitle,
-      vprCount: item.vprs.length,
+      vprCount: activeVprs.length,
       collapsed: false,
     });
 
-    for (const vpr of item.vprs) {
+    for (const vpr of activeVprs) {
       rows.push({
         type: 'vpr',
         bookmark: vpr.bookmark,
@@ -31,6 +36,7 @@ export function buildTree(state) {
         story: vpr.story,
         output: vpr.output,
         sent: vpr.sent,
+        held: false,
         conflict: vpr.conflict,
         commitCount: vpr.commits.length,
         itemName: item.name,
@@ -48,12 +54,16 @@ export function buildTree(state) {
         });
       }
     }
+
+    for (const vpr of itemHeldVprs) {
+      heldVprs.push({ vpr, itemName: item.name, wiTitle: item.wiTitle });
+    }
   }
 
   // Ungrouped
   if (state.ungrouped.length > 0) {
     rows.push({ type: 'ungrouped-header', count: state.ungrouped.length });
-    for (const commit of state.ungrouped) {
+    for (const commit of [...state.ungrouped].reverse()) {
       rows.push({
         type: 'ungrouped',
         changeId: commit.changeId,
@@ -63,8 +73,34 @@ export function buildTree(state) {
     }
   }
 
-  // Hold
-  if (state.hold.length > 0) {
+  // Held VPRs
+  if (heldVprs.length > 0) {
+    rows.push({ type: 'hold-header', count: heldVprs.length + state.hold.length });
+    for (const { vpr, itemName } of heldVprs) {
+      rows.push({
+        type: 'vpr',
+        bookmark: vpr.bookmark,
+        title: vpr.title,
+        story: vpr.story,
+        output: vpr.output,
+        sent: vpr.sent,
+        held: true,
+        conflict: vpr.conflict,
+        commitCount: vpr.commits.length,
+        itemName,
+      });
+    }
+
+    // Held commits
+    for (const commit of state.hold) {
+      rows.push({
+        type: 'hold',
+        changeId: commit.changeId,
+        sha: commit.sha,
+        subject: commit.subject,
+      });
+    }
+  } else if (state.hold.length > 0) {
     rows.push({ type: 'hold-header', count: state.hold.length });
     for (const commit of state.hold) {
       rows.push({
