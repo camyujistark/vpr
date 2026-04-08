@@ -12,6 +12,7 @@ import { editVpr } from '../../commands/edit.mjs';
 import { hold, unhold } from '../../commands/hold.mjs';
 import { removeVpr } from '../../commands/remove.mjs';
 import { sendChecks, send } from '../../commands/send.mjs';
+import { generate } from '../../commands/generate.mjs';
 import {
   openEditor,
   buildBulkEditContent,
@@ -32,27 +33,54 @@ import { SHOW_CURSOR, HIDE_CURSOR } from '../render.mjs';
  */
 function prompt(question) {
   return new Promise((resolve) => {
-    // Show cursor, move to bottom
     process.stdout.write(SHOW_CURSOR);
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    // Move cursor to bottom line and print question
+    const rows = process.stdout.rows || 40;
+    process.stdout.write(`\x1b[${rows};1H\x1b[2K${question}`);
 
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+    let buf = '';
 
-    rl.question(question, (answer) => {
-      rl.close();
-      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    const onData = (data) => {
+      for (const byte of data) {
+        // Escape → cancel
+        if (byte === 0x1b) {
+          cleanup(null);
+          return;
+        }
+        // Ctrl-C → cancel
+        if (byte === 0x03) {
+          cleanup(null);
+          return;
+        }
+        // Enter → submit
+        if (byte === 0x0d || byte === 0x0a) {
+          cleanup(buf.trim() || null);
+          return;
+        }
+        // Backspace
+        if (byte === 0x7f || byte === 0x08) {
+          if (buf.length > 0) {
+            buf = buf.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+          continue;
+        }
+        // Printable chars
+        if (byte >= 0x20 && byte < 0x7f) {
+          buf += String.fromCharCode(byte);
+          process.stdout.write(String.fromCharCode(byte));
+        }
+      }
+    };
+
+    const cleanup = (value) => {
+      process.stdin.removeListener('data', onData);
       process.stdout.write(HIDE_CURSOR);
-      const trimmed = answer?.trim();
-      resolve(trimmed || null);
-    });
+      // Delay resolve so any queued keypress events drain while busy is still true
+      setTimeout(() => resolve(value), 20);
+    };
 
-    rl.on('close', () => {
-      if (process.stdin.isTTY) process.stdin.setRawMode(true);
-      process.stdout.write(HIDE_CURSOR);
-    });
+    process.stdin.on('data', onData);
   });
 }
 
@@ -90,6 +118,7 @@ export async function handleNormalKey(str, key, ctx) {
     diffScroll, setDiffScroll,
     rightView, setRightView,
     message, setMessage,
+    picked, setPicked,
     reload, render: renderFn,
     config,
   } = ctx;
@@ -137,6 +166,57 @@ export async function handleNormalKey(str, key, ctx) {
     setDiffScroll(0);
     renderFn();
     return true;
+  }
+
+  // ─── Rename ──────────────────────────────────────────────────────────
+
+  // r — rename item or VPR title
+  if (str === 'r') {
+    if (current?.type === 'item') {
+      const title = await prompt(`Rename item [${current.wiTitle}]: `);
+      if (title) {
+        try {
+          const { ticketEdit } = await import('../../commands/ticket.mjs');
+          await ticketEdit(current.name, { wiTitle: title });
+          setMessage('Item renamed');
+        } catch (err) {
+          setMessage(`Error: ${err.message}`);
+        }
+        await reload();
+      }
+      renderFn();
+      return true;
+    }
+
+    if (current?.type === 'vpr') {
+      const title = await prompt(`Rename VPR [${current.title}]: `);
+      if (title) {
+        try {
+          await editVpr(current.bookmark, { title });
+          setMessage('VPR renamed');
+        } catch (err) {
+          setMessage(`Error: ${err.message}`);
+        }
+        await reload();
+      }
+      renderFn();
+      return true;
+    }
+
+    if (current?.type === 'commit' || current?.type === 'ungrouped') {
+      const desc = await prompt(`Describe [${current.subject}]: `);
+      if (desc) {
+        try {
+          jj(`describe ${current.changeId} -m "${desc.replace(/"/g, '\\"')}"`);
+          setMessage('Described');
+        } catch (err) {
+          setMessage(`Error: ${err.message}`);
+        }
+        await reload();
+      }
+      renderFn();
+      return true;
+    }
   }
 
   // ─── Item actions ────────────────────────────────────────────────────
@@ -204,6 +284,21 @@ export async function handleNormalKey(str, key, ctx) {
     return true;
   }
 
+  // g — generate output for VPR
+  if (str === 'g' && current?.type === 'vpr') {
+    setMessage('Generating...');
+    renderFn();
+    try {
+      const result = await generate(current.bookmark);
+      setMessage(`Generated output for ${current.bookmark}`);
+    } catch (err) {
+      setMessage(`Generate failed: ${err.message}`);
+    }
+    await reload();
+    renderFn();
+    return true;
+  }
+
   // P — send VPR
   if (str === 'P' && current?.type === 'vpr') {
     try {
@@ -267,24 +362,44 @@ export async function handleNormalKey(str, key, ctx) {
     return true;
   }
 
-  // i — interactive rebase (on VPR)
-  if (str === 'i' && current?.type === 'vpr') {
-    // Gather commits with files for this VPR
-    const item = state.items.find(it => it.name === current.itemName);
-    const vpr = item?.vprs.find(v => v.bookmark === current.bookmark);
-    if (!vpr || vpr.commits.length === 0) {
+  // i — interactive rebase (on VPR or ungrouped header)
+  if (str === 'i' && (current?.type === 'vpr' || current?.type === 'ungrouped-header' || current?.type === 'ungrouped')) {
+    let commits;
+    let ungroupedForEditor = null;
+
+    if (current.type === 'vpr') {
+      const item = state.items.find(it => it.name === current.itemName);
+      const vpr = item?.vprs.find(v => v.bookmark === current.bookmark);
+      commits = vpr?.commits ?? [];
+      // Show ungrouped commits as commented-out candidates
+      if (state.ungrouped.length > 0) {
+        ungroupedForEditor = state.ungrouped.map(c => ({
+          changeId: c.changeId,
+          subject: c.subject,
+          files: getFiles(c.changeId),
+        }));
+      }
+    } else {
+      commits = state.ungrouped;
+    }
+
+    if (commits.length === 0 && (!ungroupedForEditor || ungroupedForEditor.length === 0)) {
       setMessage('No commits to rebase');
       renderFn();
       return true;
     }
 
-    const commitsWithFiles = vpr.commits.map(c => ({
+    const commitsWithFiles = commits.map(c => ({
       changeId: c.changeId,
       subject: c.subject,
       files: getFiles(c.changeId),
     }));
 
-    const content = buildInteractiveContent(commitsWithFiles);
+    // Track ungrouped change IDs so we know which picks are "add to VPR"
+    const ungroupedIds = new Set(state.ungrouped.map(c => c.changeId));
+    const vprBookmark = current.type === 'vpr' ? current.bookmark : null;
+
+    const content = buildInteractiveContent(commitsWithFiles, ungroupedForEditor);
     openEditor(content, async (result) => {
       const actions = parseInteractiveContent(result);
       let applied = 0;
@@ -307,11 +422,31 @@ export async function handleNormalKey(str, key, ctx) {
               }
               break;
             case 'pick':
-              // no-op — keep as-is
+              // no-op for commits already in this VPR
               break;
           }
         } catch (err) {
           setMessage(`Error on ${action.changeId}: ${err.message}`);
+        }
+      }
+
+      // Claim any ungrouped commits that were picked into this VPR
+      if (vprBookmark) {
+        const toClaim = actions
+          .filter(a => a.action === 'pick' && ungroupedIds.has(a.changeId))
+          .map(a => a.changeId);
+        if (toClaim.length > 0) {
+          const meta = await loadMeta();
+          // Find the VPR in meta and add claims
+          for (const [, itemData] of Object.entries(meta.items)) {
+            if (itemData.vprs?.[vprBookmark]) {
+              const vpr = itemData.vprs[vprBookmark];
+              vpr.claims = [...new Set([...(vpr.claims ?? []), ...toClaim])];
+              break;
+            }
+          }
+          await saveMeta(meta);
+          applied += toClaim.length;
         }
       }
 
@@ -382,6 +517,23 @@ export async function handleNormalKey(str, key, ctx) {
 
   // H — toggle hold/unhold
   if (str === 'H') {
+    if (current?.type === 'vpr') {
+      try {
+        const meta = await loadMeta();
+        const vprMeta = meta.items[current.itemName]?.vprs[current.bookmark];
+        if (vprMeta) {
+          vprMeta.held = !vprMeta.held;
+          await saveMeta(meta);
+          setMessage(vprMeta.held ? `Held ${current.bookmark}` : `Unheld ${current.bookmark}`);
+        }
+      } catch (err) {
+        setMessage(`Error: ${err.message}`);
+      }
+      await reload();
+      renderFn();
+      return true;
+    }
+
     if (current?.type === 'commit') {
       try {
         await hold(current.changeId);
@@ -503,6 +655,79 @@ export async function handleNormalKey(str, key, ctx) {
       await reload();
     }
     renderFn();
+    return true;
+  }
+
+  // ─── Space — pick/drop commits ───────────────────────────────────────
+
+  if (name === 'space') {
+    if (!picked) {
+      // Pick up a commit
+      if (current?.type === 'commit' || current?.type === 'ungrouped') {
+        setPicked(current.changeId);
+        setMessage(`Picked ${current.changeId.slice(0, 8)} — navigate to a VPR and press space to drop`);
+      } else {
+        setMessage('Select a commit to move');
+      }
+    } else {
+      // Drop: assign to the target VPR
+      if (current?.type === 'vpr') {
+        // Claim this commit into the VPR via meta.json
+        // First remove from any existing VPR claims, then add to target
+        try {
+          const meta = await loadMeta();
+          for (const [, itemData] of Object.entries(meta.items)) {
+            for (const [, vprMeta] of Object.entries(itemData.vprs ?? {})) {
+              if (vprMeta.claims) {
+                vprMeta.claims = vprMeta.claims.filter(c => c !== picked);
+              }
+            }
+          }
+          for (const [, itemData] of Object.entries(meta.items)) {
+            if (itemData.vprs?.[current.bookmark]) {
+              const vpr = itemData.vprs[current.bookmark];
+              vpr.claims = [...(vpr.claims ?? []), picked];
+              break;
+            }
+          }
+          await saveMeta(meta);
+          setMessage(`Moved ${picked.slice(0, 8)} → ${current.title || current.bookmark}`);
+        } catch (err) {
+          setMessage(`Error: ${err.message}`);
+        }
+        setPicked(null);
+        await reload();
+      } else if (current?.type === 'commit') {
+        // Drop after a specific commit in a VPR — rebase
+        if (picked === current.changeId) {
+          setMessage('Same commit');
+          setPicked(null);
+        } else {
+          try {
+            jj(`rebase -r ${picked} -A ${current.changeId}`);
+            setMessage(`Moved ${picked.slice(0, 8)} after ${current.changeId.slice(0, 8)}`);
+          } catch (err) {
+            setMessage(`Rebase failed: ${err.message}`);
+          }
+          setPicked(null);
+          await reload();
+        }
+      } else {
+        setMessage('Navigate to a VPR or commit to drop');
+      }
+    }
+    renderFn();
+    return true;
+  }
+
+  // ─── Escape — cancel pick ──────────────────────────────────────────
+
+  if (name === 'escape') {
+    if (picked) {
+      setPicked(null);
+      setMessage('Cancelled');
+      renderFn();
+    }
     return true;
   }
 

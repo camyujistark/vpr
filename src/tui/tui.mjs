@@ -116,6 +116,8 @@ export async function startTui() {
   let rightView = 'diff';
   let message = '';
   let mode = 'normal';
+  let busy = false; // true while a prompt or async action is in progress
+  let picked = null; // changeId of commit being moved (space-to-move)
 
   // ─── State builders ────────────────────────────────────────────────
 
@@ -134,7 +136,7 @@ export async function startTui() {
 
     const current = treeItems[cursor] ?? null;
     const rightContent = buildRightContent(current, rightView, state);
-    render(state, treeItems, cursor, scrollStart, diffScroll, rightContent, mode, message);
+    render(state, treeItems, cursor, scrollStart, diffScroll, rightContent, mode, message, picked);
     // Clear message after render (one-shot display)
     message = '';
   }
@@ -145,6 +147,8 @@ export async function startTui() {
   function setDiffScroll(n) { diffScroll = n; }
   function setRightView(v) { rightView = v; }
   function setMessage(m) { message = m; }
+  function getPicked() { return picked; }
+  function setPicked(p) { picked = p; }
 
   // ─── Initial load ─────────────────────────────────────────────────
 
@@ -173,15 +177,23 @@ export async function startTui() {
       process.exit(0);
     }
 
+    if (busy) return;
+
     if (mode === 'normal') {
-      await handleNormalKey(str, key, {
-        state, treeItems, cursor, setCursor,
-        diffScroll, setDiffScroll,
-        rightView, setRightView,
-        message, setMessage,
-        reload, render: renderFn,
-        config,
-      });
+      busy = true;
+      try {
+        await handleNormalKey(str, key, {
+          state, treeItems, cursor, setCursor,
+          diffScroll, setDiffScroll,
+          rightView, setRightView,
+          message, setMessage,
+          picked: getPicked(), setPicked,
+          reload, render: renderFn,
+          config,
+        });
+      } finally {
+        busy = false;
+      }
     }
   });
 
