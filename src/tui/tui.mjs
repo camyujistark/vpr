@@ -3,7 +3,7 @@
  */
 
 import { buildState } from '../core/state.mjs';
-import { getDiff, getFiles } from '../core/jj.mjs';
+import { getDiff, getFiles, getVprFiles } from '../core/jj.mjs';
 import { buildTree } from './tree.mjs';
 import { render, CLEAR, HIDE_CURSOR, SHOW_CURSOR } from './render.mjs';
 import { handleNormalKey } from './modes/normal.mjs';
@@ -56,6 +56,18 @@ function buildRightContent(current, rightView, state) {
     lines.push(`Sent: ${current.sent ? 'yes' : 'no'}`);
     lines.push(`Conflict: ${current.conflict ? 'yes' : 'no'}`);
     lines.push('');
+
+    const item = state.items.find(i => i.name === current.itemName);
+    const vpr = item?.vprs.find(v => v.bookmark === current.bookmark);
+    const changeIds = vpr?.commits.map(c => c.changeId) ?? [];
+    if (changeIds.length > 0) {
+      const files = getVprFiles(changeIds);
+      if (files.length > 0) {
+        lines.push(`─── Files (${files.length}) ───`);
+        lines.push(...files);
+        lines.push('');
+      }
+    }
 
     if (current.story) {
       lines.push('─── Story ───');

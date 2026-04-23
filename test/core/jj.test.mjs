@@ -8,7 +8,7 @@ import { join } from 'node:path';
 // We need to import the module under test. Since it caches hasJj(), we import fresh each test
 // by using dynamic import with a cache-busting query string isn't supported in Node ESM.
 // Instead we test in a single suite, resetting cwd as needed.
-import { jj, jjSafe, hasJj, getBase, getBaseBranch, getConflicts, getDiff, getFiles } from '../../src/core/jj.mjs';
+import { jj, jjSafe, hasJj, getBase, getBaseBranch, getConflicts, getDiff, getFiles, mergeFileLines } from '../../src/core/jj.mjs';
 
 let tmpDir;
 
@@ -123,5 +123,74 @@ describe('jj core helpers', () => {
       assert.ok(files.length > 0, 'Expected at least one file');
       assert.ok(files.some(f => f.includes('hello.txt')), `Expected hello.txt in files: ${files}`);
     });
+  });
+});
+
+describe('mergeFileLines()', () => {
+  it('returns empty array when input is empty', () => {
+    assert.deepStrictEqual(mergeFileLines([]), []);
+    assert.deepStrictEqual(mergeFileLines([[]]), []);
+  });
+
+  it('dedupes identical lines across commits', () => {
+    const out = mergeFileLines([
+      ['M src/foo.js'],
+      ['M src/foo.js'],
+    ]);
+    assert.deepStrictEqual(out, ['M src/foo.js']);
+  });
+
+  it('promotes M to A when a later commit shows A', () => {
+    const out = mergeFileLines([
+      ['M src/foo.js'],
+      ['A src/foo.js'],
+    ]);
+    assert.deepStrictEqual(out, ['A src/foo.js']);
+  });
+
+  it('promotes M to D (D outranks M)', () => {
+    const out = mergeFileLines([
+      ['M src/foo.js'],
+      ['D src/foo.js'],
+    ]);
+    assert.deepStrictEqual(out, ['D src/foo.js']);
+  });
+
+  it('A outranks D', () => {
+    const out = mergeFileLines([
+      ['D src/foo.js'],
+      ['A src/foo.js'],
+    ]);
+    assert.deepStrictEqual(out, ['A src/foo.js']);
+  });
+
+  it('sorts paths alphabetically', () => {
+    const out = mergeFileLines([
+      ['M zeta.js', 'M alpha.js'],
+      ['M middle.js'],
+    ]);
+    assert.deepStrictEqual(out, [
+      'M alpha.js',
+      'M middle.js',
+      'M zeta.js',
+    ]);
+  });
+
+  it('keeps rename lines verbatim and does not collide with regular paths', () => {
+    const out = mergeFileLines([
+      ['R old.js -> new.js'],
+      ['M zzz.js'],
+    ]);
+    assert.deepStrictEqual(out, [
+      'R old.js -> new.js',
+      'M zzz.js',
+    ]);
+  });
+
+  it('skips blank lines and malformed entries', () => {
+    const out = mergeFileLines([
+      ['', '   ', 'M src/foo.js', 'no-status-here-but-no-space'],
+    ]);
+    assert.deepStrictEqual(out, ['M src/foo.js']);
   });
 });
