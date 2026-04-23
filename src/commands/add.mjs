@@ -45,10 +45,33 @@ export async function addVpr(title, { item } = {}) {
   const slug = slugify(title);
   const bookmark = `${item}/${slug}`;
 
+  // Collect bookmarks already claimed by any VPR in meta
+  const existingBookmarks = new Set();
+  for (const itemData of Object.values(meta.items)) {
+    for (const bm of Object.keys(itemData.vprs ?? {})) {
+      existingBookmarks.add(bm);
+    }
+  }
+
   // Determine whether @ has a description (non-empty commit) or is empty.
   // An empty working-copy commit has no description in jj.
   const desc = jjSafe('log -r @ --no-graph --template "description.first_line()"');
-  const target = desc && desc.trim().length > 0 ? '@' : '@-';
+  let target = desc && desc.trim().length > 0 ? '@' : '@-';
+
+  // If the target commit already carries a VPR bookmark, placing another
+  // bookmark on the same commit causes state.mjs to partition all pending
+  // commits to whichever bookmark jj emits first — one VPR wins, the other
+  // shows empty. Create a fresh empty commit so the new VPR gets its own
+  // anchor. The new VPR will start with zero commits, which is correct.
+  const targetBmsRaw = jjSafe(`log -r ${target} --no-graph --template 'bookmarks'`);
+  const targetBms = targetBmsRaw
+    ? targetBmsRaw.split(/\s+/).filter(Boolean).filter(b => !b.includes('@'))
+    : [];
+  const collision = targetBms.some(bm => existingBookmarks.has(bm));
+  if (collision) {
+    jj('new');
+    target = '@';
+  }
 
   jj(`bookmark set ${bookmark} -r ${target}`);
 
