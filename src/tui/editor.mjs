@@ -136,6 +136,54 @@ export function parseBulkEditContent(content, state) {
   return updates;
 }
 
+// ─── Single-VPR story + output edit ───────────────────────────────────────────
+
+/**
+ * Builds content for the `s` key — edit story and output for one VPR.
+ *
+ * @param {{ title?: string, bookmark?: string, story?: string, output?: string }} vpr
+ * @returns {string}
+ */
+export function buildStoryEditContent(vpr) {
+  const label = vpr.title || vpr.bookmark || '';
+  const lines = [
+    `# ${label}`,
+    '# Edit the story, and optionally adjust the output below it.',
+    '# Save and close to apply both.',
+    '',
+    '--- Story ---',
+    vpr.story || '',
+    '',
+    '--- Output ---',
+    vpr.output || '',
+    '',
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Parse content from buildStoryEditContent back into { story, output }.
+ *
+ * @param {string} content
+ * @returns {{ story: string, output: string }}
+ */
+export function parseStoryEditContent(content) {
+  let section = null; // 'story' | 'output'
+  const buffers = { story: [], output: [] };
+
+  for (const raw of content.split('\n')) {
+    if (raw === '--- Story ---') { section = 'story'; continue; }
+    if (raw === '--- Output ---') { section = 'output'; continue; }
+    if (raw.startsWith('#')) continue;
+    if (section) buffers[section].push(raw);
+  }
+
+  return {
+    story: buffers.story.join('\n').trim(),
+    output: buffers.output.join('\n').trim(),
+  };
+}
+
 // ─── Reorder ──────────────────────────────────────────────────────────────────
 
 /**

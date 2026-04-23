@@ -14,16 +14,20 @@ const DEFAULT_LLM_CMD = 'claude -p';
  */
 function buildPrompt(vpr, commits) {
   const commitLines = commits.map(c => `- ${c.subject}`).join('\n');
-  return [
+  const hasStory = Boolean(vpr.story && vpr.story.trim());
+  const lines = [
     'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
     '',
     `PR Title: ${vpr.title}`,
     '',
-    `Story: ${vpr.story}`,
-    '',
-    'Commits:',
-    commitLines,
-  ].join('\n');
+  ];
+  if (hasStory) {
+    lines.push(`Story: ${vpr.story}`, '');
+  } else {
+    lines.push('No story provided — infer the PR description from the title and commits below.', '');
+  }
+  lines.push('Commits:', commitLines);
+  return lines.join('\n');
 }
 
 /**
@@ -61,10 +65,6 @@ export async function generate(query, { generateCmd } = {}) {
 
   const { itemName, bookmark, vpr } = found;
 
-  if (!vpr.story || !vpr.story.trim()) {
-    throw new Error(`VPR "${bookmark}" has no story. Run \`vpr edit ${bookmark} --story "..."\` first.`);
-  }
-
   // Get commits for this VPR from state
   const state = await buildState();
   const stateItem = state.items.find(i => i.name === itemName);
@@ -97,7 +97,7 @@ export async function generate(query, { generateCmd } = {}) {
 }
 
 /**
- * Generate PR descriptions for all VPRs that have a story but no output.
+ * Generate PR descriptions for all VPRs that don't yet have output.
  *
  * @param {{ generateCmd?: string }} [opts]
  * @returns {Promise<Array<{ bookmark: string, output: string }>>}
@@ -108,7 +108,7 @@ export async function generateAll({ generateCmd } = {}) {
 
   for (const [itemName, itemData] of Object.entries(meta.items)) {
     for (const [bookmark, vpr] of Object.entries(itemData.vprs ?? {})) {
-      if (vpr.story && vpr.story.trim() && !vpr.output) {
+      if (!vpr.output) {
         try {
           const result = await generate(bookmark, { generateCmd });
           results.push(result);

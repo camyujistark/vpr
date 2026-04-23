@@ -22,6 +22,8 @@ import {
   parseReorderContent,
   buildInteractiveContent,
   parseInteractiveContent,
+  buildStoryEditContent,
+  parseStoryEditContent,
 } from '../editor.mjs';
 import { loadMeta, saveMeta } from '../../core/meta.mjs';
 import { SHOW_CURSOR, HIDE_CURSOR } from '../render.mjs';
@@ -270,11 +272,18 @@ export async function handleNormalKey(str, key, ctx) {
 
   // ─── VPR actions ─────────────────────────────────────────────────────
 
-  // s — edit story (on VPR)
+  // s — edit story (and adjust output) on VPR
   if (str === 's' && current?.type === 'vpr') {
-    openEditor(current.story || '', async (content) => {
+    const initial = buildStoryEditContent({
+      title: current.title,
+      bookmark: current.bookmark,
+      story: current.story,
+      output: current.output,
+    });
+    openEditor(initial, async (content) => {
       try {
-        await editVpr(current.bookmark, { story: content });
+        const { story, output } = parseStoryEditContent(content);
+        await editVpr(current.bookmark, { story, output });
         setMessage('Story updated');
       } catch (err) {
         setMessage(`Error: ${err.message}`);
@@ -333,7 +342,22 @@ export async function handleNormalKey(str, key, ctx) {
       const { createProvider } = await import('../../providers/index.mjs');
       const provider = createProvider(providerConfig);
 
-      const result = await send(current.bookmark, { provider });
+      let result;
+      try {
+        result = await send(current.bookmark, { provider });
+      } catch (err) {
+        if (err.code === 'BRANCH_COLLISION') {
+          const yes2 = await confirm(`Branch "${err.branchName}" already exists. Delete it and continue?`);
+          if (!yes2) {
+            setMessage('Send cancelled');
+            renderFn();
+            return true;
+          }
+          result = await send(current.bookmark, { provider, force: true });
+        } else {
+          throw err;
+        }
+      }
       setMessage(`Sent → ${result.branchName}`);
     } catch (err) {
       setMessage(`Error: ${err.message}`);

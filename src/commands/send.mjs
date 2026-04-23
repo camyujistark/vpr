@@ -1,5 +1,4 @@
-import { execSync } from 'node:child_process';
-import { jj, jjSafe, getConflicts } from '../core/jj.mjs';
+import { jj, jjSafe } from '../core/jj.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
@@ -85,7 +84,7 @@ export async function sendChecks(query) {
  *   targetBranch: string
  * }>}
  */
-export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch } = {}) {
+export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false } = {}) {
   const meta = await loadMeta();
   const found = findVpr(meta, query);
   if (!found) throw new Error(`VPR not found: ${query}`);
@@ -116,27 +115,6 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     throw new Error(`Send blocked: ${conflictsCheck.message}`);
   }
 
-  // 1b. Auto-squash: if the VPR has multiple commits, squash non-bookmark
-  //     commits into the bookmark commit so the PR has one clean commit.
-  const state = await buildState();
-  const stateItem = state.items.find(i => i.name === itemName);
-  const stateVpr = stateItem?.vprs.find(v => v.bookmark === bookmark);
-  const commits = stateVpr?.commits ?? [];
-
-  if (commits.length > 1 && !dryRun) {
-    const bookmarkCommit = commits[commits.length - 1]; // bookmark is always last (newest)
-    const toSquash = commits.slice(0, -1).map(c => c.changeId);
-    const fromExpr = toSquash.join(' | ');
-    try {
-      execSync(
-        `jj squash --from "${fromExpr}" --into ${bookmarkCommit.changeId} -m ${JSON.stringify(vpr.title)}`,
-        { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, JJ_EDITOR: 'true' } }
-      );
-    } catch (err) {
-      throw new Error(`Auto-squash failed: ${err.message}`);
-    }
-  }
-
   // 2. Generate branch name: feat/{wi}-{slug}
   const slug = bookmark.replace(/\//g, '-');
   const branchName = `feat/${item.wi}-${slug}`;
@@ -159,6 +137,23 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   // 5. Dry run — return plan without executing
   if (dryRun) {
     return { branchName, prTitle, prId: null, targetBranch, prBody, dryRun: true };
+  }
+
+  // 5b. Check for a stale bookmark at the target branch name. If one exists,
+  //     the rename would fail and the push would be ambiguous. Caller must
+  //     re-run with { force: true } to delete it.
+  if (branchName !== bookmark) {
+    const existing = jjSafe(`bookmark list ${branchName} --template 'self.name() ++ "\\n"'`);
+    const hasCollision = Boolean(existing && existing.trim());
+    if (hasCollision) {
+      if (!force) {
+        const err = new Error(`Branch "${branchName}" already exists as a jj bookmark. Delete it and retry, or run with --force.`);
+        err.code = 'BRANCH_COLLISION';
+        err.branchName = branchName;
+        throw err;
+      }
+      jjSafe(`bookmark delete ${branchName}`);
+    }
   }
 
   // 6. Rename jj bookmark: try rename, fallback to create + delete

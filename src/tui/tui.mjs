@@ -31,7 +31,7 @@ function loadConfig() {
  * @param {object} state — buildState() result
  * @returns {string[]}
  */
-function buildRightContent(current, rightView, state) {
+function buildRightContent(current, rightView, state, vprFilesCache) {
   if (!current) return [];
 
   // Commit — show diff or file summary
@@ -61,7 +61,11 @@ function buildRightContent(current, rightView, state) {
     const vpr = item?.vprs.find(v => v.bookmark === current.bookmark);
     const changeIds = vpr?.commits.map(c => c.changeId) ?? [];
     if (changeIds.length > 0) {
-      const files = getVprFiles(changeIds);
+      let files = vprFilesCache?.get(current.bookmark);
+      if (files === undefined) {
+        files = getVprFiles(changeIds);
+        vprFilesCache?.set(current.bookmark, files);
+      }
       if (files.length > 0) {
         lines.push(`─── Files (${files.length}) ───`);
         lines.push(...files);
@@ -130,12 +134,14 @@ export async function startTui() {
   let mode = 'normal';
   let busy = false; // true while a prompt or async action is in progress
   let picked = null; // changeId of commit being moved (space-to-move)
+  let vprFilesCache = new Map(); // vpr bookmark → files[] (invalidated on reload)
 
   // ─── State builders ────────────────────────────────────────────────
 
   async function reload() {
     state = await buildState();
     treeItems = buildTree(state);
+    vprFilesCache = new Map();
     // Clamp cursor
     if (cursor >= treeItems.length) cursor = Math.max(0, treeItems.length - 1);
   }
@@ -147,7 +153,7 @@ export async function startTui() {
     if (cursor >= scrollStart + bodyRows) scrollStart = cursor - bodyRows + 1;
 
     const current = treeItems[cursor] ?? null;
-    const rightContent = buildRightContent(current, rightView, state);
+    const rightContent = buildRightContent(current, rightView, state, vprFilesCache);
     render(state, treeItems, cursor, scrollStart, diffScroll, rightContent, mode, message, picked);
     // Clear message after render (one-shot display)
     message = '';

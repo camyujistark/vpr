@@ -101,6 +101,7 @@ VPR v2 — Virtual Pull Request Manager
 
   Push:
     vpr send <vpr>                  Send one VPR
+    vpr send <vpr> --force          Delete stale branch bookmark if it exists
     vpr send --all                  Send all
     vpr send --dry-run              Preview
 `.trim();
@@ -410,8 +411,17 @@ try {
       const { createProvider } = await import('../src/providers/index.mjs');
       const provider = createProvider({ provider: 'none', ...config });
 
-      const result = await send(query, { provider });
-      console.log(JSON.stringify(result, null, 2));
+      try {
+        const result = await send(query, { provider, force: Boolean(flags.force) });
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        if (err.code === 'BRANCH_COLLISION') {
+          console.error(`Error: ${err.message}`);
+          console.error(`Re-run with --force to delete the stale bookmark and continue.`);
+          process.exit(1);
+        }
+        throw err;
+      }
       break;
     }
 
