@@ -83,6 +83,7 @@ VPR v2 — Virtual Pull Request Manager
     vpr edit <vpr> --story "..."    Write story
     vpr edit <vpr> --title "..."    Set title
     vpr remove <vpr>                Dissolve VPR
+    vpr clear --yes                 Remove ALL VPRs and items
     vpr list                        JSON output
     vpr status                      Human-readable overview
 
@@ -245,6 +246,22 @@ try {
       }
       const { removeVpr } = await import('../src/commands/remove.mjs');
       await removeVpr(query);
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr clear --yes  — remove every VPR and item
+    // -----------------------------------------------------------------------
+    case 'clear': {
+      const flags = parseFlags(args);
+      if (!flags.yes) {
+        console.error('Usage: vpr clear --yes');
+        console.error('This removes ALL VPRs and items from .vpr/meta.json and deletes their jj bookmarks.');
+        process.exit(1);
+      }
+      const { clearAll } = await import('../src/commands/clear.mjs');
+      const { bookmarks } = await clearAll({ actor: 'cli' });
+      console.log(JSON.stringify({ cleared: bookmarks.length, bookmarks }, null, 2));
       break;
     }
 
