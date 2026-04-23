@@ -135,23 +135,23 @@ function colorDiffLine(line) {
 function helpLine(cursorItem, mode) {
   if (mode !== 'normal') return '';
 
-  if (!cursorItem) return `${DIM}j/k nav  q quit${RESET}`;
+  if (!cursorItem) return `${DIM}j/k nav  R refresh  X clear all  q quit${RESET}`;
 
   switch (cursorItem.type) {
     case 'item':
-      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  E edit all  O reorder  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  E edit all  O reorder  R refresh  X clear all  q quit${RESET}`;
     case 'vpr':
-      return `${DIM}j/k nav  J/K scroll  v files  r rename  s story  g generate  H hold  P send  d dissolve  i interactive  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  s story  g generate  H hold  P send  d dissolve  i interactive  R refresh  q quit${RESET}`;
     case 'commit':
-      return `${DIM}j/k nav  J/K scroll  v files  r rename  space move  H hold  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  space move  H hold  R refresh  q quit${RESET}`;
     case 'ungrouped-header':
     case 'ungrouped':
-      return `${DIM}j/k nav  r rename  space move  H hold/unhold  q quit${RESET}`;
+      return `${DIM}j/k nav  r rename  space move  H hold/unhold  R refresh  q quit${RESET}`;
     case 'hold-header':
     case 'hold':
-      return `${DIM}j/k nav  H hold/unhold  q quit${RESET}`;
+      return `${DIM}j/k nav  H hold/unhold  R refresh  q quit${RESET}`;
     default:
-      return `${DIM}j/k nav  q quit${RESET}`;
+      return `${DIM}j/k nav  R refresh  q quit${RESET}`;
   }
 }
 

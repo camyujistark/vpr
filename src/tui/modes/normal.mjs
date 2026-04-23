@@ -11,6 +11,7 @@ import { addVpr } from '../../commands/add.mjs';
 import { editVpr } from '../../commands/edit.mjs';
 import { hold, unhold } from '../../commands/hold.mjs';
 import { removeVpr } from '../../commands/remove.mjs';
+import { clearAll } from '../../commands/clear.mjs';
 import { sendChecks, send } from '../../commands/send.mjs';
 import { generate } from '../../commands/generate.mjs';
 import {
@@ -569,6 +570,43 @@ export async function handleNormalKey(str, key, ctx) {
       renderFn();
       return true;
     }
+  }
+
+  // ─── Refresh ─────────────────────────────────────────────────────────
+
+  // R — reload state from disk / jj
+  if (str === 'R') {
+    setMessage('Refreshing...');
+    renderFn();
+    try {
+      await reload();
+      setMessage('Refreshed');
+    } catch (err) {
+      setMessage(`Refresh failed: ${err.message}`);
+    }
+    renderFn();
+    return true;
+  }
+
+  // ─── Clear all VPRs ──────────────────────────────────────────────────
+
+  // X — remove every VPR and item
+  if (str === 'X') {
+    const yes = await confirm('Clear ALL VPRs and items? This cannot be undone.');
+    if (!yes) {
+      setMessage('Cancelled');
+      renderFn();
+      return true;
+    }
+    try {
+      const { bookmarks } = await clearAll({ actor: 'tui' });
+      setMessage(`Cleared ${bookmarks.length} VPR${bookmarks.length !== 1 ? 's' : ''}`);
+    } catch (err) {
+      setMessage(`Error: ${err.message}`);
+    }
+    await reload();
+    renderFn();
+    return true;
   }
 
   // ─── Undo ────────────────────────────────────────────────────────────
