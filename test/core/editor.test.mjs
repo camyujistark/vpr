@@ -4,16 +4,25 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+// Editor's temp files are named ship-<pid>-<ts>-<rand>.md — only those should
+// be inspected here. Other tests may create ship-<feature>-* directories in
+// tmpdir concurrently; ignore anything that isn't our editor's shape.
+const EDITOR_TMP_RE = new RegExp(`^ship-${process.pid}-\\d+-[a-z0-9]+\\.`);
+
 let origTmpContents;
 
 function snapshotTmp() {
-  origTmpContents = new Set(fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ship-')));
+  origTmpContents = new Set(
+    fs.readdirSync(os.tmpdir()).filter(f => EDITOR_TMP_RE.test(f))
+  );
 }
 
 function assertTmpClean() {
-  const after = new Set(fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ship-')));
+  const after = new Set(
+    fs.readdirSync(os.tmpdir()).filter(f => EDITOR_TMP_RE.test(f))
+  );
   const leaked = [...after].filter(f => !origTmpContents.has(f));
-  assert.deepStrictEqual(leaked, [], 'temp file leaked');
+  assert.deepStrictEqual(leaked, [], 'editor temp file leaked');
 }
 
 describe('core/editor editInEditor', () => {
