@@ -103,6 +103,7 @@ function help() {
     ship                       Push stacked PRs from plan.md
     ship gen <level> [name]    Polish Description via LLM
     ship plan pull <pbi>       Import Azure PBI + child Tasks into plan.md
+    ship tui                   Open the dashboard TUI
     ship help                  Show this help
 ${helpShip()}${helpGen()}${helpPlan()}`;
 }
@@ -270,6 +271,12 @@ try {
     case 'push':
       await runShip(rest);
       break;
+    case 'tui': {
+      const { flags } = parseFlags(rest);
+      const { startTui } = await import('../src/tui-v0.2/tui.mjs');
+      startTui({ planPath: flags.plan || 'plan.md' });
+      break;
+    }
     case 'help':
     case '--help':
     case '-h':
