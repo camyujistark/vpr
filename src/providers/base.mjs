@@ -30,6 +30,11 @@ createPR(sourceBranch, targetBranch, title, body, workItemId) {
     throw new Error('Not implemented');
   }
 
+  /** Return child work items (Tasks under a PBI, etc). Default: none. */
+  getChildren(id) {
+    return [];
+  }
+
   /** Get the latest PR index (for sequential numbering) */
 getLatestPRIndex() {
     return 0;

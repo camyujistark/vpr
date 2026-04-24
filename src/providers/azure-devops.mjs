@@ -41,11 +41,27 @@ export class AzureDevOpsProvider extends BaseProvider {
     const f = result.fields || {};
     return {
       id: result.id,
+      type: f['System.WorkItemType'] || '',
       title: f['System.Title'] || '',
-      description: (f['System.Description'] || '').replace(/<[^>]*>/g, '').trim(),
+      description: f['System.Description'] || '',
       state: f['System.State'] || '',
       url: result.url,
     };
+  }
+
+  getChildren(id) {
+    const result = az(
+      `boards work-item show --id ${id} --expand relations --org "${this.org}"`
+    );
+    const rels = result.relations || [];
+    const childIds = rels
+      .filter(r => r.rel === 'System.LinkTypes.Hierarchy-Forward')
+      .map(r => {
+        const m = (r.url || '').match(/\/workItems\/(\d+)$/i);
+        return m ? parseInt(m[1], 10) : null;
+      })
+      .filter(Boolean);
+    return childIds.map(cid => this.getWorkItem(cid));
   }
 
   updateWorkItem(id, fields) {

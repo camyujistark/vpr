@@ -85,6 +85,16 @@ function helpShip() {
 `;
 }
 
+function helpPlan() {
+  return `
+  ship plan pull <pbi>       Import an Azure PBI + its child Tasks into plan.md
+
+  Flags:
+    --plan <path>   Output path (default: plan.md)
+    --append        Append to an existing plan.md instead of erroring
+`;
+}
+
 function help() {
   return `
   ship — v0.2 plan-first PR tool
@@ -92,8 +102,9 @@ function help() {
   Commands:
     ship                       Push stacked PRs from plan.md
     ship gen <level> [name]    Polish Description via LLM
+    ship plan pull <pbi>       Import Azure PBI + child Tasks into plan.md
     ship help                  Show this help
-${helpShip()}${helpGen()}`;
+${helpShip()}${helpGen()}${helpPlan()}`;
 }
 
 async function runGen() {
@@ -132,6 +143,40 @@ async function runGen() {
 
   const result = gen({ level, name, ...opts });
   printGenResult(result);
+}
+
+async function runPlanPull(args) {
+  const { positional, flags } = parseFlags(args);
+  const [sub, pbiStr] = positional;
+
+  if (sub !== 'pull') {
+    console.error('Usage: ship plan pull <pbi-id>');
+    process.exit(2);
+  }
+  const pbiId = parseInt(pbiStr, 10);
+  if (!pbiId) {
+    console.error('Usage: ship plan pull <pbi-id>   (pbi-id must be a number)');
+    process.exit(2);
+  }
+
+  const config = loadConfig();
+  if (!config?.provider || config.provider === 'none') {
+    console.error('No provider configured. Add .vpr/config.json with { "provider": "azure-devops", ... }');
+    process.exit(2);
+  }
+
+  const { createProvider } = await import('../src/providers/index.mjs');
+  const provider = createProvider(config);
+
+  const { planPull } = await import('../src/commands/plan-pull.mjs');
+  const result = planPull({
+    pbiId,
+    planPath: flags.plan || 'plan.md',
+    append: !!flags.append,
+    provider,
+  });
+
+  console.log(`✓ wrote ${result.written}  (epic PBI ${result.epicWi}, ${result.taskCount} tasks)`);
 }
 
 async function runShip(flagsArgs) {
@@ -218,6 +263,9 @@ try {
   switch (cmd) {
     case 'gen':
       await runGen();
+      break;
+    case 'plan':
+      await runPlanPull(rest);
       break;
     case 'push':
       await runShip(rest);
