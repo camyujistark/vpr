@@ -1,14 +1,15 @@
 {
   "name": "vpr",
-  "version": "0.1.0",
-  "description": "Virtual Pull Request manager — group atomic commits into PR chains, then render and push",
+  "version": "0.2.0-dev",
+  "description": "Plan-first PR tool — plan.md declares Epic/Task/PR, ship polishes + pushes stacked PRs",
   "type": "module",
   "bin": {
-    "vpr": "./bin/vpr.mjs"
+    "vpr": "./bin/vpr.mjs",
+    "ship": "./bin/ship.mjs"
   },
   "scripts": {
-    "start": "node bin/vpr.mjs",
-    "test": "node --test test/*.test.mjs"
+    "start": "node bin/ship.mjs",
+    "test": "node --test test/**/*.test.mjs"
   },
   "keywords": ["git", "pr", "pull-request", "tui", "virtual", "branch-chain"],
   "license": "MIT"
