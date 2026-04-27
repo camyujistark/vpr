@@ -34,6 +34,12 @@ export class AzureDevOpsProvider extends BaseProvider {
     return { id: result.id, url: result.url };
   }
 
+  linkParent(childId, parentId) {
+    az(
+      `boards work-item relation add --id ${childId} --relation-type "Parent" --target-id ${parentId} --org "${this.org}"`
+    );
+  }
+
   getWorkItem(id) {
     const result = az(
       `boards work-item show --id ${id} --org "${this.org}"`

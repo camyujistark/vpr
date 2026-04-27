@@ -72,6 +72,7 @@ VPR v2 — Virtual Pull Request Manager
 
   Items:
     vpr ticket new "title"          Create item + work item
+    vpr ticket new "title" --parent 17148   Create as child of an existing parent WI
     vpr ticket new 17065            Attach to existing work item
     vpr ticket list                 List items
     vpr ticket edit <name>          Edit item
@@ -152,16 +153,22 @@ try {
         case 'new': {
           const raw = ticketArgs[0];
           if (!raw) {
-            console.error('Usage: vpr ticket new "title" | <workItemId>');
+            console.error('Usage: vpr ticket new "title" | <workItemId> [--parent <wi-id>]');
             process.exit(1);
           }
           const titleOrId = /^\d+$/.test(raw) ? Number(raw) : raw;
+          const flags = parseFlags(ticketArgs.slice(1));
+          const parentId = flags.parent ? Number(flags.parent) : undefined;
+          if (parentId && typeof titleOrId === 'number') {
+            console.error('Error: --parent only applies when creating a new WI from a title');
+            process.exit(1);
+          }
 
           const config = loadConfig() ?? {};
           const { createProvider } = await import('../src/providers/index.mjs');
           const provider = createProvider({ provider: 'none', ...config });
 
-          const result = await ticketNew(titleOrId, { provider });
+          const result = await ticketNew(titleOrId, { provider, parentId });
           console.log(JSON.stringify(result, null, 2));
           break;
         }

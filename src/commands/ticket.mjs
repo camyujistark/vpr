@@ -28,7 +28,7 @@ function slugify(title) {
  * @param {{ provider: object }} opts
  * @returns {Promise<{ name: string, wi: number, wiTitle: string }>}
  */
-export async function ticketNew(titleOrId, { provider }) {
+export async function ticketNew(titleOrId, { provider, parentId } = {}) {
   let wi, wiTitle;
 
   if (typeof titleOrId === 'number') {
@@ -39,6 +39,12 @@ export async function ticketNew(titleOrId, { provider }) {
     const result = await provider.createWorkItem(titleOrId, '');
     wi = result.id;
     wiTitle = titleOrId;
+    if (parentId) {
+      if (typeof provider.linkParent !== 'function') {
+        throw new Error('Provider does not support linkParent');
+      }
+      provider.linkParent(wi, parentId);
+    }
   }
 
   const name = slugify(wiTitle);
@@ -46,9 +52,9 @@ export async function ticketNew(titleOrId, { provider }) {
   const meta = await loadMeta();
   meta.items[name] = { wi, wiTitle, vprs: {} };
   await saveMeta(meta);
-  await appendEvent('cli', 'ticket.new', { name, wi, wiTitle });
+  await appendEvent('cli', 'ticket.new', { name, wi, wiTitle, parentId: parentId ?? null });
 
-  return { name, wi, wiTitle };
+  return { name, wi, wiTitle, parentId: parentId ?? null };
 }
 
 /**
