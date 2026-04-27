@@ -40,6 +40,10 @@ export class AzureDevOpsProvider extends BaseProvider {
     );
   }
 
+  assignTo(id, user) {
+    az(`boards work-item update --id ${id} --assigned-to "${user}" --org "${this.org}"`);
+  }
+
   getWorkItem(id) {
     const result = az(
       `boards work-item show --id ${id} --org "${this.org}"`

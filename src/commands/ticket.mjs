@@ -30,6 +30,7 @@ function slugify(title) {
  */
 export async function ticketNew(titleOrId, { provider, parentId } = {}) {
   let wi, wiTitle;
+  let assignedTo = null;
 
   if (typeof titleOrId === 'number') {
     const item = await provider.getWorkItem(titleOrId);
@@ -45,6 +46,15 @@ export async function ticketNew(titleOrId, { provider, parentId } = {}) {
       }
       provider.linkParent(wi, parentId);
     }
+    // Auto-assign newly created Tasks to the current user — you'd never
+    // file a ticket via vpr that you didn't intend to own.
+    if (typeof provider.assignTo === 'function' && typeof provider.getCurrentUser === 'function') {
+      const me = provider.getCurrentUser();
+      if (me) {
+        provider.assignTo(wi, me);
+        assignedTo = me;
+      }
+    }
   }
 
   const name = slugify(wiTitle);
@@ -52,9 +62,9 @@ export async function ticketNew(titleOrId, { provider, parentId } = {}) {
   const meta = await loadMeta();
   meta.items[name] = { wi, wiTitle, vprs: {} };
   await saveMeta(meta);
-  await appendEvent('cli', 'ticket.new', { name, wi, wiTitle, parentId: parentId ?? null });
+  await appendEvent('cli', 'ticket.new', { name, wi, wiTitle, parentId: parentId ?? null, assignedTo });
 
-  return { name, wi, wiTitle, parentId: parentId ?? null };
+  return { name, wi, wiTitle, parentId: parentId ?? null, assignedTo };
 }
 
 /**
