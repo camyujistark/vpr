@@ -76,6 +76,7 @@ VPR v2 — Virtual Pull Request Manager
     vpr ticket list                 List items
     vpr ticket edit <name>          Edit item
     vpr ticket done <name>          Close item
+    vpr plan pull 17148             Pull a parent WI; create one item per child Task
 
   VPRs:
     vpr add "title"                 Create VPR in current item
@@ -198,6 +199,31 @@ try {
           process.exit(1);
         }
       }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr plan pull <parent-wi-id>
+    // -----------------------------------------------------------------------
+    case 'plan': {
+      const sub = args[0];
+      if (sub !== 'pull') {
+        console.error(`Unknown plan sub-command: ${sub ?? '(none)'}`);
+        console.error('Usage: vpr plan pull <parent-wi-id>');
+        process.exit(1);
+      }
+      const raw = args[1];
+      const parentId = /^\d+$/.test(raw ?? '') ? Number(raw) : null;
+      if (!parentId) {
+        console.error('Usage: vpr plan pull <parent-wi-id>');
+        process.exit(1);
+      }
+      const config = loadConfig() ?? {};
+      const { createProvider } = await import('../src/providers/index.mjs');
+      const provider = createProvider({ provider: 'none', ...config });
+      const { planPull } = await import('../src/commands/plan-pull.mjs');
+      const result = await planPull(parentId, { provider });
+      console.log(JSON.stringify(result, null, 2));
       break;
     }
 

@@ -39,13 +39,43 @@ export class AzureDevOpsProvider extends BaseProvider {
       `boards work-item show --id ${id} --org "${this.org}"`
     );
     const f = result.fields || {};
+    const assigned = f['System.AssignedTo'];
     return {
       id: result.id,
+      type: f['System.WorkItemType'] || '',
       title: f['System.Title'] || '',
       description: (f['System.Description'] || '').replace(/<[^>]*>/g, '').trim(),
       state: f['System.State'] || '',
+      assignedTo: assigned ? (assigned.uniqueName || assigned.displayName || null) : null,
       url: result.url,
     };
+  }
+
+  getCurrentUser() {
+    try {
+      const out = execSync('az account show --query "user.name" -o tsv', {
+        encoding: 'utf-8',
+        shell: '/bin/bash',
+      }).trim();
+      return out || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getChildren(id) {
+    const result = az(
+      `boards work-item show --id ${id} --expand relations --org "${this.org}"`
+    );
+    const rels = result.relations || [];
+    const childIds = rels
+      .filter(r => r.rel === 'System.LinkTypes.Hierarchy-Forward')
+      .map(r => {
+        const m = (r.url || '').match(/\/workItems\/(\d+)$/i);
+        return m ? parseInt(m[1], 10) : null;
+      })
+      .filter(Boolean);
+    return childIds.map(cid => this.getWorkItem(cid));
   }
 
   updateWorkItem(id, fields) {
