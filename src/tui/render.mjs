@@ -60,6 +60,10 @@ function fitWidth(str, width) {
 
 function renderItem(item) {
   const label = item.wi ? `${item.wiTitle} (#${item.wi})` : item.name;
+  if (item.held) {
+    const vprNote = item.vprCount > 0 ? `${DIM} (${item.vprCount} VPR${item.vprCount === 1 ? '' : 's'})${RESET}` : '';
+    return `  ${YELLOW}⏸${RESET} ${DIM}${label}${RESET}${vprNote}`;
+  }
   return `${CYAN}${BOLD}▼ ${label}${RESET}`;
 }
 
@@ -139,7 +143,7 @@ function helpLine(cursorItem, mode) {
 
   switch (cursorItem.type) {
     case 'item':
-      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  E edit all  O reorder  R refresh  X clear all  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  H hold  E edit all  O reorder  R refresh  X clear all  q quit${RESET}`;
     case 'vpr':
       return `${DIM}j/k nav  J/K scroll  v files  r rename  s story  g generate  H hold  P send  d dissolve  i interactive  R refresh  q quit${RESET}`;
     case 'commit':

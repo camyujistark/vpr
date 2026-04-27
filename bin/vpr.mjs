@@ -76,6 +76,8 @@ VPR v2 — Virtual Pull Request Manager
     vpr ticket list                 List items
     vpr ticket edit <name>          Edit item
     vpr ticket done <name>          Close item
+    vpr ticket hold <name>          Park item — moves to bottom of vpr status
+    vpr ticket unhold <name>        Restore a held item
     vpr plan pull 17148             Pull a parent WI; create one item per child Task
 
   VPRs:
@@ -144,7 +146,7 @@ try {
     // -----------------------------------------------------------------------
     case 'ticket': {
       const [sub, ...ticketArgs] = args;
-      const { ticketNew, ticketList, ticketEdit, ticketDone } = await import('../src/commands/ticket.mjs');
+      const { ticketNew, ticketList, ticketEdit, ticketDone, ticketHold, ticketUnhold } = await import('../src/commands/ticket.mjs');
 
       switch (sub) {
         case 'new': {
@@ -193,9 +195,29 @@ try {
           break;
         }
 
+        case 'hold': {
+          const name = ticketArgs[0];
+          if (!name) {
+            console.error('Usage: vpr ticket hold <name>');
+            process.exit(1);
+          }
+          await ticketHold(name);
+          break;
+        }
+
+        case 'unhold': {
+          const name = ticketArgs[0];
+          if (!name) {
+            console.error('Usage: vpr ticket unhold <name>');
+            process.exit(1);
+          }
+          await ticketUnhold(name);
+          break;
+        }
+
         default: {
           console.error(`Unknown ticket sub-command: ${sub ?? '(none)'}`);
-          console.error('Available: new, list, edit, done');
+          console.error('Available: new, list, edit, done, hold, unhold');
           process.exit(1);
         }
       }

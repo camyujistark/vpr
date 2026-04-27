@@ -542,6 +542,24 @@ export async function handleNormalKey(str, key, ctx) {
 
   // H — toggle hold/unhold
   if (str === 'H') {
+    if (current?.type === 'item') {
+      try {
+        const meta = await loadMeta();
+        const itemMeta = meta.items[current.name];
+        if (itemMeta) {
+          if (itemMeta.held) delete itemMeta.held;
+          else itemMeta.held = true;
+          await saveMeta(meta);
+          setMessage(itemMeta.held ? `Held ${current.name}` : `Unheld ${current.name}`);
+        }
+      } catch (err) {
+        setMessage(`Error: ${err.message}`);
+      }
+      await reload();
+      renderFn();
+      return true;
+    }
+
     if (current?.type === 'vpr') {
       try {
         const meta = await loadMeta();

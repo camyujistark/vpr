@@ -12,10 +12,12 @@
 export function buildTree(state) {
   const rows = [];
 
-  // Items → active VPRs → Commits (held VPRs collected for bottom)
+  // Items → active VPRs → Commits (held VPRs and held items collected for bottom)
   const heldVprs = [];
+  const heldItems = state.items.filter(it => it.held);
+  const activeItems = state.items.filter(it => !it.held);
 
-  for (const item of state.items) {
+  for (const item of activeItems) {
     const activeVprs = item.vprs.filter(v => !v.held);
     const itemHeldVprs = item.vprs.filter(v => v.held);
 
@@ -26,6 +28,7 @@ export function buildTree(state) {
       wiTitle: item.wiTitle,
       vprCount: activeVprs.length,
       collapsed: false,
+      held: false,
     });
 
     for (const vpr of activeVprs) {
@@ -73,9 +76,23 @@ export function buildTree(state) {
     }
   }
 
-  // Held VPRs
-  if (heldVprs.length > 0) {
-    rows.push({ type: 'hold-header', count: heldVprs.length + state.hold.length });
+  // Held items + held VPRs + held commits, all under one hold-header
+  const totalHeld = heldItems.length + heldVprs.length + state.hold.length;
+  if (totalHeld > 0) {
+    rows.push({ type: 'hold-header', count: totalHeld });
+
+    for (const item of heldItems) {
+      rows.push({
+        type: 'item',
+        name: item.name,
+        wi: item.wi,
+        wiTitle: item.wiTitle,
+        vprCount: item.vprs.length,
+        collapsed: true,
+        held: true,
+      });
+    }
+
     for (const { vpr, itemName } of heldVprs) {
       rows.push({
         type: 'vpr',
@@ -91,17 +108,6 @@ export function buildTree(state) {
       });
     }
 
-    // Held commits
-    for (const commit of state.hold) {
-      rows.push({
-        type: 'hold',
-        changeId: commit.changeId,
-        sha: commit.sha,
-        subject: commit.subject,
-      });
-    }
-  } else if (state.hold.length > 0) {
-    rows.push({ type: 'hold-header', count: state.hold.length });
     for (const commit of state.hold) {
       rows.push({
         type: 'hold',

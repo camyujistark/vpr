@@ -186,6 +186,7 @@ export async function buildState() {
       name: itemName,
       wi: itemData.wi,
       wiTitle: itemData.wiTitle ?? '',
+      held: Boolean(itemData.held),
       vprs,
     };
   });

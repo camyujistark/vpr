@@ -41,8 +41,11 @@ export async function status() {
     return;
   }
 
-  // Items
-  for (const item of state.items) {
+  // Active items first; held items rendered at the bottom (after ungrouped/hold).
+  const activeItems = state.items.filter(i => !i.held);
+  const heldItems = state.items.filter(i => i.held);
+
+  for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
     console.log(`${bold(cyan(item.name))}  ${wiLabel}  ${dim(item.wiTitle)}`);
 
@@ -85,6 +88,18 @@ export async function status() {
     console.log(bold(gray('on hold')));
     for (const commit of state.hold) {
       console.log(`  ${gray(commit.changeId)}  ${dim(commit.subject)}`);
+    }
+    console.log();
+  }
+
+  // Held items (parked tickets — at the bottom for visibility without focus)
+  if (heldItems.length > 0) {
+    console.log(bold(gray('held tickets')));
+    for (const item of heldItems) {
+      const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
+      const vprCount = item.vprs.length;
+      const note = vprCount > 0 ? gray(` (${vprCount} VPR${vprCount === 1 ? '' : 's'})`) : '';
+      console.log(`  ${gray(item.name)}  ${wiLabel}  ${dim(item.wiTitle)}${note}`);
     }
     console.log();
   }

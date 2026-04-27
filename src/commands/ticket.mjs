@@ -81,6 +81,38 @@ export async function ticketEdit(name, updates) {
 }
 
 /**
+ * Mark an item as held — moves it to the bottom of `vpr status`.
+ * Idempotent.
+ * @param {string} name
+ * @returns {Promise<void>}
+ */
+export async function ticketHold(name) {
+  const meta = await loadMeta();
+  if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+  if (!meta.items[name].held) {
+    meta.items[name].held = true;
+    await saveMeta(meta);
+    await appendEvent('cli', 'ticket.hold', { name });
+  }
+}
+
+/**
+ * Unmark an item as held.
+ * Idempotent.
+ * @param {string} name
+ * @returns {Promise<void>}
+ */
+export async function ticketUnhold(name) {
+  const meta = await loadMeta();
+  if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+  if (meta.items[name].held) {
+    delete meta.items[name].held;
+    await saveMeta(meta);
+    await appendEvent('cli', 'ticket.unhold', { name });
+  }
+}
+
+/**
  * Delete an item from meta.
  * @param {string} name
  * @returns {Promise<void>}
