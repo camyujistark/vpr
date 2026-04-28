@@ -38,6 +38,50 @@ describe('runTuiSendFlow()', () => {
     );
   });
 
+  it('reloads state and advances cursor to the new next-up VPR after a successful send — TUI lands on the next actionable row without a manual refresh', async () => {
+    const nextUpVpr = {
+      bookmark: 'item-a/one',
+      title: 'One',
+      story: 'ready',
+      output: 'ready output',
+      sent: false,
+      nextUp: true,
+    };
+    const state = {
+      items: [
+        { name: 'item-a', vprs: [nextUpVpr] },
+      ],
+    };
+
+    const calls = [];
+    const runEditorFlow = async () => ({ decision: 'send' });
+    const send = async () => {
+      calls.push('send');
+      return { branchName: 'feat/item-a-one' };
+    };
+    const reload = async () => {
+      calls.push('reload');
+    };
+    const advanceCursorToNextUp = () => {
+      calls.push('advance');
+    };
+
+    const result = await runTuiSendFlow({
+      state,
+      runEditorFlow,
+      send,
+      reload,
+      advanceCursorToNextUp,
+    });
+
+    assert.deepEqual(
+      calls,
+      ['send', 'reload', 'advance'],
+      'after a successful send the orchestrator must reload state, then advance the cursor — so the TUI lands on the new next-up VPR without the user pressing R or moving the cursor',
+    );
+    assert.equal(result.kind, 'sent', 'success path still returns kind="sent"');
+  });
+
   it('returns kind="message" with the send error when send throws — TUI footer surfaces blocked refusal cleanly instead of crashing the loop', async () => {
     const nextUpVpr = {
       bookmark: 'item-a/two',

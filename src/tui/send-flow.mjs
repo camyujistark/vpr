@@ -12,10 +12,12 @@ import { pickSendBookmark } from './send-pick.mjs';
  *   state: { items: Array<{ name: string, vprs: Array<{ bookmark: string, nextUp?: boolean }> }> },
  *   runEditorFlow: (vpr: object) => Promise<{ decision?: 'send'|'abandon' }>,
  *   send: (bookmark: string) => Promise<{ branchName: string }>,
+ *   reload?: () => Promise<void>,
+ *   advanceCursorToNextUp?: () => void,
  * }} args
  * @returns {Promise<{ kind: 'message', message: string } | { kind: 'abandoned' } | { kind: 'sent', branchName: string }>}
  */
-export async function runTuiSendFlow({ state, runEditorFlow, send }) {
+export async function runTuiSendFlow({ state, runEditorFlow, send, reload, advanceCursorToNextUp }) {
   const pick = pickSendBookmark(state);
   if (pick.message) return { kind: 'message', message: pick.message };
 
@@ -23,12 +25,16 @@ export async function runTuiSendFlow({ state, runEditorFlow, send }) {
   const decision = await runEditorFlow(vpr);
   if (decision?.decision !== 'send') return { kind: 'abandoned' };
 
+  let result;
   try {
-    const result = await send(pick.bookmark);
-    return { kind: 'sent', branchName: result.branchName };
+    result = await send(pick.bookmark);
   } catch (err) {
     return { kind: 'message', message: err?.message ?? String(err) };
   }
+
+  if (reload) await reload();
+  if (advanceCursorToNextUp) advanceCursorToNextUp();
+  return { kind: 'sent', branchName: result.branchName };
 }
 
 function findVpr(state, bookmark) {
