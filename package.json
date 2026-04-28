@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node bin/vpr.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*/*.test.mjs"
   },
   "keywords": ["git", "pr", "pull-request", "tui", "virtual", "branch-chain"],
   "license": "MIT"
