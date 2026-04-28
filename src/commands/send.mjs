@@ -144,6 +144,8 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   targetBranch = targetBranch ?? getBaseBranch() ?? 'main';
   tpIndex = tpIndex ?? 1;
 
+  console.log(`Target: ${targetBranch}`);
+
   // 1. Pre-flight checks — block on story or conflicts failures
   const checks = await sendChecks(query);
   const storyCheck = checks.find(c => c.name === 'story');

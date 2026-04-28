@@ -288,6 +288,29 @@ describe('send()', () => {
     });
   });
 
+  describe('resolved target echo', () => {
+    it('prints `Target: <branch>` to stdout before push', async () => {
+      await seedMeta({ story: 'Real story content' });
+      const originalLog = console.log;
+      const lines = [];
+      console.log = (...args) => { lines.push(args.join(' ')); };
+      try {
+        await send('my-feature/nav-bar', {
+          provider: null,
+          dryRun: true,
+          tpIndex: 1,
+          targetBranch: 'main',
+        });
+      } finally {
+        console.log = originalLog;
+      }
+      assert.ok(
+        lines.some(l => /^Target: main$/.test(l)),
+        `expected stdout to include "Target: main", got:\n${lines.join('\n')}`,
+      );
+    });
+  });
+
   describe('blocked refusal', () => {
     it('throws `Cannot send <bookmark>: send <blocker> first` when an earlier VPR is unsent', async () => {
       await saveMeta({
