@@ -4,26 +4,37 @@ import { buildSendEditContent, parseSendEditContent } from '../tui/editor.mjs';
  * Drive the `vpr send` editor loop for a single VPR.
  *
  * Opens the editor with the VPR's title/story, parses the saved buffer, and —
- * if the story changed — calls `regenerate` to refresh the output before the
- * caller shows a preview. Pure orchestration: side effects (editor shell-out,
- * LLM call) are injected.
+ * if the story changed — calls `regenerate` to refresh the output. Then asks
+ * `prompt` for [y/N/e]: 'y' resolves with decision='send', 'e' re-opens the
+ * editor, anything else resolves with decision='abandon'. Pure orchestration:
+ * side effects (editor shell-out, LLM call, terminal prompt) are injected.
  *
  * @param {{
  *   vpr: { title?: string, story?: string, output?: string|null },
  *   openEditor: (initial: string) => string | Promise<string>,
  *   regenerate: (next: { title: string, story: string }) => string | Promise<string>,
+ *   prompt?: (preview: { title: string, story: string, output: string|null }) => string | Promise<string>,
  * }} args
- * @returns {Promise<{ title: string, story: string, output: string|null }>}
+ * @returns {Promise<{ decision?: 'send'|'abandon', title: string, story: string, output: string|null }>}
  */
-export async function runSendEditorFlow({ vpr, openEditor, regenerate }) {
-  const initial = buildSendEditContent({ vpr });
-  const edited = await openEditor(initial);
-  const parsed = parseSendEditContent(edited);
+export async function runSendEditorFlow({ vpr, openEditor, regenerate, prompt }) {
+  let current = { title: vpr.title ?? '', story: vpr.story ?? '', output: vpr.output ?? null };
 
-  let output = vpr.output ?? null;
-  if (parsed.story !== (vpr.story ?? '')) {
-    output = await regenerate({ ...vpr, title: parsed.title, story: parsed.story });
+  while (true) {
+    const edited = await openEditor(buildSendEditContent({ vpr: current }));
+    const parsed = parseSendEditContent(edited);
+
+    let output = current.output;
+    if (parsed.story !== current.story) {
+      output = await regenerate({ ...vpr, title: parsed.title, story: parsed.story });
+    }
+
+    current = { title: parsed.title, story: parsed.story, output };
+
+    if (!prompt) return current;
+
+    const answer = await prompt(current);
+    if (answer === 'e') continue;
+    return { decision: answer === 'y' ? 'send' : 'abandon', ...current };
   }
-
-  return { title: parsed.title, story: parsed.story, output };
 }
