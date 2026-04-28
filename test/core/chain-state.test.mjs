@@ -110,6 +110,43 @@ describe('computeChainState()', () => {
     assert.strictEqual(c.cascadeTarget, 'feat/1-a');
   });
 
+  it('all sent: no VPR is nextUp or blocked, and cascadeTarget falls back to baseBranch', () => {
+    const items = [
+      {
+        name: 'foo',
+        vprs: [
+          { bookmark: 'foo/a', sent: true, held: false },
+          { bookmark: 'foo/b', sent: true, held: false },
+        ],
+      },
+    ];
+
+    const sent = {
+      'feat/1-a': {
+        prId: 1,
+        itemName: 'foo',
+        originalBookmark: 'foo/a',
+        sentAt: '2026-01-01T00:00:00.000Z',
+      },
+      'feat/2-b': {
+        prId: 2,
+        itemName: 'foo',
+        originalBookmark: 'foo/b',
+        sentAt: '2026-01-02T00:00:00.000Z',
+      },
+    };
+
+    const enriched = computeChainState(items, { sent, baseBranch: 'main' });
+    const [a, b] = enriched[0].vprs;
+
+    for (const vpr of [a, b]) {
+      assert.strictEqual(vpr.nextUp, false);
+      assert.strictEqual(vpr.blocked, false);
+      assert.strictEqual(vpr.blockedBy, null);
+      assert.strictEqual(vpr.cascadeTarget, 'main');
+    }
+  });
+
   it('blocks every unsent VPR after the first; blockedBy points at the immediate predecessor', () => {
     const items = [
       {
