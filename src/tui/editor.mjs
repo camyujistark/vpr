@@ -208,6 +208,30 @@ export function buildSendEditContent({ vpr }) {
   return lines.join('\n');
 }
 
+/**
+ * Parse content from buildSendEditContent back into { title, story }.
+ * Lines starting with `#` are treated as read-only comments and stripped.
+ *
+ * @param {string} content
+ * @returns {{ title: string, story: string }}
+ */
+export function parseSendEditContent(content) {
+  let section = null; // 'title' | 'story'
+  const buffers = { title: [], story: [] };
+
+  for (const raw of content.split('\n')) {
+    if (raw === '--- Title ---') { section = 'title'; continue; }
+    if (raw === '--- Story ---') { section = 'story'; continue; }
+    if (raw.startsWith('#')) continue;
+    if (section) buffers[section].push(raw);
+  }
+
+  return {
+    title: buffers.title.join('\n').trim(),
+    story: buffers.story.join('\n').trim(),
+  };
+}
+
 // ─── Reorder ──────────────────────────────────────────────────────────────────
 
 /**

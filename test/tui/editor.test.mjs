@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSendEditContent } from '../../src/tui/editor.mjs';
+import { buildSendEditContent, parseSendEditContent } from '../../src/tui/editor.mjs';
 
 describe('buildSendEditContent()', () => {
   it('emits editable --- Title --- and --- Story --- sections with the VPR title and story', () => {
@@ -21,5 +21,27 @@ describe('buildSendEditContent()', () => {
 
     assert.equal(titleSection, 'My slice title');
     assert.ok(storySection.startsWith('My story body.'), `expected story section to start with body; got: ${JSON.stringify(storySection)}`);
+  });
+});
+
+describe('parseSendEditContent()', () => {
+  it('strips lines starting with # — they are read-only comments, not story content', () => {
+    const content = [
+      '# This is a comment line that must be ignored on parse',
+      '# Another comment with context like commits or last output',
+      '--- Title ---',
+      'Refined title',
+      '',
+      '--- Story ---',
+      'Story body line one.',
+      '# inline comment between story lines — also stripped',
+      'Story body line two.',
+      '',
+    ].join('\n');
+
+    const parsed = parseSendEditContent(content);
+
+    assert.equal(parsed.title, 'Refined title');
+    assert.equal(parsed.story, 'Story body line one.\nStory body line two.');
   });
 });
