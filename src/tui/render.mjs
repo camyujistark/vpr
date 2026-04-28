@@ -67,12 +67,25 @@ function renderItem(item) {
   return `${CYAN}${BOLD}▼ ${label}${RESET}`;
 }
 
+/**
+ * Pure: pick the status icon for a VPR row.
+ *
+ * Precedence (highest first): held, sent, conflict, nextUp, blocked, default.
+ *
+ * @param {{ held?: boolean, sent?: boolean, conflict?: boolean, nextUp?: boolean, blocked?: boolean }} vpr
+ * @returns {string} icon string with ANSI color codes
+ */
+export function vprIcon(vpr) {
+  if (vpr.held) return `${YELLOW}⏸${RESET}`;
+  if (vpr.sent) return `${GREEN}✓${RESET}`;
+  if (vpr.conflict) return `${RED}!${RESET}`;
+  if (vpr.nextUp) return `▶`;
+  if (vpr.blocked) return `${DIM}◦${RESET}`;
+  return `${DIM}·${RESET}`;
+}
+
 function renderVpr(vpr) {
-  let icon;
-  if (vpr.held) icon = `${YELLOW}⏸${RESET}`;
-  else if (vpr.sent) icon = `${GREEN}✓${RESET}`;
-  else if (vpr.conflict) icon = `${RED}!${RESET}`;
-  else icon = `${DIM}·${RESET}`;
+  const icon = vprIcon(vpr);
   const count = vpr.commitCount > 0 ? `${DIM} (${vpr.commitCount})${RESET}` : '';
   const label = vpr.held ? `${DIM}${vpr.title || vpr.bookmark}${RESET}` : (vpr.title || vpr.bookmark);
   return `  ${icon} ${label}${count}`;
