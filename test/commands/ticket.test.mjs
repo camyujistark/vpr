@@ -396,5 +396,32 @@ describe('ticket commands', () => {
 
       assert.deepStrictEqual(calls, [{ id: 42, body: 'local edited description' }]);
     });
+
+    it('is a no-op when item.wi is unset', async () => {
+      await saveMeta({
+        items: {
+          'detached-item': {
+            wi: null,
+            wiTitle: 'Detached',
+            wiDescription: 'whatever',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      let called = false;
+      const provider = {
+        updateWorkItemDescription: async () => {
+          called = true;
+        },
+      };
+
+      await ticketUpdate('detached-item', { provider });
+
+      assert.strictEqual(called, false, 'provider should not be invoked when item.wi is unset');
+    });
   });
 });
