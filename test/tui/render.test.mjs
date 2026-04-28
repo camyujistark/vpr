@@ -29,4 +29,9 @@ describe('vprTargetLabel()', () => {
     const label = vprTargetLabel({ sent: true, prId: 4321 });
     assert.equal(stripAnsi(label), '→ PR #4321');
   });
+
+  it('returns `[held — detached]` for a held VPR — calls out that commits live on a sidebranch, not the active chain', () => {
+    const label = vprTargetLabel({ held: true });
+    assert.equal(stripAnsi(label), '[held — detached]');
+  });
 });

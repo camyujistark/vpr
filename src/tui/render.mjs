@@ -94,6 +94,7 @@ export function vprIcon(vpr) {
  * @returns {string} label string with ANSI color codes (empty when no label applies)
  */
 export function vprTargetLabel(vpr) {
+  if (vpr.held) return `${YELLOW}[held — detached]${RESET}`;
   if (vpr.blocked && vpr.blockedBy) return `${DIM}→ ${vpr.blockedBy}${RESET}`;
   if (vpr.sent && vpr.prId) return `${GREEN}→ PR #${vpr.prId}${RESET}`;
   return '';
