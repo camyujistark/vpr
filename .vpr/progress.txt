@@ -24,3 +24,24 @@
 2026-04-28T23:49+10:00 vpr-stacked-pr-orchestration/send-editor-flow: parseSendEditContent strips # comment lines and parses Title/Story sections into { title, story }.
 2026-04-28T23:51+10:00 vpr-stacked-pr-orchestration/send-editor-flow: parseSendEditContent treats --- Title --- / --- Story --- markers in story body as content — forward-only section transitions.
 2026-04-28T23:53+10:00 vpr-stacked-pr-orchestration/send-editor-flow: runSendEditorFlow regenerates output when edited story differs from original — preview gets fresh content.
+2026-04-29T01:12+10:00 vpr-stacked-pr-orchestration/send-editor-flow: runSendEditorFlow loops on `e` answer — editor reopens, regenerates, exits with send/abandon on next y/N.
+2026-04-29T01:15+10:00 vpr-stacked-pr-orchestration/send-editor-flow: empty/whitespace story aborts without regenerate or prompt — matches `git commit` semantics.
+2026-04-29T01:18+10:00 vpr-stacked-pr-orchestration/send-editor-flow: already-prepared VPRs (story+output) skip editor, prompt directly; e on first pass still opens editor on next loop.
+2026-04-29T01:22+10:00 vpr-stacked-pr-orchestration/send-editor-flow: --story flag on generate persists story before regen — agent path bypasses editor entirely.
+2026-04-29T01:25+10:00 vpr-stacked-pr-orchestration/send-editor-flow: parseSendEditContent regression test — `#` mid-line preserved as story content; only line-leading `#` is a comment marker.
+2026-04-29T01:28+10:00 vpr-stacked-pr-orchestration/tui-render-updates: vprIcon pure helper returns ▶ for nextUp and ◦ for blocked — distinct icons drive eye to actionable row and surface blockers.
+2026-04-29T01:30+10:00 vpr-stacked-pr-orchestration/tui-render-updates: vprTargetLabel pure helper returns `→ <blockedBy>` for blocked VPRs — points eye at what to send first.
+2026-04-29T01:32+10:00 vpr-stacked-pr-orchestration/tui-render-updates: vprTargetLabel returns `→ PR #<id>` (green) for sent VPRs — surfaces shipped PR at a glance.
+2026-04-29T01:34+10:00 vpr-stacked-pr-orchestration/tui-render-updates: vprTargetLabel returns `[held — detached]` (yellow) for held VPRs — calls out detached sidebranch state.
+2026-04-29T01:37+10:00 vpr-stacked-pr-orchestration/tui-render-updates: findNextUpCursor pure helper picks first nextUp vpr row index; buildTree forwards nextUp/blocked/blockedBy and tui.mjs auto-jumps cursor on open.
+2026-04-29T01:43+10:00 vpr-stacked-pr-orchestration/tui-p-keybinding: findNextUpBookmark pure helper picks bookmark of first nextUp VPR — tracer bullet for P-key picking next-unsent regardless of cursor.
+2026-04-29T01:47+10:00 vpr-stacked-pr-orchestration/tui-p-keybinding: pickSendBookmark wraps findNextUpBookmark with a {bookmark}|{message} return; TUI P binding now picks next-up via chain state, cursor-independent.
+2026-04-29T01:51+10:00 vpr-stacked-pr-orchestration/tui-p-keybinding: runTuiSendFlow orchestrator picks next-up VPR and delegates to runEditorFlow — sendable VPRs trigger editor flow.
+2026-04-29T01:54+10:00 vpr-stacked-pr-orchestration/tui-p-keybinding: runTuiSendFlow returns kind="message" with send error string — TUI footer surfaces blocked refusal cleanly without crashing the keypress handler.
+2026-04-29T01:56+10:00 vpr-stacked-pr-orchestration/tui-p-keybinding: runTuiSendFlow drives reload + cursor advance after successful send — TUI lands on new next-up VPR without manual refresh.
+2026-04-29T01:59+10:00 vpr-stacked-pr-orchestration/detach-on-hold-tests: tracer-bullet — held with no other items returns detached:false reason='no-other-items'; new ticket-detach.test.mjs scaffolded.
+2026-04-29T02:03+10:00 vpr-stacked-pr-orchestration/detach-on-hold-tests: held-with-overlap idempotency test — first hold returns detached:true; second returns already-detached. setupRepo configures snapshot.auto-track to exclude .vpr/ so rebase no longer evicts meta.json.
+2026-04-29T02:09+10:00 vpr-stacked-pr-orchestration/detach-on-hold-tests: unbookmarked-predecessor scenario — prelude commit travels onto sidebranch with held bookmark; active chain peels off without it.
+2026-04-29T02:11+10:00 vpr-stacked-pr-orchestration/detach-on-hold-tests: middle-of-chain scenario — held middle peels off; bottom→top active chain stays connected, held lives on sidebranch off shared boundary, no conflicts.
+2026-04-29T02:14+10:00 vpr-stacked-pr-orchestration/detach-on-hold-tests: held-at-top scenario — topmost held item reports already-detached, active chain untouched, no conflicts.
+2026-04-29T02:33+10:00 vpr-stacked-pr-orchestration/vpr-skill-md: ~/.claude/skills/vpr/SKILL.md rewritten with frontmatter delimiters, agent rules (ask for story, never fabricate, sequential push, two-step generate→send, refresh ticket data), pipeline integration table referencing /grill-me, /ubiquitous-language, /to-prd, /to-issues, /design-an-interface, /tdd, and examples for vpr send / vpr generate --story / vpr ticket refresh.
