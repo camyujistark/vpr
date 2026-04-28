@@ -24,6 +24,13 @@ export class AzureDevOpsProvider extends BaseProvider {
   get repo() { return this.config.repo; }
   get wiType() { return this.config.wiType || 'Task'; }
 
+  _az(cmd) { return az(cmd); }
+
+  updateWorkItemDescription(id, body) {
+    const desc = String(body ?? '').replace(/"/g, '\\"');
+    this._az(`boards work-item update --id ${id} --description "${desc}" --org "${this.org}"`);
+  }
+
   createWorkItem(title, description = '') {
     const desc = description.replace(/"/g, '\\"');
     const result = az(
