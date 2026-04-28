@@ -272,6 +272,47 @@ describe('buildState()', () => {
       assert.ok(logicVpr.commits[0].subject.includes('logic'));
     });
 
+    it('attributes intermediate commits to the next bookmark even when chain is not on @ ancestry', async () => {
+      // Build: base → c1 (bookmark v1) → c2 (no bookmark) → c3 (bookmark v2)
+      // Then move @ off this chain entirely (simulate post-squash divergence
+      // where v1/v2 sit on a sibling line to @). buildState() must still
+      // attribute c2 to v2 — previously it dropped because the partition
+      // walk gated on @'s ancestor set via afterRemote.
+      makeCommit('c1.txt', '1\n', 'feat: c1', 'item-x/v1');
+      makeCommit('c2.txt', '2\n', 'feat: c2 between bookmarks');
+      makeCommit('c3.txt', '3\n', 'feat: c3', 'item-x/v2');
+
+      // Move @ off the chain so c2 is no longer an ancestor of @.
+      sh('jj new main');
+
+      await saveMeta({
+        items: {
+          'item-x': {
+            wi: 17000,
+            wiTitle: 'Item X',
+            vprs: {
+              'item-x/v1': { title: 'V1', story: '', output: null },
+              'item-x/v2': { title: 'V2', story: '', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const state = await buildState();
+      const v1 = state.items[0].vprs.find(v => v.bookmark === 'item-x/v1');
+      const v2 = state.items[0].vprs.find(v => v.bookmark === 'item-x/v2');
+
+      assert.strictEqual(v1.commits.length, 1, 'v1 should claim c1');
+      assert.ok(v1.commits[0].subject.includes('c1'));
+      assert.strictEqual(v2.commits.length, 2, 'v2 should claim c2 (between bookmarks) AND c3');
+      const subjects = v2.commits.map(c => c.subject).join('|');
+      assert.ok(subjects.includes('c2'), `expected c2 attributed to v2, got: ${subjects}`);
+      assert.ok(subjects.includes('c3'), `expected c3 attributed to v2, got: ${subjects}`);
+    });
+
     it('mix of bookmarked and plain commits splits correctly', async () => {
       makeCommit('a.txt', 'a\n', 'feat: claimed', 'ding-app/scaffold');
       makeCommit('b.txt', 'b\n', 'feat: free');

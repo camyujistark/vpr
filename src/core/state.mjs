@@ -191,12 +191,15 @@ export async function buildState() {
     }
 
     if (claimedBookmark) {
-      // This commit has a VPR bookmark — claim it plus pending commits
-      // that are after the remote top (not already pushed)
+      // This commit has a VPR bookmark — claim it plus all pending commits.
+      // Previously this gated on `afterRemote.has(p.changeId)` to skip
+      // already-pushed history, but that filter dropped legitimate commits
+      // when the bookmark sits on a branch that diverged from @'s ancestry
+      // (e.g. after a `jj squash` rebases descendants onto a sibling line).
+      // The `${base}..(...)` query already excludes pushed-trunk history,
+      // so commits surviving to here belong somewhere in the local stack.
       for (const p of pending) {
-        if (afterRemote.has(p.changeId)) {
-          vprCommits.get(claimedBookmark).push(p);
-        }
+        vprCommits.get(claimedBookmark).push(p);
       }
       pending = [];
       vprCommits.get(claimedBookmark).push(commit);
@@ -207,7 +210,7 @@ export async function buildState() {
   }
 
   // Any remaining pending commits after the last bookmark are ungrouped
-  // (only those after the remote tip)
+  // (only those after the remote tip — the "new local work" zone)
   for (const commit of pending) {
     if (afterRemote.has(commit.changeId)) {
       ungrouped.push(commit);
@@ -247,7 +250,32 @@ export async function buildState() {
     };
   });
 
-  const items = computeChainState(baseItems, { sent });
+  // Sort items by chain position so the TUI shows them in send order:
+  // items whose earliest commit is closest to base come first. Items with no
+  // commits (placeholder items) sort by meta-declaration order at the tail.
+  // `rawCommits` is already oldest-first, so we use that index.
+  const chainIndexByChangeId = new Map();
+  rawCommits.forEach((c, i) => chainIndexByChangeId.set(c.changeId, i));
+  const itemEarliestIndex = new Map();
+  for (const item of baseItems) {
+    let earliest = Infinity;
+    for (const v of item.vprs) {
+      for (const c of v.commits) {
+        const idx = chainIndexByChangeId.get(c.changeId);
+        if (idx !== undefined && idx < earliest) earliest = idx;
+      }
+    }
+    itemEarliestIndex.set(item.name, earliest);
+  }
+  const declOrder = new Map(baseItems.map((it, i) => [it.name, i]));
+  const sortedBaseItems = [...baseItems].sort((a, b) => {
+    const ai = itemEarliestIndex.get(a.name);
+    const bi = itemEarliestIndex.get(b.name);
+    if (ai !== bi) return ai - bi;
+    return declOrder.get(a.name) - declOrder.get(b.name);
+  });
+
+  const items = computeChainState(sortedBaseItems, { sent });
 
   // 8. Assemble hold array
   const hold = holdCommits.map(c => ({
