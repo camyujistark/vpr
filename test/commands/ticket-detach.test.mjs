@@ -193,6 +193,64 @@ describe('ticketHold() — detach-on-hold', () => {
     });
   });
 
+  describe('held at the top of the chain', () => {
+    it('reports already-detached — held topmost item does not share ancestry with active items below, so no rebase is needed and no conflicts arise', async () => {
+      // Chain: bottom (active) → top (held).
+      // Topologically, no active bookmark has the held top commit as ancestor,
+      // so the held item is already a sidebranch off the active boundary —
+      // detach is a no-op. Holding still records the held flag, but reports
+      // already-detached and leaves the chain untouched.
+      sh('jj describe -m "feat: bottom active"');
+      sh('jj bookmark set bottom-item/feat-bottom -r @');
+      sh('jj new -m "feat: top held"');
+      sh('jj bookmark set top-item/feat-top -r @');
+
+      await saveMeta({
+        items: {
+          'bottom-item': {
+            wi: 10,
+            wiTitle: 'Bottom',
+            vprs: {
+              'bottom-item/feat-bottom': { title: 'Bottom', story: '', output: null },
+            },
+          },
+          'top-item': {
+            wi: 11,
+            wiTitle: 'Top',
+            vprs: {
+              'top-item/feat-top': { title: 'Top', story: '', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const result = await ticketHold('top-item');
+      assert.strictEqual(result.held, true);
+      assert.strictEqual(result.detached, false);
+      assert.strictEqual(result.reason, 'already-detached');
+
+      // The held top commit is not an ancestor of the active bottom (topology
+      // alone keeps them separated — that is the whole point of already-detached).
+      const topOnBottom = sh(
+        `jj log -r '::bottom-item/feat-bottom & description(substring:"top held")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.strictEqual(topOnBottom, '', 'top held must not be on the active chain');
+
+      // Held top still reachable on its bookmark.
+      const topOnHeld = sh(
+        `jj log -r '::top-item/feat-top & description(substring:"top held")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.notStrictEqual(topOnHeld, '', 'top held must still be reachable on its bookmark');
+
+      // No conflicts.
+      const conflicts = sh(`jj log -r 'conflicts()' --no-graph -T 'change_id ++ "\\n"'`);
+      assert.strictEqual(conflicts, '', 'no conflicts');
+    });
+  });
+
   describe('held with unbookmarked predecessor', () => {
     it('moves the unbookmarked predecessor onto the sidebranch with the held item — active chain no longer has it as ancestor', async () => {
       // Chain: prelude (no bookmark) → held foo (held-item) → active bar (active-item).
