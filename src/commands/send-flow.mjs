@@ -24,6 +24,12 @@ export async function runSendEditorFlow({ vpr, openEditor, regenerate, prompt })
     const edited = await openEditor(buildSendEditContent({ vpr: current }));
     const parsed = parseSendEditContent(edited);
 
+    // Empty/whitespace story = abandon, matching `git commit` semantics. No
+    // regenerate, no prompt — escaping the editor never accidentally pushes.
+    if (parsed.story.trim() === '') {
+      return { decision: 'abandon', title: parsed.title, story: parsed.story, output: current.output };
+    }
+
     let output = current.output;
     if (parsed.story !== current.story) {
       output = await regenerate({ ...vpr, title: parsed.title, story: parsed.story });

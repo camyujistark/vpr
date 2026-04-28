@@ -38,6 +38,33 @@ describe('runSendEditorFlow()', () => {
     assert.equal(result.decision, 'send', 'y answer must surface as decision="send" so the caller knows to push');
   });
 
+  it('aborts without prompting or regenerating when the saved story is empty/whitespace — matches `git commit` semantics', async () => {
+    const vpr = { title: 'Nav Bar', story: 'old story', output: 'old output' };
+
+    // User saves the buffer with a blank story — same as escaping the editor
+    // without writing anything meaningful.
+    const openEditor = async () =>
+      buildSendEditContent({ vpr: { title: 'Nav Bar', story: '   \n\t  ' } });
+
+    let regenerateCalled = false;
+    const regenerate = async () => {
+      regenerateCalled = true;
+      return 'should not run';
+    };
+
+    let promptCalled = false;
+    const prompt = async () => {
+      promptCalled = true;
+      return 'y';
+    };
+
+    const result = await runSendEditorFlow({ vpr, openEditor, regenerate, prompt });
+
+    assert.equal(result.decision, 'abandon', 'empty story must surface as decision="abandon" — no push');
+    assert.equal(regenerateCalled, false, 'must not regenerate when the story is empty');
+    assert.equal(promptCalled, false, 'must not prompt the user when the story is empty');
+  });
+
   it('re-opens the editor when the user answers e — loop continues until y or N', async () => {
     const vpr = { title: 'Nav Bar', story: 'first', output: 'o' };
 
