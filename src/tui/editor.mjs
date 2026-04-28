@@ -184,6 +184,30 @@ export function parseStoryEditContent(content) {
   };
 }
 
+// ─── Send (single-VPR title + story edit) ────────────────────────────────────
+
+/**
+ * Builds content for the `vpr send` editor flow — title and story are editable;
+ * everything else (commits, last-generated output, work-item description excerpts)
+ * is rendered as `#` comment lines that get stripped on save.
+ *
+ * @param {{
+ *   vpr: { title?: string, story?: string },
+ * }} args
+ * @returns {string}
+ */
+export function buildSendEditContent({ vpr }) {
+  const lines = [
+    '--- Title ---',
+    vpr.title || '',
+    '',
+    '--- Story ---',
+    vpr.story || '',
+    '',
+  ];
+  return lines.join('\n');
+}
+
 // ─── Reorder ──────────────────────────────────────────────────────────────────
 
 /**
