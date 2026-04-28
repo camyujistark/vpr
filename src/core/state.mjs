@@ -23,6 +23,9 @@ export function computeChainState(items, { sent = {}, baseBranch = 'main' } = {}
     const itemCascadeTarget = latestSentBranchForItem(sent, item.name) ?? baseBranch;
 
     const vprs = item.vprs.map(vpr => {
+      if (vpr.held) {
+        return { ...vpr, blocked: false, blockedBy: null, nextUp: false, cascadeTarget: baseBranch };
+      }
       if (vpr.sent) {
         return { ...vpr, blocked: false, blockedBy: null, nextUp: false, cascadeTarget: baseBranch };
       }
