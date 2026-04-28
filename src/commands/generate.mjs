@@ -8,19 +8,27 @@ const DEFAULT_LLM_CMD = 'claude -p';
 /**
  * Build the prompt string for a VPR.
  *
- * @param {{ title: string, story: string }} vpr
- * @param {Array<{ subject: string }>} commits
+ * @param {{
+ *   item: { wi?: number|null, wiTitle?: string|null, wiDescription?: string|null,
+ *           parentWi?: number|null, parentWiTitle?: string|null, parentWiDescription?: string|null },
+ *   vpr: { title: string, story: string },
+ *   commits: Array<{ subject: string }>,
+ * }} args
  * @returns {string}
  */
-function buildPrompt(vpr, commits) {
+export function buildPrompt({ item, vpr, commits }) {
   const commitLines = commits.map(c => `- ${c.subject}`).join('\n');
   const hasStory = Boolean(vpr.story && vpr.story.trim());
   const lines = [
     'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
     '',
-    `PR Title: ${vpr.title}`,
-    '',
   ];
+  if (item && item.wi) {
+    lines.push(`THIS SLICE (Task #${item.wi}): ${item.wiTitle ?? ''}`);
+    if (item.wiDescription) lines.push(item.wiDescription);
+    lines.push('');
+  }
+  lines.push(`PR Title: ${vpr.title}`, '');
   if (hasStory) {
     lines.push(`Story: ${vpr.story}`, '');
   } else {
@@ -64,6 +72,7 @@ export async function generate(query, { generateCmd } = {}) {
   if (!found) throw new Error(`VPR not found: ${query}`);
 
   const { itemName, bookmark, vpr } = found;
+  const item = meta.items[itemName];
 
   // Get commits for this VPR from state
   const state = await buildState();
@@ -71,7 +80,7 @@ export async function generate(query, { generateCmd } = {}) {
   const stateVpr = stateItem?.vprs.find(v => v.bookmark === bookmark);
   const commits = stateVpr?.commits ?? [];
 
-  const prompt = buildPrompt(vpr, commits);
+  const prompt = buildPrompt({ item, vpr, commits });
   const cmd = resolveLlmCmd(generateCmd);
 
   let output;
