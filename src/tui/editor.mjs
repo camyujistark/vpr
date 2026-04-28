@@ -216,12 +216,16 @@ export function buildSendEditContent({ vpr }) {
  * @returns {{ title: string, story: string }}
  */
 export function parseSendEditContent(content) {
+  // Sections advance forward-only: null → 'title' → 'story'. Once we've entered
+  // the story section, subsequent `--- Title ---` / `--- Story ---` lines are
+  // story content, not section headers — so the user can quote the buffer
+  // format inside their story without losing it.
   let section = null; // 'title' | 'story'
   const buffers = { title: [], story: [] };
 
   for (const raw of content.split('\n')) {
-    if (raw === '--- Title ---') { section = 'title'; continue; }
-    if (raw === '--- Story ---') { section = 'story'; continue; }
+    if (section === null && raw === '--- Title ---') { section = 'title'; continue; }
+    if (section === 'title' && raw === '--- Story ---') { section = 'story'; continue; }
     if (raw.startsWith('#')) continue;
     if (section) buffers[section].push(raw);
   }

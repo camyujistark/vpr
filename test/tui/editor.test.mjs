@@ -44,4 +44,32 @@ describe('parseSendEditContent()', () => {
     assert.equal(parsed.title, 'Refined title');
     assert.equal(parsed.story, 'Story body line one.\nStory body line two.');
   });
+
+  it('preserves --- Title --- and --- Story --- lines inside the story body — only the first of each marker is a section header', () => {
+    const content = [
+      '--- Title ---',
+      'Refined title',
+      '',
+      '--- Story ---',
+      'Story explains the buffer format:',
+      '--- Title ---',
+      'this should be the editable title section.',
+      '--- Story ---',
+      'this should be the editable story section.',
+    ].join('\n');
+
+    const parsed = parseSendEditContent(content);
+
+    assert.equal(parsed.title, 'Refined title');
+    assert.equal(
+      parsed.story,
+      [
+        'Story explains the buffer format:',
+        '--- Title ---',
+        'this should be the editable title section.',
+        '--- Story ---',
+        'this should be the editable story section.',
+      ].join('\n'),
+    );
+  });
 });

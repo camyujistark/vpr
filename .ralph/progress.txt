@@ -22,3 +22,4 @@
 2026-04-28T23:45+10:00 vpr-stacked-pr-orchestration/cli-send-no-args: explicit `send <bookmark>` regression test — explicit query bypasses no-args next-up resolution and sends named VPR.
 2026-04-28T23:47+10:00 vpr-stacked-pr-orchestration/send-editor-flow: buildSendEditContent emits editable --- Title --- and --- Story --- sections — first AC tracer bullet for editor format.
 2026-04-28T23:49+10:00 vpr-stacked-pr-orchestration/send-editor-flow: parseSendEditContent strips # comment lines and parses Title/Story sections into { title, story }.
+2026-04-28T23:51+10:00 vpr-stacked-pr-orchestration/send-editor-flow: parseSendEditContent treats --- Title --- / --- Story --- markers in story body as content — forward-only section transitions.
