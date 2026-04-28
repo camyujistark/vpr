@@ -23,8 +23,12 @@ export async function runTuiSendFlow({ state, runEditorFlow, send }) {
   const decision = await runEditorFlow(vpr);
   if (decision?.decision !== 'send') return { kind: 'abandoned' };
 
-  const result = await send(pick.bookmark);
-  return { kind: 'sent', branchName: result.branchName };
+  try {
+    const result = await send(pick.bookmark);
+    return { kind: 'sent', branchName: result.branchName };
+  } catch (err) {
+    return { kind: 'message', message: err?.message ?? String(err) };
+  }
 }
 
 function findVpr(state, bookmark) {
