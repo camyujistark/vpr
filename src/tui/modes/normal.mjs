@@ -780,6 +780,17 @@ export async function handleNormalKey(str, key, ctx) {
             }
           }
           await saveMeta(meta);
+
+          // Anchor (or move) the slice's jj bookmark at the picked commit so
+          // downstream commands like `vpr send` can find a revision under
+          // this name. Without this, claims-only moves leave the bookmark
+          // missing in jj and `bookmark rename` / `bookmark create` fail.
+          const existing = jjSafe(`bookmark list ${current.bookmark} --template 'self.name()'`);
+          if (existing && existing.trim()) {
+            jj(`bookmark set ${current.bookmark} -r ${picked} --allow-backwards`);
+          } else {
+            jj(`bookmark create ${current.bookmark} -r ${picked}`);
+          }
           setMessage(`Moved ${picked.slice(0, 8)} → ${current.title || current.bookmark}`);
         } catch (err) {
           setMessage(`Error: ${err.message}`);
