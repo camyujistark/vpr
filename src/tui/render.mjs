@@ -84,6 +84,20 @@ export function vprIcon(vpr) {
   return `${DIM}·${RESET}`;
 }
 
+/**
+ * Pure: pick the right-aligned target label for a VPR row.
+ *
+ * Blocked VPRs label what they wait on; sent VPRs label their PR; held VPRs
+ * call out the detached state. Other VPRs have no label.
+ *
+ * @param {{ held?: boolean, sent?: boolean, blocked?: boolean, blockedBy?: string|null, prId?: number|null }} vpr
+ * @returns {string} label string with ANSI color codes (empty when no label applies)
+ */
+export function vprTargetLabel(vpr) {
+  if (vpr.blocked && vpr.blockedBy) return `${DIM}→ ${vpr.blockedBy}${RESET}`;
+  return '';
+}
+
 function renderVpr(vpr) {
   const icon = vprIcon(vpr);
   const count = vpr.commitCount > 0 ? `${DIM} (${vpr.commitCount})${RESET}` : '';
