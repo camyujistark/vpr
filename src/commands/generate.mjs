@@ -69,16 +69,27 @@ function resolveLlmCmd(generateCmd) {
  * Generate a PR description for a single VPR.
  *
  * @param {string} query  — bookmark name, partial bookmark, or partial title
- * @param {{ generateCmd?: string }} [opts]
+ * @param {{ generateCmd?: string, story?: string }} [opts]
  * @returns {Promise<{ bookmark: string, output: string }>}
  */
-export async function generate(query, { generateCmd } = {}) {
+export async function generate(query, { generateCmd, story } = {}) {
   const meta = await loadMeta();
   const found = findVpr(meta, query);
   if (!found) throw new Error(`VPR not found: ${query}`);
 
   const { itemName, bookmark, vpr } = found;
   const item = meta.items[itemName];
+
+  // Agent path: --story bypasses the editor. Persist the supplied story
+  // onto the VPR before regenerating so the prompt reflects the new narrative.
+  if (story !== undefined) {
+    vpr.story = story;
+    const stagingMeta = await loadMeta();
+    if (stagingMeta.items[itemName]?.vprs[bookmark]) {
+      stagingMeta.items[itemName].vprs[bookmark].story = story;
+      await saveMeta(stagingMeta);
+    }
+  }
 
   // Get commits for this VPR from state
   const state = await buildState();

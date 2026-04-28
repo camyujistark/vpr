@@ -371,7 +371,8 @@ try {
           console.error('Usage: vpr generate <vpr> | vpr generate --all');
           process.exit(1);
         }
-        const result = await generate(query, { generateCmd: config.generateCmd });
+        const story = typeof flags.story === 'string' ? flags.story : undefined;
+        const result = await generate(query, { generateCmd: config.generateCmd, story });
         console.log(JSON.stringify(result, null, 2));
       }
       break;
