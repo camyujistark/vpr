@@ -45,6 +45,24 @@ describe('parseSendEditContent()', () => {
     assert.equal(parsed.story, 'Story body line one.\nStory body line two.');
   });
 
+  it('preserves `#` appearing mid-line — only line-leading `#` marks a comment, so issue refs and hashtags survive', () => {
+    const content = [
+      '--- Title ---',
+      'Refined title',
+      '',
+      '--- Story ---',
+      'Track issue #42 for details.',
+      'Tagged with #context-cleanup mid-line.',
+    ].join('\n');
+
+    const parsed = parseSendEditContent(content);
+
+    assert.equal(
+      parsed.story,
+      'Track issue #42 for details.\nTagged with #context-cleanup mid-line.',
+    );
+  });
+
   it('preserves --- Title --- and --- Story --- lines inside the story body — only the first of each marker is a section header', () => {
     const content = [
       '--- Title ---',
