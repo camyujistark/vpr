@@ -158,6 +158,53 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     throw new Error(`Send blocked: ${conflictsCheck.message}`);
   }
 
+  // Chain/meta order check: a fast-forward push of `bookmark` from
+  // `targetBranch` will carry every commit in `targetBranch..bookmark`. If
+  // a commit in that range belongs to another VPR (sent or unsent), the
+  // push will silently bundle it into this PR. Refuse so the user can
+  // reorder commits in jj, extend this VPR's scope, or force-send.
+  if (!force) {
+    // Collect every bookmark belonging to a sibling VPR (sent or unsent),
+    // excluding the one being sent now.
+    const siblingBookmarks = new Set();
+    for (const [, itemData] of Object.entries(meta.items ?? {})) {
+      for (const bm of Object.keys(itemData.vprs ?? {})) {
+        if (bm !== bookmark) siblingBookmarks.add(bm);
+      }
+    }
+    for (const sentBranch of Object.keys(meta.sent ?? {})) {
+      if (sentBranch !== bookmark) siblingBookmarks.add(sentBranch);
+    }
+    const rangeOutput = jjSafe(
+      `log -r '${targetBranch}..${bookmark}' --no-graph --template 'change_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`,
+    );
+    const rangeLines = rangeOutput ? rangeOutput.split('\n').map(l => l.trim()).filter(Boolean) : [];
+    const stowaways = [];
+    for (const line of rangeLines) {
+      const parts = line.split('\t');
+      if (parts.length < 3) continue;
+      const [cid, bookmarksRaw, subject] = parts;
+      const commitBookmarks = bookmarksRaw
+        .split(' ')
+        .map(b => b.trim())
+        .filter(b => b && !b.includes('@'));
+      // Stowaway iff this commit carries a bookmark of a different VPR
+      const owningSibling = commitBookmarks.find(b => siblingBookmarks.has(b));
+      if (owningSibling) stowaways.push({ cid, subject, ownedBy: owningSibling });
+    }
+    if (stowaways.length > 0) {
+      const lines = stowaways.map(s => `  ${s.cid} ${s.subject} — owned by ${s.ownedBy}`).join('\n');
+      const msg =
+        `Send blocked: ${stowaways.length} commit(s) between ${targetBranch} and ${bookmark} belong to other VPRs.\n` +
+        `These would be pushed as part of "${vpr.title}" PR:\n${lines}\n` +
+        `Reorder commits in jj so this VPR sits before them, OR add them to this VPR's scope, OR re-run with --force to ignore.`;
+      const err = new Error(msg);
+      err.code = 'CHAIN_STOWAWAYS';
+      err.stowaways = stowaways;
+      throw err;
+    }
+  }
+
   // 2. Generate branch name: feat/{wi}-{slug}
   const slug = bookmark.replace(/\//g, '-');
   const branchName = `feat/${item.wi}-${slug}`;

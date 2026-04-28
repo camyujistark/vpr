@@ -153,6 +153,14 @@ export async function buildState() {
     }
   }
 
+  // 5b. Sent bookmarks act as claim barriers: a commit carrying a renamed
+  //     `feat/...` bookmark from a previous send was already pushed under
+  //     that VPR. Without recognising it as such, the partition walk drops
+  //     it into pending and lets the next unsent bookmark claim it,
+  //     polluting the next VPR's commit list with already-shipped work.
+  /** @type {Set<string>} bookmark names of sent VPRs (renamed branches) */
+  const sentBookmarkSet = new Set(Object.keys(sent));
+
   // 6. Partition commits into: claimed (by VPR bookmark), held, ungrouped
   //    Commits are oldest-first. A VPR bookmark on commit N claims all unclaimed
   //    commits between the previous bookmark and N (inclusive).
@@ -173,6 +181,15 @@ export async function buildState() {
     // Check hold first
     if (holdIds.has(commit.changeId)) {
       holdCommits.push(commit);
+      continue;
+    }
+
+    // Sent-VPR barrier: if this commit carries a sent VPR's branch name,
+    // it (and any pending commits before it) are already published under
+    // that VPR. Drain pending without attributing them to anything.
+    const carriesSentBookmark = commit.bookmarks.some(b => sentBookmarkSet.has(b));
+    if (carriesSentBookmark) {
+      pending = [];
       continue;
     }
 
