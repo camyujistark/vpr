@@ -208,7 +208,12 @@ try {
             console.error('Usage: vpr ticket hold <name>');
             process.exit(1);
           }
-          await ticketHold(name);
+          const res = await ticketHold(name);
+          if (res.detached) console.log(`Held ${name} — detached commits onto trunk`);
+          else if (res.reason === 'already-detached') console.log(`Held ${name} — already a sidebranch off trunk`);
+          else if (res.reason === 'no-bookmarks') console.log(`Held ${name} — no bookmarks to detach`);
+          else if (res.reason === 'no-jj') console.log(`Held ${name} — jj not available, metadata only`);
+          else console.log(`Held ${name}`);
           break;
         }
 
