@@ -257,6 +257,37 @@ describe('send()', () => {
   // Sequential refusal: cannot send a blocked VPR (an earlier sibling unsent)
   // -------------------------------------------------------------------------
 
+  describe('cascade target', () => {
+    it('uses cascadeTarget from chain state as the default targetBranch', async () => {
+      await saveMeta({
+        items: {
+          'my-feature': {
+            wi: 99,
+            wiTitle: 'My Feature',
+            vprs: {
+              'my-feature/step-two': { title: 'Step Two', story: 'second story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {
+          'feat/99-my-feature-step-one': {
+            prId: 1,
+            prTitle: '1: Step One',
+            targetBranch: 'main',
+            itemName: 'my-feature',
+            wi: 99,
+            originalBookmark: 'my-feature/step-one',
+            sentAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+        eventLog: [],
+      });
+      const result = await send('my-feature/step-two', { provider: null, dryRun: true });
+      assert.strictEqual(result.targetBranch, 'feat/99-my-feature-step-one');
+    });
+  });
+
   describe('blocked refusal', () => {
     it('throws `Cannot send <bookmark>: send <blocker> first` when an earlier VPR is unsent', async () => {
       await saveMeta({

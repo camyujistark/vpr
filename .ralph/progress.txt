@@ -17,3 +17,4 @@
 2026-04-28T23:35+10:00 vpr-stacked-pr-orchestration/chain-state-computer: all-sent regression test — no nextUp, none blocked, cascadeTarget falls back to baseBranch.
 2026-04-28T23:37+10:00 vpr-stacked-pr-orchestration/cli-send-no-args: send() resolves no-args query via computeChainState — picks next-unsent VPR.
 2026-04-28T23:39+10:00 vpr-stacked-pr-orchestration/cli-send-no-args: send refuses blocked VPR with `Cannot send <bookmark>: send <blocker> first` via computeChainState lookup.
+2026-04-28T23:41+10:00 vpr-stacked-pr-orchestration/cli-send-no-args: send uses cascadeTarget from computeChainState as default targetBranch (cascade base auto-resolved to most-recent sent branch).

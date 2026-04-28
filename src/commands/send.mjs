@@ -1,4 +1,4 @@
-import { jj, jjSafe } from '../core/jj.mjs';
+import { jj, jjSafe, getBaseBranch } from '../core/jj.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState, computeChainState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
@@ -114,25 +114,33 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
 
   // Sequential refusal: walk the chain and refuse if this VPR has an earlier
   // unsent sibling. The agent and CLI parse this single-line error to discover
-  // the blocker.
+  // the blocker. Also captures cascadeTarget for default targetBranch resolution.
+  let cascadeTarget = null;
   {
     const chainState = await buildState();
-    const enriched = computeChainState(chainState.items, { sent: chainState.sent });
+    const enriched = computeChainState(chainState.items, {
+      sent: chainState.sent,
+      baseBranch: getBaseBranch() ?? 'main',
+    });
     const enrichedItem = enriched.find(i => i.name === itemName);
     const enrichedVpr = enrichedItem?.vprs.find(v => v.bookmark === bookmark);
     if (enrichedVpr?.blocked) {
       throw new Error(`Cannot send ${bookmark}: send ${enrichedVpr.blockedBy} first`);
     }
+    cascadeTarget = enrichedVpr?.cascadeTarget ?? null;
   }
 
-  // Auto-detect chain top and TP-index from provider if not explicitly set
+  // Auto-detect chain top and TP-index from provider if not explicitly set.
+  // Resolution order: explicit opt > cascadeTarget > provider.getChainTop > getBaseBranch > 'main'.
+  if (targetBranch === undefined && cascadeTarget) {
+    targetBranch = cascadeTarget;
+  }
   if (provider && targetBranch === undefined) {
     targetBranch = provider.getChainTop?.() ?? 'main';
   }
   if (provider && tpIndex === undefined) {
     tpIndex = (provider.getLatestPRIndex?.() ?? 0) + 1;
   }
-  const { getBaseBranch } = await import('../core/jj.mjs');
   targetBranch = targetBranch ?? getBaseBranch() ?? 'main';
   tpIndex = tpIndex ?? 1;
 
