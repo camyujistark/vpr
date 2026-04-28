@@ -254,6 +254,44 @@ describe('send()', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Explicit override: passing a bookmark bypasses no-args next-up resolution
+  // -------------------------------------------------------------------------
+
+  describe('explicit override', () => {
+    it('explicit bookmark sends the named VPR even when no-args would pick a different one', async () => {
+      await saveMeta({
+        items: {
+          'feature-a': {
+            wi: 11,
+            wiTitle: 'Feature A',
+            vprs: {
+              'feature-a/vpr1': { title: 'A One', story: 'a story', output: null },
+            },
+          },
+          'feature-b': {
+            wi: 22,
+            wiTitle: 'Feature B',
+            vprs: {
+              'feature-b/vpr1': { title: 'B One', story: 'b story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+      const result = await send('feature-b/vpr1', {
+        provider: null,
+        dryRun: true,
+        tpIndex: 1,
+        targetBranch: 'main',
+      });
+      assert.strictEqual(result.branchName, 'feat/22-feature-b-vpr1');
+      assert.strictEqual(result.prTitle, '1: B One');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Sequential refusal: cannot send a blocked VPR (an earlier sibling unsent)
   // -------------------------------------------------------------------------
 
