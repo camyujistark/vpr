@@ -1,5 +1,6 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { hasJj, jj, jjSafe } from '../core/jj.mjs';
+import { computeTicketSync } from './ticket-sync.mjs';
 
 /**
  * Quote a string for use as a literal bookmark name in a jj revset.
@@ -205,6 +206,27 @@ export async function ticketUnhold(name) {
     await saveMeta(meta);
     await appendEvent('cli', 'ticket.unhold', { name });
   }
+}
+
+/**
+ * Refresh an item's cached work-item fields from the provider. Pulls the
+ * latest wiTitle/wiDescription via provider.getWorkItem(item.wi) and persists
+ * them into meta.
+ *
+ * @param {string} name
+ * @param {{ provider: object }} opts
+ * @returns {Promise<void>}
+ */
+export async function ticketRefresh(name, { provider }) {
+  const meta = await loadMeta();
+  if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+  const item = meta.items[name];
+  if (!item.wi) return;
+
+  const fetchedWi = await provider.getWorkItem(item.wi);
+  const result = computeTicketSync({ itemName: name, item, fetchedWi, fetchedParent: null });
+  meta.items[name] = result.item;
+  await saveMeta(meta);
 }
 
 /**

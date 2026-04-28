@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ticketNew, ticketList, ticketEdit, ticketDone } from '../../src/commands/ticket.mjs';
+import { ticketNew, ticketList, ticketEdit, ticketDone, ticketRefresh } from '../../src/commands/ticket.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
 
 // ---------------------------------------------------------------------------
@@ -256,6 +256,43 @@ describe('ticket commands', () => {
       const meta = await loadMeta();
       const ev = meta.eventLog[meta.eventLog.length - 1];
       assert.strictEqual(ev.action, 'ticket.done');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ticketRefresh
+  // -------------------------------------------------------------------------
+
+  describe('ticketRefresh()', () => {
+    beforeEach(async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 10,
+            wiTitle: 'Old Title',
+            wiDescription: 'old desc',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    it('fetches wiDescription from the provider and persists it', async () => {
+      const provider = {
+        getWorkItem: async (id) => ({
+          id,
+          title: 'New Title',
+          description: 'new desc',
+        }),
+      };
+
+      await ticketRefresh('scaffold-app', { provider });
+
+      const meta = await loadMeta();
+      assert.strictEqual(meta.items['scaffold-app'].wiDescription, 'new desc');
     });
   });
 });
