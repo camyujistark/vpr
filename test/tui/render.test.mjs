@@ -24,4 +24,9 @@ describe('vprTargetLabel()', () => {
     const label = vprTargetLabel({ blocked: true, blockedBy: 'feat/foo/step-one' });
     assert.equal(stripAnsi(label), '→ feat/foo/step-one');
   });
+
+  it('returns `→ PR #<id>` for a sent VPR — surfaces the shipped PR at a glance', () => {
+    const label = vprTargetLabel({ sent: true, prId: 4321 });
+    assert.equal(stripAnsi(label), '→ PR #4321');
+  });
 });

@@ -95,6 +95,7 @@ export function vprIcon(vpr) {
  */
 export function vprTargetLabel(vpr) {
   if (vpr.blocked && vpr.blockedBy) return `${DIM}→ ${vpr.blockedBy}${RESET}`;
+  if (vpr.sent && vpr.prId) return `${GREEN}→ PR #${vpr.prId}${RESET}`;
   return '';
 }
 
