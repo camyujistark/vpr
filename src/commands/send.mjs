@@ -112,6 +112,19 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   const { itemName, bookmark, vpr } = found;
   const item = meta.items[itemName];
 
+  // Sequential refusal: walk the chain and refuse if this VPR has an earlier
+  // unsent sibling. The agent and CLI parse this single-line error to discover
+  // the blocker.
+  {
+    const chainState = await buildState();
+    const enriched = computeChainState(chainState.items, { sent: chainState.sent });
+    const enrichedItem = enriched.find(i => i.name === itemName);
+    const enrichedVpr = enrichedItem?.vprs.find(v => v.bookmark === bookmark);
+    if (enrichedVpr?.blocked) {
+      throw new Error(`Cannot send ${bookmark}: send ${enrichedVpr.blockedBy} first`);
+    }
+  }
+
   // Auto-detect chain top and TP-index from provider if not explicitly set
   if (provider && targetBranch === undefined) {
     targetBranch = provider.getChainTop?.() ?? 'main';

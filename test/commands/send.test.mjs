@@ -254,6 +254,34 @@ describe('send()', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Sequential refusal: cannot send a blocked VPR (an earlier sibling unsent)
+  // -------------------------------------------------------------------------
+
+  describe('blocked refusal', () => {
+    it('throws `Cannot send <bookmark>: send <blocker> first` when an earlier VPR is unsent', async () => {
+      await saveMeta({
+        items: {
+          'my-feature': {
+            wi: 99,
+            wiTitle: 'My Feature',
+            vprs: {
+              'my-feature/nav-bar': { title: 'Nav Bar', story: 'first story', output: null },
+              'my-feature/footer': { title: 'Footer', story: 'second story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+      await assert.rejects(
+        () => send('my-feature/footer', { provider: null, dryRun: true }),
+        /Cannot send my-feature\/footer: send my-feature\/nav-bar first/,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Dry run
   // -------------------------------------------------------------------------
 
