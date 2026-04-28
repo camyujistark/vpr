@@ -21,6 +21,7 @@ function setupRepo() {
   sh('git config user.email "test@example.com"', tmpDir);
   sh('git config user.name "Test"', tmpDir);
   sh('jj git init --colocate', tmpDir);
+  sh(`jj config set --repo snapshot.auto-track "\\"all() & ~glob:'.vpr/**'\\""`, tmpDir);
   mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
   process.chdir(tmpDir);
 }
@@ -74,6 +75,45 @@ describe('ticketHold() — detach-on-hold', () => {
       assert.strictEqual(result.held, true);
       assert.strictEqual(result.detached, false);
       assert.strictEqual(result.reason, 'no-other-items');
+    });
+  });
+
+  describe('held with overlap to other items', () => {
+    it('first call detaches; second call is a no-op with reason "already-detached" — idempotent', async () => {
+      sh('jj describe -m "feat: held foo"');
+      sh('jj bookmark set held-item/feat-foo -r @');
+      sh('jj new -m "feat: active bar"');
+      sh('jj bookmark set active-item/feat-bar -r @');
+
+      await saveMeta({
+        items: {
+          'held-item': {
+            wi: 10,
+            wiTitle: 'Held',
+            vprs: {
+              'held-item/feat-foo': { title: 'Held foo', story: '', output: null },
+            },
+          },
+          'active-item': {
+            wi: 11,
+            wiTitle: 'Active',
+            vprs: {
+              'active-item/feat-bar': { title: 'Active bar', story: '', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const first = await ticketHold('held-item');
+      assert.strictEqual(first.detached, true);
+
+      const second = await ticketHold('held-item');
+      assert.strictEqual(second.held, true);
+      assert.strictEqual(second.detached, false);
+      assert.strictEqual(second.reason, 'already-detached');
     });
   });
 });
