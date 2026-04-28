@@ -41,6 +41,9 @@ export function buildTree(state) {
         sent: vpr.sent,
         held: false,
         conflict: vpr.conflict,
+        nextUp: Boolean(vpr.nextUp),
+        blocked: Boolean(vpr.blocked),
+        blockedBy: vpr.blockedBy ?? null,
         commitCount: vpr.commits.length,
         itemName: item.name,
       });
@@ -119,4 +122,19 @@ export function buildTree(state) {
   }
 
   return rows;
+}
+
+/**
+ * Pure: pick the cursor row index for the next-up VPR.
+ *
+ * Returns the index of the first vpr row with `nextUp: true`, or 0 when no
+ * such row exists. Used to auto-jump the TUI cursor onto the actionable VPR
+ * when the TUI opens.
+ *
+ * @param {Array<{type: string, nextUp?: boolean}>} treeItems
+ * @returns {number}
+ */
+export function findNextUpCursor(treeItems) {
+  const idx = treeItems.findIndex(row => row.type === 'vpr' && row.nextUp);
+  return idx === -1 ? 0 : idx;
 }

@@ -4,7 +4,7 @@
 
 import { buildState } from '../core/state.mjs';
 import { getDiff, getFiles, getVprFiles } from '../core/jj.mjs';
-import { buildTree } from './tree.mjs';
+import { buildTree, findNextUpCursor } from './tree.mjs';
 import { render, CLEAR, HIDE_CURSOR, SHOW_CURSOR } from './render.mjs';
 import { handleNormalKey } from './modes/normal.mjs';
 import { readFileSync, existsSync } from 'node:fs';
@@ -171,6 +171,7 @@ export async function startTui() {
   // ─── Initial load ─────────────────────────────────────────────────
 
   await reload();
+  cursor = findNextUpCursor(treeItems);
 
   // ─── Terminal setup ────────────────────────────────────────────────
 

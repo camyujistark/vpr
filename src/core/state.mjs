@@ -214,8 +214,8 @@ export async function buildState() {
     }
   }
 
-  // 7. Assemble items array
-  const items = Object.entries(metaItems).map(([itemName, itemData]) => {
+  // 7. Assemble items array (chain-state enriched below)
+  const baseItems = Object.entries(metaItems).map(([itemName, itemData]) => {
     const vprs = Object.entries(itemData.vprs ?? {}).map(([vprBookmark, vprMeta]) => {
       const commits = (vprCommits.get(vprBookmark) ?? []).map(c => ({
         changeId: c.changeId,
@@ -246,6 +246,8 @@ export async function buildState() {
       vprs,
     };
   });
+
+  const items = computeChainState(baseItems, { sent });
 
   // 8. Assemble hold array
   const hold = holdCommits.map(c => ({
