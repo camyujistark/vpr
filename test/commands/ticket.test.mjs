@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ticketNew, ticketList, ticketEdit, ticketDone, ticketRefresh } from '../../src/commands/ticket.mjs';
+import { ticketNew, ticketList, ticketEdit, ticketDone, ticketRefresh, ticketUpdate } from '../../src/commands/ticket.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
 
 // ---------------------------------------------------------------------------
@@ -360,6 +360,41 @@ describe('ticket commands', () => {
       assert.strictEqual(meta.items['with-parent'].parentWiTitle, 'New Parent');
       assert.strictEqual(meta.items['with-parent'].parentWiDescription, 'new parent desc');
       assert.deepStrictEqual(calls.sort(), [10, 99]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ticketUpdate
+  // -------------------------------------------------------------------------
+
+  describe('ticketUpdate()', () => {
+    beforeEach(async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 42,
+            wiTitle: 'Scaffold App',
+            wiDescription: 'local edited description',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    it('pushes the local wiDescription to the provider', async () => {
+      const calls = [];
+      const provider = {
+        updateWorkItemDescription: async (id, body) => {
+          calls.push({ id, body });
+        },
+      };
+
+      await ticketUpdate('scaffold-app', { provider });
+
+      assert.deepStrictEqual(calls, [{ id: 42, body: 'local edited description' }]);
     });
   });
 });

@@ -2,3 +2,4 @@
 2026-04-28T22:45+10:00 vpr-stacked-pr-orchestration/ticket-sync-foundation: ticketRefresh() command fetches and persists wiDescription via provider.getWorkItem; mock-provider unit test added.
 2026-04-28T22:47+10:00 vpr-stacked-pr-orchestration/ticket-sync-foundation: ticketRefresh fetches parent WI when item.parentWi set; computeTicketSync merges parentWiTitle/parentWiDescription.
 2026-04-28T22:56+10:00 vpr-stacked-pr-orchestration/ticket-sync-foundation: backwards-compat regression test — legacy items missing wiDescription/parentWi* refresh without error and without fabricated parent fields.
+2026-04-28T22:58+10:00 vpr-stacked-pr-orchestration/ticket-update: ticketUpdate() pushes local wiDescription via provider.updateWorkItemDescription; first acceptance criterion.

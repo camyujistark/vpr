@@ -233,6 +233,23 @@ export async function ticketRefresh(name, { provider }) {
 }
 
 /**
+ * Push the item's local wiDescription back to the provider, so edits made in
+ * meta.json land on the work item.
+ *
+ * @param {string} name
+ * @param {{ provider: object }} opts
+ * @returns {Promise<void>}
+ */
+export async function ticketUpdate(name, { provider }) {
+  const meta = await loadMeta();
+  if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+  const item = meta.items[name];
+  if (!item.wi) return;
+
+  await provider.updateWorkItemDescription(item.wi, item.wiDescription ?? '');
+}
+
+/**
  * Delete an item from meta.
  * @param {string} name
  * @returns {Promise<void>}
