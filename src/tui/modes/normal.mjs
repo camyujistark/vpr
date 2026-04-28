@@ -14,6 +14,7 @@ import { removeVpr } from '../../commands/remove.mjs';
 import { clearAll } from '../../commands/clear.mjs';
 import { sendChecks, send } from '../../commands/send.mjs';
 import { generate } from '../../commands/generate.mjs';
+import { pickSendBookmark } from '../send-pick.mjs';
 import {
   openEditor,
   buildBulkEditContent,
@@ -309,10 +310,18 @@ export async function handleNormalKey(str, key, ctx) {
     return true;
   }
 
-  // P — send VPR
-  if (str === 'P' && current?.type === 'vpr') {
+  // P — send next-up VPR (cursor-independent: picks via chain state)
+  if (str === 'P') {
+    const pick = pickSendBookmark(state);
+    if (pick.message) {
+      setMessage(pick.message);
+      renderFn();
+      return true;
+    }
+    const targetBookmark = pick.bookmark;
+
     try {
-      const checks = await sendChecks(current.bookmark);
+      const checks = await sendChecks(targetBookmark);
       const lines = checks.map(c => `${c.pass ? '✓' : '✗'} ${c.name}: ${c.message}`);
       setMessage(lines.join('  '));
       renderFn();
@@ -324,7 +333,7 @@ export async function handleNormalKey(str, key, ctx) {
         return true;
       }
 
-      const yes = await confirm('Send this VPR?');
+      const yes = await confirm(`Send ${targetBookmark}?`);
       if (!yes) {
         setMessage('Send cancelled');
         renderFn();
@@ -344,7 +353,7 @@ export async function handleNormalKey(str, key, ctx) {
 
       let result;
       try {
-        result = await send(current.bookmark, { provider });
+        result = await send(targetBookmark, { provider });
       } catch (err) {
         if (err.code === 'BRANCH_COLLISION') {
           const yes2 = await confirm(`Branch "${err.branchName}" already exists. Delete it and continue?`);
@@ -353,7 +362,7 @@ export async function handleNormalKey(str, key, ctx) {
             renderFn();
             return true;
           }
-          result = await send(current.bookmark, { provider, force: true });
+          result = await send(targetBookmark, { provider, force: true });
         } else {
           throw err;
         }

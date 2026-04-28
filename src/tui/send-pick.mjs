@@ -16,3 +16,20 @@ export function findNextUpBookmark(items) {
   }
   return null;
 }
+
+/**
+ * Pure: decide what the TUI P-key should send.
+ *
+ * Cursor-independent: walks the chain-state items from `state` and picks the
+ * first nextUp VPR. Returns `{ bookmark }` when sendable, `{ message }` when
+ * nothing is sendable so the caller can surface a clear footer line instead
+ * of falling through to a generic error.
+ *
+ * @param {{ items: Array<{ vprs: Array<{ bookmark: string, nextUp?: boolean }> }> }} state
+ * @returns {{ bookmark: string } | { message: string }}
+ */
+export function pickSendBookmark(state) {
+  const bookmark = findNextUpBookmark(state.items);
+  if (bookmark) return { bookmark };
+  return { message: 'No sendable VPR — chain is empty or all sent.' };
+}
