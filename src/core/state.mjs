@@ -20,7 +20,14 @@ export function computeChainState(items, { sent = {}, baseBranch = 'main' } = {}
     let nextUpAssigned = false;
     let prevUnsentBookmark = null;
 
-    const itemCascadeTarget = latestSentBranchForItem(sent, item.name) ?? baseBranch;
+    // Cascade target priority:
+    //   1. Latest sent VPR in this item (item-local stack continues)
+    //   2. Latest sent VPR globally (new item starts where the chain currently ends)
+    //   3. baseBranch (no sends yet)
+    const itemCascadeTarget =
+      latestSentBranchForItem(sent, item.name) ??
+      latestSentBranchGlobal(sent) ??
+      baseBranch;
 
     const vprs = item.vprs.map(vpr => {
       if (vpr.held) {
@@ -49,6 +56,19 @@ function latestSentBranchForItem(sent, itemName) {
   for (const [branch, entry] of Object.entries(sent)) {
     if (entry?.itemName !== itemName) continue;
     const at = entry.sentAt ?? '';
+    if (latestAt === null || at > latestAt) {
+      latestAt = at;
+      latestBranch = branch;
+    }
+  }
+  return latestBranch;
+}
+
+function latestSentBranchGlobal(sent) {
+  let latestBranch = null;
+  let latestAt = null;
+  for (const [branch, entry] of Object.entries(sent)) {
+    const at = entry?.sentAt ?? '';
     if (latestAt === null || at > latestAt) {
       latestAt = at;
       latestBranch = branch;
