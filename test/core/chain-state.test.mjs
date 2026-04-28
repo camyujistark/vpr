@@ -21,6 +21,28 @@ describe('computeChainState()', () => {
     assert.strictEqual(vpr.cascadeTarget, 'main');
   });
 
+  it('cascadeTarget for the next-unsent VPR is the most-recently-sent branch from meta.sent for this item', () => {
+    const items = [
+      {
+        name: 'foo',
+        vprs: [{ bookmark: 'foo/b', sent: false, held: false }],
+      },
+    ];
+
+    const sent = {
+      'feat/123-a': {
+        prId: 1,
+        itemName: 'foo',
+        originalBookmark: 'foo/a',
+        sentAt: '2026-01-01T00:00:00.000Z',
+      },
+    };
+
+    const enriched = computeChainState(items, { sent, baseBranch: 'main' });
+
+    assert.strictEqual(enriched[0].vprs[0].cascadeTarget, 'feat/123-a');
+  });
+
   it('blocks every unsent VPR after the first; blockedBy points at the immediate predecessor', () => {
     const items = [
       {

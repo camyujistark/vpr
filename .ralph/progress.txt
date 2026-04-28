@@ -11,3 +11,4 @@
 2026-04-28T23:19+10:00 vpr-stacked-pr-orchestration/generate-prompt-enrichment: buildPrompt collapses whitespace in title and commit subjects so single-line headers stay on one line; special-character escaping regression test added.
 2026-04-28T23:21+10:00 vpr-stacked-pr-orchestration/chain-state-computer: tracer-bullet computeChainState pure helper enriches VPRs with blocked/blockedBy/nextUp/cascadeTarget; first AC covered.
 2026-04-28T23:25+10:00 vpr-stacked-pr-orchestration/chain-state-computer: computeChainState marks every unsent VPR after the first as blocked with blockedBy pointing at its immediate predecessor.
+2026-04-28T23:29+10:00 vpr-stacked-pr-orchestration/chain-state-computer: cascadeTarget for next-unsent VPR resolves to most-recently-sent branch (by sentAt) for the same item, fallback to baseBranch.

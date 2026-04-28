@@ -15,10 +15,12 @@ import { loadMeta } from './meta.mjs';
  * @param {{ sent?: object, baseBranch?: string }} [opts]
  * @returns {Array}
  */
-export function computeChainState(items, { sent: _sent = {}, baseBranch = 'main' } = {}) {
+export function computeChainState(items, { sent = {}, baseBranch = 'main' } = {}) {
   return items.map(item => {
     let nextUpAssigned = false;
     let prevUnsentBookmark = null;
+
+    const itemCascadeTarget = latestSentBranchForItem(sent, item.name) ?? baseBranch;
 
     const vprs = item.vprs.map(vpr => {
       if (vpr.sent) {
@@ -26,8 +28,8 @@ export function computeChainState(items, { sent: _sent = {}, baseBranch = 'main'
       }
 
       const enriched = !nextUpAssigned
-        ? { ...vpr, blocked: false, blockedBy: null, nextUp: true, cascadeTarget: baseBranch }
-        : { ...vpr, blocked: true, blockedBy: prevUnsentBookmark, nextUp: false, cascadeTarget: baseBranch };
+        ? { ...vpr, blocked: false, blockedBy: null, nextUp: true, cascadeTarget: itemCascadeTarget }
+        : { ...vpr, blocked: true, blockedBy: prevUnsentBookmark, nextUp: false, cascadeTarget: itemCascadeTarget };
 
       nextUpAssigned = true;
       prevUnsentBookmark = vpr.bookmark;
@@ -36,6 +38,20 @@ export function computeChainState(items, { sent: _sent = {}, baseBranch = 'main'
 
     return { ...item, vprs };
   });
+}
+
+function latestSentBranchForItem(sent, itemName) {
+  let latestBranch = null;
+  let latestAt = null;
+  for (const [branch, entry] of Object.entries(sent)) {
+    if (entry?.itemName !== itemName) continue;
+    const at = entry.sentAt ?? '';
+    if (latestAt === null || at > latestAt) {
+      latestAt = at;
+      latestBranch = branch;
+    }
+  }
+  return latestBranch;
 }
 
 /**
