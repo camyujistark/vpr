@@ -2,6 +2,62 @@ import { getBase, getConflicts, jjSafe } from './jj.mjs';
 import { loadMeta } from './meta.mjs';
 
 /**
+ * Pure decorator: enrich each item's VPRs with chain-state fields
+ * (`blocked`, `blockedBy`, `nextUp`, `cascadeTarget`).
+ *
+ * Inputs are synthetic-friendly: an items array (each with `name` and
+ * `vprs[]` carrying at minimum `bookmark`, `sent`, `held`), and an options
+ * bag with `sent` (the meta.sent map) and `baseBranch` (default `main`).
+ *
+ * Returns a new array — does not mutate the input.
+ *
+ * @param {Array<{name: string, vprs: Array<{bookmark: string, sent?: boolean, held?: boolean}>}>} items
+ * @param {{ sent?: object, baseBranch?: string }} [opts]
+ * @returns {Array}
+ */
+export function computeChainState(items, { sent = {}, baseBranch = 'main' } = {}) {
+  return items.map(item => {
+    let nextUpAssigned = false;
+    let prevUnsentBookmark = null;
+
+    const itemCascadeTarget = latestSentBranchForItem(sent, item.name) ?? baseBranch;
+
+    const vprs = item.vprs.map(vpr => {
+      if (vpr.held) {
+        return { ...vpr, blocked: false, blockedBy: null, nextUp: false, cascadeTarget: baseBranch };
+      }
+      if (vpr.sent) {
+        return { ...vpr, blocked: false, blockedBy: null, nextUp: false, cascadeTarget: baseBranch };
+      }
+
+      const enriched = !nextUpAssigned
+        ? { ...vpr, blocked: false, blockedBy: null, nextUp: true, cascadeTarget: itemCascadeTarget }
+        : { ...vpr, blocked: true, blockedBy: prevUnsentBookmark, nextUp: false, cascadeTarget: itemCascadeTarget };
+
+      nextUpAssigned = true;
+      prevUnsentBookmark = vpr.bookmark;
+      return enriched;
+    });
+
+    return { ...item, vprs };
+  });
+}
+
+function latestSentBranchForItem(sent, itemName) {
+  let latestBranch = null;
+  let latestAt = null;
+  for (const [branch, entry] of Object.entries(sent)) {
+    if (entry?.itemName !== itemName) continue;
+    const at = entry.sentAt ?? '';
+    if (latestAt === null || at > latestAt) {
+      latestAt = at;
+      latestBranch = branch;
+    }
+  }
+  return latestBranch;
+}
+
+/**
  * Parse a single line from the jj log template into a raw commit object.
  * Template columns (tab-separated):
  *   change_id.short() \t commit_id.short() \t bookmarks \t description.first_line()
@@ -158,8 +214,8 @@ export async function buildState() {
     }
   }
 
-  // 7. Assemble items array
-  const items = Object.entries(metaItems).map(([itemName, itemData]) => {
+  // 7. Assemble items array (chain-state enriched below)
+  const baseItems = Object.entries(metaItems).map(([itemName, itemData]) => {
     const vprs = Object.entries(itemData.vprs ?? {}).map(([vprBookmark, vprMeta]) => {
       const commits = (vprCommits.get(vprBookmark) ?? []).map(c => ({
         changeId: c.changeId,
@@ -186,9 +242,12 @@ export async function buildState() {
       name: itemName,
       wi: itemData.wi,
       wiTitle: itemData.wiTitle ?? '',
+      held: Boolean(itemData.held),
       vprs,
     };
   });
+
+  const items = computeChainState(baseItems, { sent });
 
   // 8. Assemble hold array
   const hold = holdCommits.map(c => ({

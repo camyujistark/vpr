@@ -8,19 +8,33 @@ const DEFAULT_LLM_CMD = 'claude -p';
 /**
  * Build the prompt string for a VPR.
  *
- * @param {{ title: string, story: string }} vpr
- * @param {Array<{ subject: string }>} commits
+ * @param {{
+ *   item: { wi?: number|null, wiTitle?: string|null, wiDescription?: string|null,
+ *           parentWi?: number|null, parentWiTitle?: string|null, parentWiDescription?: string|null },
+ *   vpr: { title: string, story: string },
+ *   commits: Array<{ subject: string }>,
+ * }} args
  * @returns {string}
  */
-function buildPrompt(vpr, commits) {
-  const commitLines = commits.map(c => `- ${c.subject}`).join('\n');
+export function buildPrompt({ item, vpr, commits }) {
+  const oneLine = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const commitLines = commits.map(c => `- ${oneLine(c.subject)}`).join('\n');
   const hasStory = Boolean(vpr.story && vpr.story.trim());
   const lines = [
     'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
     '',
-    `PR Title: ${vpr.title}`,
-    '',
   ];
+  if (item && item.parentWi && item.parentWiDescription) {
+    lines.push(`PARENT PRD (PBI #${item.parentWi}): ${item.parentWiTitle ?? ''}`);
+    lines.push(item.parentWiDescription);
+    lines.push('');
+  }
+  if (item && item.wi) {
+    lines.push(`THIS SLICE (Task #${item.wi}): ${item.wiTitle ?? ''}`);
+    if (item.wiDescription) lines.push(item.wiDescription);
+    lines.push('');
+  }
+  lines.push(`PR Title: ${oneLine(vpr.title)}`, '');
   if (hasStory) {
     lines.push(`Story: ${vpr.story}`, '');
   } else {
@@ -55,15 +69,27 @@ function resolveLlmCmd(generateCmd) {
  * Generate a PR description for a single VPR.
  *
  * @param {string} query  — bookmark name, partial bookmark, or partial title
- * @param {{ generateCmd?: string }} [opts]
+ * @param {{ generateCmd?: string, story?: string }} [opts]
  * @returns {Promise<{ bookmark: string, output: string }>}
  */
-export async function generate(query, { generateCmd } = {}) {
+export async function generate(query, { generateCmd, story } = {}) {
   const meta = await loadMeta();
   const found = findVpr(meta, query);
   if (!found) throw new Error(`VPR not found: ${query}`);
 
   const { itemName, bookmark, vpr } = found;
+  const item = meta.items[itemName];
+
+  // Agent path: --story bypasses the editor. Persist the supplied story
+  // onto the VPR before regenerating so the prompt reflects the new narrative.
+  if (story !== undefined) {
+    vpr.story = story;
+    const stagingMeta = await loadMeta();
+    if (stagingMeta.items[itemName]?.vprs[bookmark]) {
+      stagingMeta.items[itemName].vprs[bookmark].story = story;
+      await saveMeta(stagingMeta);
+    }
+  }
 
   // Get commits for this VPR from state
   const state = await buildState();
@@ -71,7 +97,7 @@ export async function generate(query, { generateCmd } = {}) {
   const stateVpr = stateItem?.vprs.find(v => v.bookmark === bookmark);
   const commits = stateVpr?.commits ?? [];
 
-  const prompt = buildPrompt(vpr, commits);
+  const prompt = buildPrompt({ item, vpr, commits });
   const cmd = resolveLlmCmd(generateCmd);
 
   let output;

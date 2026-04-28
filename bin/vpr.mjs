@@ -72,10 +72,14 @@ VPR v2 — Virtual Pull Request Manager
 
   Items:
     vpr ticket new "title"          Create item + work item
+    vpr ticket new "title" --parent 17148   Create as child of an existing parent WI
     vpr ticket new 17065            Attach to existing work item
     vpr ticket list                 List items
     vpr ticket edit <name>          Edit item
     vpr ticket done <name>          Close item
+    vpr ticket hold <name>          Park item — moves to bottom of vpr status
+    vpr ticket unhold <name>        Restore a held item
+    vpr plan pull 17148             Pull a parent WI; create one item per child Task
 
   VPRs:
     vpr add "title"                 Create VPR in current item
@@ -143,22 +147,28 @@ try {
     // -----------------------------------------------------------------------
     case 'ticket': {
       const [sub, ...ticketArgs] = args;
-      const { ticketNew, ticketList, ticketEdit, ticketDone } = await import('../src/commands/ticket.mjs');
+      const { ticketNew, ticketList, ticketEdit, ticketDone, ticketHold, ticketUnhold } = await import('../src/commands/ticket.mjs');
 
       switch (sub) {
         case 'new': {
           const raw = ticketArgs[0];
           if (!raw) {
-            console.error('Usage: vpr ticket new "title" | <workItemId>');
+            console.error('Usage: vpr ticket new "title" | <workItemId> [--parent <wi-id>]');
             process.exit(1);
           }
           const titleOrId = /^\d+$/.test(raw) ? Number(raw) : raw;
+          const flags = parseFlags(ticketArgs.slice(1));
+          const parentId = flags.parent ? Number(flags.parent) : undefined;
+          if (parentId && typeof titleOrId === 'number') {
+            console.error('Error: --parent only applies when creating a new WI from a title');
+            process.exit(1);
+          }
 
           const config = loadConfig() ?? {};
           const { createProvider } = await import('../src/providers/index.mjs');
           const provider = createProvider({ provider: 'none', ...config });
 
-          const result = await ticketNew(titleOrId, { provider });
+          const result = await ticketNew(titleOrId, { provider, parentId });
           console.log(JSON.stringify(result, null, 2));
           break;
         }
@@ -192,12 +202,62 @@ try {
           break;
         }
 
+        case 'hold': {
+          const name = ticketArgs[0];
+          if (!name) {
+            console.error('Usage: vpr ticket hold <name>');
+            process.exit(1);
+          }
+          const res = await ticketHold(name);
+          if (res.detached) console.log(`Held ${name} — detached commits onto trunk`);
+          else if (res.reason === 'already-detached') console.log(`Held ${name} — already a sidebranch off trunk`);
+          else if (res.reason === 'no-bookmarks') console.log(`Held ${name} — no bookmarks to detach`);
+          else if (res.reason === 'no-jj') console.log(`Held ${name} — jj not available, metadata only`);
+          else console.log(`Held ${name}`);
+          break;
+        }
+
+        case 'unhold': {
+          const name = ticketArgs[0];
+          if (!name) {
+            console.error('Usage: vpr ticket unhold <name>');
+            process.exit(1);
+          }
+          await ticketUnhold(name);
+          break;
+        }
+
         default: {
           console.error(`Unknown ticket sub-command: ${sub ?? '(none)'}`);
-          console.error('Available: new, list, edit, done');
+          console.error('Available: new, list, edit, done, hold, unhold');
           process.exit(1);
         }
       }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr plan pull <parent-wi-id>
+    // -----------------------------------------------------------------------
+    case 'plan': {
+      const sub = args[0];
+      if (sub !== 'pull') {
+        console.error(`Unknown plan sub-command: ${sub ?? '(none)'}`);
+        console.error('Usage: vpr plan pull <parent-wi-id>');
+        process.exit(1);
+      }
+      const raw = args[1];
+      const parentId = /^\d+$/.test(raw ?? '') ? Number(raw) : null;
+      if (!parentId) {
+        console.error('Usage: vpr plan pull <parent-wi-id>');
+        process.exit(1);
+      }
+      const config = loadConfig() ?? {};
+      const { createProvider } = await import('../src/providers/index.mjs');
+      const provider = createProvider({ provider: 'none', ...config });
+      const { planPull } = await import('../src/commands/plan-pull.mjs');
+      const result = await planPull(parentId, { provider });
+      console.log(JSON.stringify(result, null, 2));
       break;
     }
 
@@ -311,7 +371,8 @@ try {
           console.error('Usage: vpr generate <vpr> | vpr generate --all');
           process.exit(1);
         }
-        const result = await generate(query, { generateCmd: config.generateCmd });
+        const story = typeof flags.story === 'string' ? flags.story : undefined;
+        const result = await generate(query, { generateCmd: config.generateCmd, story });
         console.log(JSON.stringify(result, null, 2));
       }
       break;

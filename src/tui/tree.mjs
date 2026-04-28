@@ -12,10 +12,12 @@
 export function buildTree(state) {
   const rows = [];
 
-  // Items → active VPRs → Commits (held VPRs collected for bottom)
+  // Items → active VPRs → Commits (held VPRs and held items collected for bottom)
   const heldVprs = [];
+  const heldItems = state.items.filter(it => it.held);
+  const activeItems = state.items.filter(it => !it.held);
 
-  for (const item of state.items) {
+  for (const item of activeItems) {
     const activeVprs = item.vprs.filter(v => !v.held);
     const itemHeldVprs = item.vprs.filter(v => v.held);
 
@@ -26,6 +28,7 @@ export function buildTree(state) {
       wiTitle: item.wiTitle,
       vprCount: activeVprs.length,
       collapsed: false,
+      held: false,
     });
 
     for (const vpr of activeVprs) {
@@ -38,6 +41,9 @@ export function buildTree(state) {
         sent: vpr.sent,
         held: false,
         conflict: vpr.conflict,
+        nextUp: Boolean(vpr.nextUp),
+        blocked: Boolean(vpr.blocked),
+        blockedBy: vpr.blockedBy ?? null,
         commitCount: vpr.commits.length,
         itemName: item.name,
       });
@@ -73,9 +79,23 @@ export function buildTree(state) {
     }
   }
 
-  // Held VPRs
-  if (heldVprs.length > 0) {
-    rows.push({ type: 'hold-header', count: heldVprs.length + state.hold.length });
+  // Held items + held VPRs + held commits, all under one hold-header
+  const totalHeld = heldItems.length + heldVprs.length + state.hold.length;
+  if (totalHeld > 0) {
+    rows.push({ type: 'hold-header', count: totalHeld });
+
+    for (const item of heldItems) {
+      rows.push({
+        type: 'item',
+        name: item.name,
+        wi: item.wi,
+        wiTitle: item.wiTitle,
+        vprCount: item.vprs.length,
+        collapsed: true,
+        held: true,
+      });
+    }
+
     for (const { vpr, itemName } of heldVprs) {
       rows.push({
         type: 'vpr',
@@ -91,17 +111,6 @@ export function buildTree(state) {
       });
     }
 
-    // Held commits
-    for (const commit of state.hold) {
-      rows.push({
-        type: 'hold',
-        changeId: commit.changeId,
-        sha: commit.sha,
-        subject: commit.subject,
-      });
-    }
-  } else if (state.hold.length > 0) {
-    rows.push({ type: 'hold-header', count: state.hold.length });
     for (const commit of state.hold) {
       rows.push({
         type: 'hold',
@@ -113,4 +122,19 @@ export function buildTree(state) {
   }
 
   return rows;
+}
+
+/**
+ * Pure: pick the cursor row index for the next-up VPR.
+ *
+ * Returns the index of the first vpr row with `nextUp: true`, or 0 when no
+ * such row exists. Used to auto-jump the TUI cursor onto the actionable VPR
+ * when the TUI opens.
+ *
+ * @param {Array<{type: string, nextUp?: boolean}>} treeItems
+ * @returns {number}
+ */
+export function findNextUpCursor(treeItems) {
+  const idx = treeItems.findIndex(row => row.type === 'vpr' && row.nextUp);
+  return idx === -1 ? 0 : idx;
 }

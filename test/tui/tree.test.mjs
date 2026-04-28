@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTree } from '../../src/tui/tree.mjs';
+import { buildTree, findNextUpCursor } from '../../src/tui/tree.mjs';
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -272,5 +272,19 @@ describe('buildTree()', () => {
       assert.strictEqual(commits[1].changeId, 'c2');
       assert.strictEqual(commits[2].changeId, 'c3');
     });
+  });
+});
+
+describe('findNextUpCursor()', () => {
+  it('returns the row index of the first vpr row marked nextUp — TUI cursor lands on the actionable VPR on open', () => {
+    const tree = [
+      { type: 'item', name: 'i1' },
+      { type: 'vpr', bookmark: 'i1/sent', sent: true, nextUp: false },
+      { type: 'commit', changeId: 'c1' },
+      { type: 'vpr', bookmark: 'i1/next', sent: false, nextUp: true },
+      { type: 'commit', changeId: 'c2' },
+      { type: 'vpr', bookmark: 'i1/blocked', sent: false, nextUp: false, blocked: true },
+    ];
+    assert.strictEqual(findNextUpCursor(tree), 3);
   });
 });

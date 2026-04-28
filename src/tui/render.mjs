@@ -60,15 +60,48 @@ function fitWidth(str, width) {
 
 function renderItem(item) {
   const label = item.wi ? `${item.wiTitle} (#${item.wi})` : item.name;
+  if (item.held) {
+    const vprNote = item.vprCount > 0 ? `${DIM} (${item.vprCount} VPR${item.vprCount === 1 ? '' : 's'})${RESET}` : '';
+    return `  ${YELLOW}⏸${RESET} ${DIM}${label}${RESET}${vprNote}`;
+  }
   return `${CYAN}${BOLD}▼ ${label}${RESET}`;
 }
 
+/**
+ * Pure: pick the status icon for a VPR row.
+ *
+ * Precedence (highest first): held, sent, conflict, nextUp, blocked, default.
+ *
+ * @param {{ held?: boolean, sent?: boolean, conflict?: boolean, nextUp?: boolean, blocked?: boolean }} vpr
+ * @returns {string} icon string with ANSI color codes
+ */
+export function vprIcon(vpr) {
+  if (vpr.held) return `${YELLOW}⏸${RESET}`;
+  if (vpr.sent) return `${GREEN}✓${RESET}`;
+  if (vpr.conflict) return `${RED}!${RESET}`;
+  if (vpr.nextUp) return `▶`;
+  if (vpr.blocked) return `${DIM}◦${RESET}`;
+  return `${DIM}·${RESET}`;
+}
+
+/**
+ * Pure: pick the right-aligned target label for a VPR row.
+ *
+ * Blocked VPRs label what they wait on; sent VPRs label their PR; held VPRs
+ * call out the detached state. Other VPRs have no label.
+ *
+ * @param {{ held?: boolean, sent?: boolean, blocked?: boolean, blockedBy?: string|null, prId?: number|null }} vpr
+ * @returns {string} label string with ANSI color codes (empty when no label applies)
+ */
+export function vprTargetLabel(vpr) {
+  if (vpr.held) return `${YELLOW}[held — detached]${RESET}`;
+  if (vpr.blocked && vpr.blockedBy) return `${DIM}→ ${vpr.blockedBy}${RESET}`;
+  if (vpr.sent && vpr.prId) return `${GREEN}→ PR #${vpr.prId}${RESET}`;
+  return '';
+}
+
 function renderVpr(vpr) {
-  let icon;
-  if (vpr.held) icon = `${YELLOW}⏸${RESET}`;
-  else if (vpr.sent) icon = `${GREEN}✓${RESET}`;
-  else if (vpr.conflict) icon = `${RED}!${RESET}`;
-  else icon = `${DIM}·${RESET}`;
+  const icon = vprIcon(vpr);
   const count = vpr.commitCount > 0 ? `${DIM} (${vpr.commitCount})${RESET}` : '';
   const label = vpr.held ? `${DIM}${vpr.title || vpr.bookmark}${RESET}` : (vpr.title || vpr.bookmark);
   return `  ${icon} ${label}${count}`;
@@ -139,7 +172,7 @@ function helpLine(cursorItem, mode) {
 
   switch (cursorItem.type) {
     case 'item':
-      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  E edit all  O reorder  R refresh  X clear all  q quit${RESET}`;
+      return `${DIM}j/k nav  J/K scroll  v files  r rename  n new item  a add vpr  H hold  E edit all  O reorder  R refresh  X clear all  q quit${RESET}`;
     case 'vpr':
       return `${DIM}j/k nav  J/K scroll  v files  r rename  s story  g generate  H hold  P send  d dissolve  i interactive  R refresh  q quit${RESET}`;
     case 'commit':

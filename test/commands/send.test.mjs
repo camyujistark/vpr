@@ -237,6 +237,143 @@ describe('send()', () => {
   });
 
   // -------------------------------------------------------------------------
+  // No-args: pick the next-unsent VPR via chain state
+  // -------------------------------------------------------------------------
+
+  describe('no-args', () => {
+    it('picks the next-unsent VPR when query is omitted', async () => {
+      await seedMeta({ story: 'Real story content' });
+      const result = await send(undefined, {
+        provider: null,
+        dryRun: true,
+        tpIndex: 1,
+        targetBranch: 'main',
+      });
+      assert.strictEqual(result.branchName, 'feat/99-my-feature-nav-bar');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Explicit override: passing a bookmark bypasses no-args next-up resolution
+  // -------------------------------------------------------------------------
+
+  describe('explicit override', () => {
+    it('explicit bookmark sends the named VPR even when no-args would pick a different one', async () => {
+      await saveMeta({
+        items: {
+          'feature-a': {
+            wi: 11,
+            wiTitle: 'Feature A',
+            vprs: {
+              'feature-a/vpr1': { title: 'A One', story: 'a story', output: null },
+            },
+          },
+          'feature-b': {
+            wi: 22,
+            wiTitle: 'Feature B',
+            vprs: {
+              'feature-b/vpr1': { title: 'B One', story: 'b story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+      const result = await send('feature-b/vpr1', {
+        provider: null,
+        dryRun: true,
+        tpIndex: 1,
+        targetBranch: 'main',
+      });
+      assert.strictEqual(result.branchName, 'feat/22-feature-b-vpr1');
+      assert.strictEqual(result.prTitle, '1: B One');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sequential refusal: cannot send a blocked VPR (an earlier sibling unsent)
+  // -------------------------------------------------------------------------
+
+  describe('cascade target', () => {
+    it('uses cascadeTarget from chain state as the default targetBranch', async () => {
+      await saveMeta({
+        items: {
+          'my-feature': {
+            wi: 99,
+            wiTitle: 'My Feature',
+            vprs: {
+              'my-feature/step-two': { title: 'Step Two', story: 'second story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {
+          'feat/99-my-feature-step-one': {
+            prId: 1,
+            prTitle: '1: Step One',
+            targetBranch: 'main',
+            itemName: 'my-feature',
+            wi: 99,
+            originalBookmark: 'my-feature/step-one',
+            sentAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+        eventLog: [],
+      });
+      const result = await send('my-feature/step-two', { provider: null, dryRun: true });
+      assert.strictEqual(result.targetBranch, 'feat/99-my-feature-step-one');
+    });
+  });
+
+  describe('resolved target echo', () => {
+    it('prints `Target: <branch>` to stdout before push', async () => {
+      await seedMeta({ story: 'Real story content' });
+      const originalLog = console.log;
+      const lines = [];
+      console.log = (...args) => { lines.push(args.join(' ')); };
+      try {
+        await send('my-feature/nav-bar', {
+          provider: null,
+          dryRun: true,
+          tpIndex: 1,
+          targetBranch: 'main',
+        });
+      } finally {
+        console.log = originalLog;
+      }
+      assert.ok(
+        lines.some(l => /^Target: main$/.test(l)),
+        `expected stdout to include "Target: main", got:\n${lines.join('\n')}`,
+      );
+    });
+  });
+
+  describe('blocked refusal', () => {
+    it('throws `Cannot send <bookmark>: send <blocker> first` when an earlier VPR is unsent', async () => {
+      await saveMeta({
+        items: {
+          'my-feature': {
+            wi: 99,
+            wiTitle: 'My Feature',
+            vprs: {
+              'my-feature/nav-bar': { title: 'Nav Bar', story: 'first story', output: null },
+              'my-feature/footer': { title: 'Footer', story: 'second story', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+      await assert.rejects(
+        () => send('my-feature/footer', { provider: null, dryRun: true }),
+        /Cannot send my-feature\/footer: send my-feature\/nav-bar first/,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Dry run
   // -------------------------------------------------------------------------
 

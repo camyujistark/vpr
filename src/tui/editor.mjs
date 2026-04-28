@@ -184,6 +184,58 @@ export function parseStoryEditContent(content) {
   };
 }
 
+// ─── Send (single-VPR title + story edit) ────────────────────────────────────
+
+/**
+ * Builds content for the `vpr send` editor flow — title and story are editable;
+ * everything else (commits, last-generated output, work-item description excerpts)
+ * is rendered as `#` comment lines that get stripped on save.
+ *
+ * @param {{
+ *   vpr: { title?: string, story?: string },
+ * }} args
+ * @returns {string}
+ */
+export function buildSendEditContent({ vpr }) {
+  const lines = [
+    '--- Title ---',
+    vpr.title || '',
+    '',
+    '--- Story ---',
+    vpr.story || '',
+    '',
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Parse content from buildSendEditContent back into { title, story }.
+ * Lines starting with `#` are treated as read-only comments and stripped.
+ *
+ * @param {string} content
+ * @returns {{ title: string, story: string }}
+ */
+export function parseSendEditContent(content) {
+  // Sections advance forward-only: null → 'title' → 'story'. Once we've entered
+  // the story section, subsequent `--- Title ---` / `--- Story ---` lines are
+  // story content, not section headers — so the user can quote the buffer
+  // format inside their story without losing it.
+  let section = null; // 'title' | 'story'
+  const buffers = { title: [], story: [] };
+
+  for (const raw of content.split('\n')) {
+    if (section === null && raw === '--- Title ---') { section = 'title'; continue; }
+    if (section === 'title' && raw === '--- Story ---') { section = 'story'; continue; }
+    if (raw.startsWith('#')) continue;
+    if (section) buffers[section].push(raw);
+  }
+
+  return {
+    title: buffers.title.join('\n').trim(),
+    story: buffers.story.join('\n').trim(),
+  };
+}
+
 // ─── Reorder ──────────────────────────────────────────────────────────────────
 
 /**

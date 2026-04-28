@@ -1,7 +1,22 @@
-import { jj, jjSafe } from '../core/jj.mjs';
+import { jj, jjSafe, getBaseBranch } from '../core/jj.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
-import { buildState } from '../core/state.mjs';
+import { buildState, computeChainState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
+
+/**
+ * Resolve the bookmark of the next sendable VPR by walking the chain state.
+ * Returns the bookmark string, or null if no VPR is currently sendable.
+ */
+async function resolveNextUpBookmark() {
+  const state = await buildState();
+  const enriched = computeChainState(state.items, { sent: state.sent });
+  for (const item of enriched) {
+    for (const vpr of item.vprs) {
+      if (vpr.nextUp) return vpr.bookmark;
+    }
+  }
+  return null;
+}
 
 /**
  * Generate a URL-safe slug from a string.
@@ -85,6 +100,11 @@ export async function sendChecks(query) {
  * }>}
  */
 export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false } = {}) {
+  if (!query) {
+    const nextUp = await resolveNextUpBookmark();
+    if (!nextUp) throw new Error('No sendable VPRs — chain is empty or fully sent');
+    query = nextUp;
+  }
   const meta = await loadMeta();
   const found = findVpr(meta, query);
   if (!found) throw new Error(`VPR not found: ${query}`);
@@ -92,16 +112,39 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   const { itemName, bookmark, vpr } = found;
   const item = meta.items[itemName];
 
-  // Auto-detect chain top and TP-index from provider if not explicitly set
+  // Sequential refusal: walk the chain and refuse if this VPR has an earlier
+  // unsent sibling. The agent and CLI parse this single-line error to discover
+  // the blocker. Also captures cascadeTarget for default targetBranch resolution.
+  let cascadeTarget = null;
+  {
+    const chainState = await buildState();
+    const enriched = computeChainState(chainState.items, {
+      sent: chainState.sent,
+      baseBranch: getBaseBranch() ?? 'main',
+    });
+    const enrichedItem = enriched.find(i => i.name === itemName);
+    const enrichedVpr = enrichedItem?.vprs.find(v => v.bookmark === bookmark);
+    if (enrichedVpr?.blocked) {
+      throw new Error(`Cannot send ${bookmark}: send ${enrichedVpr.blockedBy} first`);
+    }
+    cascadeTarget = enrichedVpr?.cascadeTarget ?? null;
+  }
+
+  // Auto-detect chain top and TP-index from provider if not explicitly set.
+  // Resolution order: explicit opt > cascadeTarget > provider.getChainTop > getBaseBranch > 'main'.
+  if (targetBranch === undefined && cascadeTarget) {
+    targetBranch = cascadeTarget;
+  }
   if (provider && targetBranch === undefined) {
     targetBranch = provider.getChainTop?.() ?? 'main';
   }
   if (provider && tpIndex === undefined) {
     tpIndex = (provider.getLatestPRIndex?.() ?? 0) + 1;
   }
-  const { getBaseBranch } = await import('../core/jj.mjs');
   targetBranch = targetBranch ?? getBaseBranch() ?? 'main';
   tpIndex = tpIndex ?? 1;
+
+  console.log(`Target: ${targetBranch}`);
 
   // 1. Pre-flight checks — block on story or conflicts failures
   const checks = await sendChecks(query);

@@ -24,6 +24,13 @@ export class AzureDevOpsProvider extends BaseProvider {
   get repo() { return this.config.repo; }
   get wiType() { return this.config.wiType || 'Task'; }
 
+  _az(cmd) { return az(cmd); }
+
+  updateWorkItemDescription(id, body) {
+    const desc = String(body ?? '').replace(/"/g, '\\"');
+    this._az(`boards work-item update --id ${id} --description "${desc}" --org "${this.org}"`);
+  }
+
   createWorkItem(title, description = '') {
     const desc = description.replace(/"/g, '\\"');
     const result = az(
@@ -34,18 +41,58 @@ export class AzureDevOpsProvider extends BaseProvider {
     return { id: result.id, url: result.url };
   }
 
+  linkParent(childId, parentId) {
+    az(
+      `boards work-item relation add --id ${childId} --relation-type "Parent" --target-id ${parentId} --org "${this.org}"`
+    );
+  }
+
+  assignTo(id, user) {
+    az(`boards work-item update --id ${id} --assigned-to "${user}" --org "${this.org}"`);
+  }
+
   getWorkItem(id) {
     const result = az(
       `boards work-item show --id ${id} --org "${this.org}"`
     );
     const f = result.fields || {};
+    const assigned = f['System.AssignedTo'];
     return {
       id: result.id,
+      type: f['System.WorkItemType'] || '',
       title: f['System.Title'] || '',
       description: (f['System.Description'] || '').replace(/<[^>]*>/g, '').trim(),
       state: f['System.State'] || '',
+      assignedTo: assigned ? (assigned.uniqueName || assigned.displayName || null) : null,
       url: result.url,
     };
+  }
+
+  getCurrentUser() {
+    try {
+      const out = execSync('az account show --query "user.name" -o tsv', {
+        encoding: 'utf-8',
+        shell: '/bin/bash',
+      }).trim();
+      return out || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getChildren(id) {
+    const result = az(
+      `boards work-item show --id ${id} --expand relations --org "${this.org}"`
+    );
+    const rels = result.relations || [];
+    const childIds = rels
+      .filter(r => r.rel === 'System.LinkTypes.Hierarchy-Forward')
+      .map(r => {
+        const m = (r.url || '').match(/\/workItems\/(\d+)$/i);
+        return m ? parseInt(m[1], 10) : null;
+      })
+      .filter(Boolean);
+    return childIds.map(cid => this.getWorkItem(cid));
   }
 
   updateWorkItem(id, fields) {

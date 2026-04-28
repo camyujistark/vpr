@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# scripts/ralph — ralph loop for working through VPR slices via TDD.
+#
+# Each iteration: picks the next unimplemented slice from .vpr/meta.json,
+# applies /tdd to make ONE acceptance criterion pass, runs npm test,
+# appends progress, and commits. Stops when all slices are complete or
+# when the agent requests human input.
+#
+# Usage: scripts/ralph <max-iterations>
+
+set -e
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <max-iterations>"
+  echo ""
+  echo "Each iteration runs 'claude -p' once to advance one acceptance criterion"
+  echo "of the highest-priority unblocked slice."
+  echo ""
+  echo "Exit signals (set by claude):"
+  echo "  <promise>COMPLETE</promise>           → all slices done; ralph exits 0"
+  echo "  <promise>SLICE-DONE</promise>         → this slice finished; ralph continues"
+  echo "  <promise>HUMAN-INPUT-NEEDED</promise> → clarification needed; ralph exits 2"
+  exit 1
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PROGRESS_FILE="$REPO_ROOT/.ralph/progress.txt"
+PRD_FILE="$REPO_ROOT/docs/specs/2026-04-28-vpr-stacked-pr-orchestration.md"
+META_FILE="$REPO_ROOT/.vpr/meta.json"
+TDD_SKILL="$HOME/.claude/skills/tdd/SKILL.md"
+
+mkdir -p "$(dirname "$PROGRESS_FILE")"
+touch "$PROGRESS_FILE"
+
+for ((i=1; i<=$1; i++)); do
+  echo ""
+  echo "════════════════════════════════════════"
+  echo "  Ralph iteration $i / $1"
+  echo "════════════════════════════════════════"
+
+  # Snapshot current feedback state so the agent sees what's failing right now.
+  TEST_RESULT=$(cd "$REPO_ROOT" && npm test 2>&1 || true)
+
+  result=$(claude -p "\
+@$PRD_FILE @$META_FILE @$PROGRESS_FILE @$TDD_SKILL
+
+You are working through the VPR Stacked PR Orchestration project, one slice at a time, using strict TDD.
+
+CONTEXT:
+- The PRD is in the spec file: problem, solution, user stories, implementation decisions, testing decisions.
+- The slice plan lives in .vpr/meta.json under item 'vpr-stacked-pr-orchestration'. Each VPR there is a slice; its 'story' field holds: ## What to build / ## Acceptance criteria / ## Blocked by.
+- Progress so far is in .ralph/progress.txt (each line: timestamp, slice-bookmark, what was accomplished).
+- The TDD skill governs HOW you implement: red-green-refactor, vertical tracer bullets, behavior-not-implementation tests.
+
+THIS ITERATION:
+1. Read .vpr/meta.json. Find the next slice to work on:
+   - Walk the slices in 'Blocked by' order: a slice is workable only if all its blockers' acceptance criteria are met.
+   - Among workable slices, pick the highest priority (earliest in dependency order).
+   - If a slice is partially complete (some acceptance criteria done, some not), continue it before starting a new one.
+2. Identify ONE acceptance criterion from that slice's story that is not yet met.
+3. Apply /tdd: write ONE failing test for that criterion (RED), then minimal implementation to pass (GREEN), then refactor if natural.
+4. Run 'npm test'. ALL tests must be green before you finish this iteration. If a test you didn't touch is failing, fix it before moving on (treat it as a regression).
+5. Append one line to .ralph/progress.txt:
+     '\$(date -Iminutes) <slice-bookmark>: <one-line summary of what you accomplished>'
+6. Make a single git commit using conventional-commit format (e.g. 'feat(ticket-sync): add planTicketSync pure helper'). One commit per iteration.
+
+CONSTRAINTS:
+- ONLY one acceptance criterion per iteration. Do NOT roll multiple together; the loop will continue.
+- ONLY one slice per iteration. If you finish the slice, stop — the next iteration picks the next.
+- If you need clarification on the slice's spec, the interface, or design intent, output <promise>HUMAN-INPUT-NEEDED</promise> followed by your question, then stop. Do NOT invent answers.
+- If this slice's acceptance criteria are NOW all met, output <promise>SLICE-DONE</promise> at the end of your response.
+- If EVERY slice in the item has all acceptance criteria met (the whole orchestration project is implementation-complete), output <promise>COMPLETE</promise>.
+- Never modify the PRD spec file. If you discover the spec is wrong, output <promise>HUMAN-INPUT-NEEDED</promise> with the discrepancy.
+
+CURRENT TEST STATE (output of 'npm test' just before this iteration):
+$TEST_RESULT
+")
+
+  echo "$result"
+
+  if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "  All slices complete — exiting."
+    echo "════════════════════════════════════════"
+    exit 0
+  fi
+
+  if [[ "$result" == *"<promise>HUMAN-INPUT-NEEDED</promise>"* ]]; then
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "  Human input requested — exiting for review."
+    echo "════════════════════════════════════════"
+    exit 2
+  fi
+done
+
+echo ""
+echo "Ralph loop completed $1 iterations without reaching COMPLETE."

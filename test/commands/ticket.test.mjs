@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ticketNew, ticketList, ticketEdit, ticketDone } from '../../src/commands/ticket.mjs';
+import { ticketNew, ticketList, ticketEdit, ticketDone, ticketRefresh, ticketUpdate } from '../../src/commands/ticket.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
 
 // ---------------------------------------------------------------------------
@@ -256,6 +256,172 @@ describe('ticket commands', () => {
       const meta = await loadMeta();
       const ev = meta.eventLog[meta.eventLog.length - 1];
       assert.strictEqual(ev.action, 'ticket.done');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ticketRefresh
+  // -------------------------------------------------------------------------
+
+  describe('ticketRefresh()', () => {
+    beforeEach(async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 10,
+            wiTitle: 'Old Title',
+            wiDescription: 'old desc',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    it('fetches wiDescription from the provider and persists it', async () => {
+      const provider = {
+        getWorkItem: async (id) => ({
+          id,
+          title: 'New Title',
+          description: 'new desc',
+        }),
+      };
+
+      await ticketRefresh('scaffold-app', { provider });
+
+      const meta = await loadMeta();
+      assert.strictEqual(meta.items['scaffold-app'].wiDescription, 'new desc');
+    });
+
+    it('refreshes a legacy item missing the new fields without error', async () => {
+      await saveMeta({
+        items: {
+          'legacy-item': {
+            wi: 10,
+            wiTitle: 'Legacy Title',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const provider = {
+        getWorkItem: async (id) => ({
+          id,
+          title: 'Refreshed Title',
+          description: 'refreshed desc',
+        }),
+      };
+
+      await ticketRefresh('legacy-item', { provider });
+
+      const meta = await loadMeta();
+      const item = meta.items['legacy-item'];
+      assert.strictEqual(item.wiDescription, 'refreshed desc');
+      assert.ok(!('parentWiTitle' in item), 'should not fabricate parentWiTitle when parentWi is unset');
+      assert.ok(!('parentWiDescription' in item), 'should not fabricate parentWiDescription when parentWi is unset');
+    });
+
+    it('fetches parentWiTitle and parentWiDescription when item has parentWi', async () => {
+      await saveMeta({
+        items: {
+          'with-parent': {
+            wi: 10,
+            wiTitle: 'Child Title',
+            wiDescription: 'child desc',
+            parentWi: 99,
+            parentWiTitle: 'old parent title',
+            parentWiDescription: 'old parent desc',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const calls = [];
+      const provider = {
+        getWorkItem: async (id) => {
+          calls.push(id);
+          if (id === 10) return { id, title: 'Child Title', description: 'child desc' };
+          if (id === 99) return { id, title: 'New Parent', description: 'new parent desc' };
+          throw new Error(`unexpected id ${id}`);
+        },
+      };
+
+      await ticketRefresh('with-parent', { provider });
+
+      const meta = await loadMeta();
+      assert.strictEqual(meta.items['with-parent'].parentWiTitle, 'New Parent');
+      assert.strictEqual(meta.items['with-parent'].parentWiDescription, 'new parent desc');
+      assert.deepStrictEqual(calls.sort(), [10, 99]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ticketUpdate
+  // -------------------------------------------------------------------------
+
+  describe('ticketUpdate()', () => {
+    beforeEach(async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 42,
+            wiTitle: 'Scaffold App',
+            wiDescription: 'local edited description',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    it('pushes the local wiDescription to the provider', async () => {
+      const calls = [];
+      const provider = {
+        updateWorkItemDescription: async (id, body) => {
+          calls.push({ id, body });
+        },
+      };
+
+      await ticketUpdate('scaffold-app', { provider });
+
+      assert.deepStrictEqual(calls, [{ id: 42, body: 'local edited description' }]);
+    });
+
+    it('is a no-op when item.wi is unset', async () => {
+      await saveMeta({
+        items: {
+          'detached-item': {
+            wi: null,
+            wiTitle: 'Detached',
+            wiDescription: 'whatever',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      let called = false;
+      const provider = {
+        updateWorkItemDescription: async () => {
+          called = true;
+        },
+      };
+
+      await ticketUpdate('detached-item', { provider });
+
+      assert.strictEqual(called, false, 'provider should not be invoked when item.wi is unset');
     });
   });
 });
