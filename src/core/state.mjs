@@ -2,6 +2,33 @@ import { getBase, getConflicts, jjSafe } from './jj.mjs';
 import { loadMeta } from './meta.mjs';
 
 /**
+ * Pure decorator: enrich each item's VPRs with chain-state fields
+ * (`blocked`, `blockedBy`, `nextUp`, `cascadeTarget`).
+ *
+ * Inputs are synthetic-friendly: an items array (each with `name` and
+ * `vprs[]` carrying at minimum `bookmark`, `sent`, `held`), and an options
+ * bag with `sent` (the meta.sent map) and `baseBranch` (default `main`).
+ *
+ * Returns a new array — does not mutate the input.
+ *
+ * @param {Array<{name: string, vprs: Array<{bookmark: string, sent?: boolean, held?: boolean}>}>} items
+ * @param {{ sent?: object, baseBranch?: string }} [opts]
+ * @returns {Array}
+ */
+export function computeChainState(items, { sent: _sent = {}, baseBranch = 'main' } = {}) {
+  return items.map(item => ({
+    ...item,
+    vprs: item.vprs.map(vpr => ({
+      ...vpr,
+      blocked: false,
+      blockedBy: null,
+      nextUp: !vpr.sent,
+      cascadeTarget: baseBranch,
+    })),
+  }));
+}
+
+/**
  * Parse a single line from the jj log template into a raw commit object.
  * Template columns (tab-separated):
  *   change_id.short() \t commit_id.short() \t bookmarks \t description.first_line()
