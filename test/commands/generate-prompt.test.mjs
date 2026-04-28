@@ -57,4 +57,40 @@ describe('buildPrompt()', () => {
       `expected PARENT PRD to appear before THIS SLICE; got:\n${prompt}`
     );
   });
+
+  it('falls back gracefully when wiDescription and parent fields are missing', () => {
+    const prompt = buildPrompt({
+      item: {
+        wi: 17150,
+        wiTitle: 'Slice ticket',
+        wiDescription: null,
+        parentWi: null,
+        parentWiTitle: null,
+        parentWiDescription: null,
+      },
+      vpr: { title: 'Slice title', story: 'do the thing' },
+      commits: [{ subject: 'feat: thing' }],
+    });
+
+    assert.ok(
+      !prompt.includes('PARENT PRD'),
+      `expected no PARENT PRD section; got:\n${prompt}`
+    );
+    assert.ok(
+      prompt.includes('THIS SLICE (Task #17150): Slice ticket'),
+      `expected THIS SLICE header; got:\n${prompt}`
+    );
+    assert.ok(
+      !prompt.includes('null'),
+      `expected no literal "null" leak; got:\n${prompt}`
+    );
+    assert.ok(
+      prompt.includes('PR Title: Slice title'),
+      `expected PR Title line; got:\n${prompt}`
+    );
+    assert.ok(
+      prompt.includes('- feat: thing'),
+      `expected commit subject; got:\n${prompt}`
+    );
+  });
 });
