@@ -13,3 +13,4 @@
 2026-04-28T23:25+10:00 vpr-stacked-pr-orchestration/chain-state-computer: computeChainState marks every unsent VPR after the first as blocked with blockedBy pointing at its immediate predecessor.
 2026-04-28T23:29+10:00 vpr-stacked-pr-orchestration/chain-state-computer: cascadeTarget for next-unsent VPR resolves to most-recently-sent branch (by sentAt) for the same item, fallback to baseBranch.
 2026-04-28T23:31+10:00 vpr-stacked-pr-orchestration/chain-state-computer: held VPRs treated as off-chain — successor blockedBy points at previous active VPR, not held one.
+2026-04-28T23:33+10:00 vpr-stacked-pr-orchestration/chain-state-computer: mid-chain-sent regression test — sent VPR inline skipped from nextUp/blocked; successor's cascadeTarget resolves to latest sent branch.

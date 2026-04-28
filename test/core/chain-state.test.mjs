@@ -71,6 +71,45 @@ describe('computeChainState()', () => {
     assert.strictEqual(c.blockedBy, 'foo/a', 'blockedBy skips the held VPR');
   });
 
+  it('mid-chain sent: skips already-sent VPRs when picking nextUp and resolves cascadeTarget to the latest sent branch', () => {
+    const items = [
+      {
+        name: 'foo',
+        vprs: [
+          { bookmark: 'foo/a', sent: true, held: false },
+          { bookmark: 'foo/b', sent: false, held: false },
+          { bookmark: 'foo/c', sent: false, held: false },
+        ],
+      },
+    ];
+
+    const sent = {
+      'feat/1-a': {
+        prId: 1,
+        itemName: 'foo',
+        originalBookmark: 'foo/a',
+        sentAt: '2026-01-01T00:00:00.000Z',
+      },
+    };
+
+    const enriched = computeChainState(items, { sent, baseBranch: 'main' });
+    const [a, b, c] = enriched[0].vprs;
+
+    assert.strictEqual(a.nextUp, false, 'sent VPR is not nextUp');
+    assert.strictEqual(a.blocked, false, 'sent VPR is not blocked');
+    assert.strictEqual(a.blockedBy, null);
+
+    assert.strictEqual(b.nextUp, true, 'first unsent after sent VPRs is nextUp');
+    assert.strictEqual(b.blocked, false);
+    assert.strictEqual(b.blockedBy, null);
+    assert.strictEqual(b.cascadeTarget, 'feat/1-a');
+
+    assert.strictEqual(c.nextUp, false);
+    assert.strictEqual(c.blocked, true);
+    assert.strictEqual(c.blockedBy, 'foo/b');
+    assert.strictEqual(c.cascadeTarget, 'feat/1-a');
+  });
+
   it('blocks every unsent VPR after the first; blockedBy points at the immediate predecessor', () => {
     const items = [
       {
