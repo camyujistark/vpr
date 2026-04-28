@@ -24,13 +24,33 @@ if [ -z "$1" ]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PROGRESS_FILE="$REPO_ROOT/.ralph/progress.txt"
+PROGRESS_FILE="$REPO_ROOT/.vpr/progress.txt"
 PRD_FILE="$REPO_ROOT/docs/specs/2026-04-28-vpr-stacked-pr-orchestration.md"
 META_FILE="$REPO_ROOT/.vpr/meta.json"
 TDD_SKILL="$HOME/.claude/skills/tdd/SKILL.md"
+CAVEMAN_SKILL="$HOME/.claude/plugins/marketplaces/caveman/skills/caveman/SKILL.md"
+ITEM="vpr-stacked-pr-orchestration"
 
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 touch "$PROGRESS_FILE"
+
+# Print a landscape snapshot: each slice with its blockers and a count of
+# progress.txt entries (the agent's worklog).
+print_slice_landscape() {
+  echo "→ Slice landscape (entries in .vpr/progress.txt | blocked-by):"
+  jq -r --arg item "$ITEM" '
+    .items[$item].vprs | to_entries[] |
+    .key as $bm |
+    .value.story as $story |
+    ($story | capture("(?s)## Blocked by\\s*\n(?<b>.*?)(?=\n## |$)").b // "") as $blocked |
+    "\($bm)\t\($blocked | gsub("\n"; " ") | gsub("^\\s+|\\s+$"; ""))"
+  ' "$META_FILE" | while IFS=$'\t' read -r bookmark blocked; do
+    short="${bookmark##*/}"
+    count=$(grep -cF " $bookmark:" "$PROGRESS_FILE" 2>/dev/null || true)
+    if [ "$count" -gt 0 ]; then marker="●"; else marker="○"; fi
+    printf "    %s [%2d] %-32s  %s\n" "$marker" "$count" "$short" "${blocked:0:80}"
+  done
+}
 
 for ((i=1; i<=$1; i++)); do
   echo ""
@@ -38,21 +58,38 @@ for ((i=1; i<=$1; i++)); do
   echo "  Ralph iteration $i / $1"
   echo "════════════════════════════════════════"
 
-  # Snapshot current feedback state so the agent sees what's failing right now.
-  TEST_RESULT=$(cd "$REPO_ROOT" && npm test 2>&1 || true)
+  print_slice_landscape
+  echo ""
 
-  result=$(claude -p "\
-@$PRD_FILE @$META_FILE @$PROGRESS_FILE @$TDD_SKILL
+  # Snapshot current feedback state so the agent sees what's failing right now.
+  echo "→ Running npm test to snapshot feedback state..."
+  TEST_RESULT=$(cd "$REPO_ROOT" && npm test 2>&1 || true)
+  echo "$TEST_RESULT" | tail -20
+  echo ""
+  echo "→ Dispatching claude for iteration $i..."
+  echo "────────────────────────────────────────"
+
+  # claude -p in default text mode emits nothing until the turn finishes.
+  # Use --output-format stream-json --verbose to get one event per line as
+  # they happen; tee raw JSON to a temp file for promise checks, and pipe
+  # through jq to render readable progress to the terminal in real time.
+  CLAUDE_OUT=$(mktemp)
+  claude -p --verbose --output-format stream-json --permission-mode bypassPermissions "\
+@$PRD_FILE @$META_FILE @$PROGRESS_FILE @$TDD_SKILL @$CAVEMAN_SKILL
 
 You are working through the VPR Stacked PR Orchestration project, one slice at a time, using strict TDD.
 
 CONTEXT:
 - The PRD is in the spec file: problem, solution, user stories, implementation decisions, testing decisions.
 - The slice plan lives in .vpr/meta.json under item 'vpr-stacked-pr-orchestration'. Each VPR there is a slice; its 'story' field holds: ## What to build / ## Acceptance criteria / ## Blocked by.
-- Progress so far is in .ralph/progress.txt (each line: timestamp, slice-bookmark, what was accomplished).
+- Progress so far is in .vpr/progress.txt (each line: timestamp, slice-bookmark, what was accomplished).
 - The TDD skill governs HOW you implement: red-green-refactor, vertical tracer bullets, behavior-not-implementation tests.
+- The caveman skill governs HOW you communicate: terse, drop articles/filler, fragments OK. Apply at intensity 'full' to ALL assistant text in this run (including the PICKED line, progress.txt entry, and commit message subject — keep the conventional-commit prefix intact). Skip caveman only for the literal <promise>...</promise> tags and for any HUMAN-INPUT-NEEDED question (those need clarity).
 
 THIS ITERATION:
+0. As your VERY FIRST line of output (before any tool calls), print:
+     PICKED: <slice-bookmark> — <one-sentence reason>
+   so the operator can see what you chose.
 1. Read .vpr/meta.json. Find the next slice to work on:
    - Walk the slices in 'Blocked by' order: a slice is workable only if all its blockers' acceptance criteria are met.
    - Among workable slices, pick the highest priority (earliest in dependency order).
@@ -60,9 +97,12 @@ THIS ITERATION:
 2. Identify ONE acceptance criterion from that slice's story that is not yet met.
 3. Apply /tdd: write ONE failing test for that criterion (RED), then minimal implementation to pass (GREEN), then refactor if natural.
 4. Run 'npm test'. ALL tests must be green before you finish this iteration. If a test you didn't touch is failing, fix it before moving on (treat it as a regression).
-5. Append one line to .ralph/progress.txt:
+5. Append one line to .vpr/progress.txt:
      '\$(date -Iminutes) <slice-bookmark>: <one-line summary of what you accomplished>'
 6. Make a single git commit using conventional-commit format (e.g. 'feat(ticket-sync): add planTicketSync pure helper'). One commit per iteration.
+7. Tag the commit with the slice's jj bookmark so vpr status groups it under the slice:
+     jj bookmark set <slice-bookmark> -r @- -B
+   (the new commit is at @- after git commit in this colocated repo; -B permits sideways/backward moves on resumed slices.)
 
 CONSTRAINTS:
 - ONLY one acceptance criterion per iteration. Do NOT roll multiple together; the loop will continue.
@@ -74,9 +114,60 @@ CONSTRAINTS:
 
 CURRENT TEST STATE (output of 'npm test' just before this iteration):
 $TEST_RESULT
-")
+" | tee "$CLAUDE_OUT" | jq --unbuffered -r '
+      def short(s): if (s | length) > 100 then "…" + s[-99:] else s end;
+      def dim(s): "[2m" + s + "[22m";
+      def green(s): "[32m" + s + "[0m";
+      if .type == "assistant" then
+        .message.content[]? |
+          if .type == "text" then
+            .text
+          elif .type == "tool_use" then
+            "  [2m• \(.name)[22m " + short(
+              if .name == "Read" or .name == "Edit" or .name == "Write" or .name == "NotebookEdit" then
+                (.input.file_path // "?")
+              elif .name == "Bash" then
+                ((.input.command // "") | split("\n")[0])
+              elif .name == "Grep" then
+                "/\(.input.pattern // "?")/" + (if .input.path then " in \(.input.path)" else "" end)
+              elif .name == "Glob" then
+                (.input.pattern // "?") + (if .input.path then " in \(.input.path)" else "" end)
+              elif .name == "TodoWrite" then
+                "\(.input.todos | length) todos"
+              elif .name == "Task" then
+                (.input.description // .input.subagent_type // "?")
+              else
+                (.input | tostring)
+              end
+            )
+          else empty end
+      elif .type == "result" then
+        "[32m✓ claude done (\((.duration_ms // 0) / 1000 | floor)s, \(.num_turns // 0) turns)[0m"
+      else empty end
+    '
 
-  echo "$result"
+  result=$(<"$CLAUDE_OUT")
+  rm -f "$CLAUDE_OUT"
+
+  echo ""
+  echo "────────────────────────────────────────"
+
+  # Safety net: ensure the slice bookmark lands on the new commit (@-) even if
+  # the agent skipped step 7. Parses the PICKED: line the agent emits first.
+  if [[ "$result" != *"<promise>HUMAN-INPUT-NEEDED</promise>"* ]]; then
+    PICKED=$(printf '%s\n' "$result" \
+      | jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' 2>/dev/null \
+      | awk '/^PICKED:/{print $2; exit}')
+    if [ -n "$PICKED" ]; then
+      if (cd "$REPO_ROOT" && jj bookmark set "$PICKED" -r @- -B >/dev/null 2>&1); then
+        echo "→ Bookmarked $PICKED on @-"
+      else
+        echo "warn: jj bookmark set failed for $PICKED (commit may be unchanged or @- empty)"
+      fi
+    else
+      echo "warn: no PICKED: line in agent output — bookmark not set"
+    fi
+  fi
 
   if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
     echo ""
