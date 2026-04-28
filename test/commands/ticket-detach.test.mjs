@@ -117,6 +117,82 @@ describe('ticketHold() — detach-on-hold', () => {
     });
   });
 
+  describe('held in the middle of the chain', () => {
+    it('peels the middle item off the active chain — bottom and top active items reparent onto the shared boundary, held lives off the same boundary on a sidebranch', async () => {
+      // Chain: bottom (active) → middle (held) → top (active).
+      // Holding middle should leave bottom→top intact on the active chain,
+      // with middle on a sidebranch off bottom (the boundary commit).
+      sh('jj describe -m "feat: bottom active"');
+      sh('jj bookmark set bottom-item/feat-bottom -r @');
+      sh('jj new -m "feat: middle held"');
+      sh('jj bookmark set middle-item/feat-middle -r @');
+      sh('jj new -m "feat: top active"');
+      sh('jj bookmark set top-item/feat-top -r @');
+
+      await saveMeta({
+        items: {
+          'bottom-item': {
+            wi: 10,
+            wiTitle: 'Bottom',
+            vprs: {
+              'bottom-item/feat-bottom': { title: 'Bottom', story: '', output: null },
+            },
+          },
+          'middle-item': {
+            wi: 11,
+            wiTitle: 'Middle',
+            vprs: {
+              'middle-item/feat-middle': { title: 'Middle', story: '', output: null },
+            },
+          },
+          'top-item': {
+            wi: 12,
+            wiTitle: 'Top',
+            vprs: {
+              'top-item/feat-top': { title: 'Top', story: '', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const result = await ticketHold('middle-item');
+      assert.strictEqual(result.detached, true);
+
+      // The middle held commit must NOT be an ancestor of either active
+      // bookmark — both bottom and top must be on a clean sidebranch-free
+      // chain that skips the held commit.
+      const middleOnTop = sh(
+        `jj log -r '::top-item/feat-top & description(substring:"middle held")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.strictEqual(middleOnTop, '', 'middle must not remain on the active chain (top)');
+
+      const middleOnBottom = sh(
+        `jj log -r '::bottom-item/feat-bottom & description(substring:"middle held")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.strictEqual(middleOnBottom, '', 'middle must not remain on the active chain (bottom)');
+
+      // Middle is still reachable on its own bookmark — moved to a sidebranch,
+      // not deleted.
+      const middleOnHeld = sh(
+        `jj log -r '::middle-item/feat-middle & description(substring:"middle held")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.notStrictEqual(middleOnHeld, '', 'middle must still be reachable on its bookmark');
+
+      // The active chain must still connect: bottom is an ancestor of top.
+      const bottomOnTop = sh(
+        `jj log -r '::top-item/feat-top & bottom-item/feat-bottom' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.notStrictEqual(bottomOnTop, '', 'bottom must remain an ancestor of top after detach');
+
+      // No conflicts on the rebased sidebranch (and active chain).
+      const conflicts = sh(`jj log -r 'conflicts()' --no-graph -T 'change_id ++ "\\n"'`);
+      assert.strictEqual(conflicts, '', 'no conflicts after rebase');
+    });
+  });
+
   describe('held with unbookmarked predecessor', () => {
     it('moves the unbookmarked predecessor onto the sidebranch with the held item — active chain no longer has it as ancestor', async () => {
       // Chain: prelude (no bookmark) → held foo (held-item) → active bar (active-item).
