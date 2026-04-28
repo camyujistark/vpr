@@ -237,6 +237,23 @@ describe('send()', () => {
   });
 
   // -------------------------------------------------------------------------
+  // No-args: pick the next-unsent VPR via chain state
+  // -------------------------------------------------------------------------
+
+  describe('no-args', () => {
+    it('picks the next-unsent VPR when query is omitted', async () => {
+      await seedMeta({ story: 'Real story content' });
+      const result = await send(undefined, {
+        provider: null,
+        dryRun: true,
+        tpIndex: 1,
+        targetBranch: 'main',
+      });
+      assert.strictEqual(result.branchName, 'feat/99-my-feature-nav-bar');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Dry run
   // -------------------------------------------------------------------------
 
