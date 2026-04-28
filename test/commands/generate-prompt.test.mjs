@@ -27,4 +27,34 @@ describe('buildPrompt()', () => {
       `expected wiDescription in prompt; got:\n${prompt}`
     );
   });
+
+  it('includes a PARENT PRD section when parentWi and parentWiDescription are present', () => {
+    const prompt = buildPrompt({
+      item: {
+        wi: 17150,
+        wiTitle: 'Generate prompt enrichment',
+        wiDescription: 'Slice spec body.',
+        parentWi: 17148,
+        parentWiTitle: 'VPR Stacked PR Orchestration',
+        parentWiDescription: 'Full PRD: problem, solution, user stories.',
+      },
+      vpr: { title: 'Slice title', story: 'do the thing' },
+      commits: [{ subject: 'feat: thing' }],
+    });
+
+    assert.ok(
+      prompt.includes('PARENT PRD (PBI #17148): VPR Stacked PR Orchestration'),
+      `expected PARENT PRD header in prompt; got:\n${prompt}`
+    );
+    assert.ok(
+      prompt.includes('Full PRD: problem, solution, user stories.'),
+      `expected parentWiDescription in prompt; got:\n${prompt}`
+    );
+    const parentIdx = prompt.indexOf('PARENT PRD');
+    const sliceIdx = prompt.indexOf('THIS SLICE');
+    assert.ok(
+      parentIdx >= 0 && sliceIdx >= 0 && parentIdx < sliceIdx,
+      `expected PARENT PRD to appear before THIS SLICE; got:\n${prompt}`
+    );
+  });
 });

@@ -23,6 +23,11 @@ export function buildPrompt({ item, vpr, commits }) {
     'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
     '',
   ];
+  if (item && item.parentWi && item.parentWiDescription) {
+    lines.push(`PARENT PRD (PBI #${item.parentWi}): ${item.parentWiTitle ?? ''}`);
+    lines.push(item.parentWiDescription);
+    lines.push('');
+  }
   if (item && item.wi) {
     lines.push(`THIS SLICE (Task #${item.wi}): ${item.wiTitle ?? ''}`);
     if (item.wiDescription) lines.push(item.wiDescription);
