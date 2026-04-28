@@ -116,4 +116,57 @@ describe('ticketHold() — detach-on-hold', () => {
       assert.strictEqual(second.reason, 'already-detached');
     });
   });
+
+  describe('held with unbookmarked predecessor', () => {
+    it('moves the unbookmarked predecessor onto the sidebranch with the held item — active chain no longer has it as ancestor', async () => {
+      // Chain: prelude (no bookmark) → held foo (held-item) → active bar (active-item).
+      // The unbookmarked prelude commit conceptually belongs to held-item per
+      // state.mjs's "bookmark claims preceding unbookmarked commits" rule.
+      sh('jj describe -m "feat: prelude"');
+      sh('jj new -m "feat: held foo"');
+      sh('jj bookmark set held-item/feat-foo -r @');
+      sh('jj new -m "feat: active bar"');
+      sh('jj bookmark set active-item/feat-bar -r @');
+
+      await saveMeta({
+        items: {
+          'held-item': {
+            wi: 10,
+            wiTitle: 'Held',
+            vprs: {
+              'held-item/feat-foo': { title: 'Held foo', story: '', output: null },
+            },
+          },
+          'active-item': {
+            wi: 11,
+            wiTitle: 'Active',
+            vprs: {
+              'active-item/feat-bar': { title: 'Active bar', story: '', output: null },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const result = await ticketHold('held-item');
+      assert.strictEqual(result.detached, true);
+
+      // The prelude commit (matched by description substring) must NOT be an
+      // ancestor of the active-chain bookmark after detach. If it were,
+      // holding failed to peel it off and active still drags prelude along.
+      const preludeOnActive = sh(
+        `jj log -r '::active-item/feat-bar & description(substring:"prelude")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.strictEqual(preludeOnActive, '', 'prelude must not remain on the active chain');
+
+      // It must still be an ancestor of the held bookmark — the prelude moved
+      // with the held item onto the sidebranch, not deleted.
+      const preludeOnHeld = sh(
+        `jj log -r '::held-item/feat-foo & description(substring:"prelude")' --no-graph -T 'change_id ++ "\\n"'`
+      );
+      assert.notStrictEqual(preludeOnHeld, '', 'prelude must travel with the held item');
+    });
+  });
 });
