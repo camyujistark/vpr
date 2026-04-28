@@ -16,16 +16,26 @@ import { loadMeta } from './meta.mjs';
  * @returns {Array}
  */
 export function computeChainState(items, { sent: _sent = {}, baseBranch = 'main' } = {}) {
-  return items.map(item => ({
-    ...item,
-    vprs: item.vprs.map(vpr => ({
-      ...vpr,
-      blocked: false,
-      blockedBy: null,
-      nextUp: !vpr.sent,
-      cascadeTarget: baseBranch,
-    })),
-  }));
+  return items.map(item => {
+    let nextUpAssigned = false;
+    let prevUnsentBookmark = null;
+
+    const vprs = item.vprs.map(vpr => {
+      if (vpr.sent) {
+        return { ...vpr, blocked: false, blockedBy: null, nextUp: false, cascadeTarget: baseBranch };
+      }
+
+      const enriched = !nextUpAssigned
+        ? { ...vpr, blocked: false, blockedBy: null, nextUp: true, cascadeTarget: baseBranch }
+        : { ...vpr, blocked: true, blockedBy: prevUnsentBookmark, nextUp: false, cascadeTarget: baseBranch };
+
+      nextUpAssigned = true;
+      prevUnsentBookmark = vpr.bookmark;
+      return enriched;
+    });
+
+    return { ...item, vprs };
+  });
 }
 
 /**

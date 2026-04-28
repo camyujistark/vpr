@@ -20,4 +20,32 @@ describe('computeChainState()', () => {
     assert.strictEqual(vpr.blockedBy, null);
     assert.strictEqual(vpr.cascadeTarget, 'main');
   });
+
+  it('blocks every unsent VPR after the first; blockedBy points at the immediate predecessor', () => {
+    const items = [
+      {
+        name: 'foo',
+        vprs: [
+          { bookmark: 'foo/a', sent: false, held: false },
+          { bookmark: 'foo/b', sent: false, held: false },
+          { bookmark: 'foo/c', sent: false, held: false },
+        ],
+      },
+    ];
+
+    const enriched = computeChainState(items, { sent: {}, baseBranch: 'main' });
+    const [a, b, c] = enriched[0].vprs;
+
+    assert.strictEqual(a.nextUp, true);
+    assert.strictEqual(a.blocked, false);
+    assert.strictEqual(a.blockedBy, null);
+
+    assert.strictEqual(b.nextUp, false);
+    assert.strictEqual(b.blocked, true);
+    assert.strictEqual(b.blockedBy, 'foo/a');
+
+    assert.strictEqual(c.nextUp, false);
+    assert.strictEqual(c.blocked, true);
+    assert.strictEqual(c.blockedBy, 'foo/b');
+  });
 });
