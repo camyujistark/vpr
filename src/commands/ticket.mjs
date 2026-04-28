@@ -224,7 +224,10 @@ export async function ticketRefresh(name, { provider }) {
   if (!item.wi) return;
 
   const fetchedWi = await provider.getWorkItem(item.wi);
-  const result = computeTicketSync({ itemName: name, item, fetchedWi, fetchedParent: null });
+  const fetchedParent = item.parentWi
+    ? await provider.getWorkItem(item.parentWi)
+    : null;
+  const result = computeTicketSync({ itemName: name, item, fetchedWi, fetchedParent });
   meta.items[name] = result.item;
   await saveMeta(meta);
 }

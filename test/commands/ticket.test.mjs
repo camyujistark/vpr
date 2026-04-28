@@ -294,5 +294,41 @@ describe('ticket commands', () => {
       const meta = await loadMeta();
       assert.strictEqual(meta.items['scaffold-app'].wiDescription, 'new desc');
     });
+
+    it('fetches parentWiTitle and parentWiDescription when item has parentWi', async () => {
+      await saveMeta({
+        items: {
+          'with-parent': {
+            wi: 10,
+            wiTitle: 'Child Title',
+            wiDescription: 'child desc',
+            parentWi: 99,
+            parentWiTitle: 'old parent title',
+            parentWiDescription: 'old parent desc',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const calls = [];
+      const provider = {
+        getWorkItem: async (id) => {
+          calls.push(id);
+          if (id === 10) return { id, title: 'Child Title', description: 'child desc' };
+          if (id === 99) return { id, title: 'New Parent', description: 'new parent desc' };
+          throw new Error(`unexpected id ${id}`);
+        },
+      };
+
+      await ticketRefresh('with-parent', { provider });
+
+      const meta = await loadMeta();
+      assert.strictEqual(meta.items['with-parent'].parentWiTitle, 'New Parent');
+      assert.strictEqual(meta.items['with-parent'].parentWiDescription, 'new parent desc');
+      assert.deepStrictEqual(calls.sort(), [10, 99]);
+    });
   });
 });
