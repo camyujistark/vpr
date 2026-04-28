@@ -295,6 +295,37 @@ describe('ticket commands', () => {
       assert.strictEqual(meta.items['scaffold-app'].wiDescription, 'new desc');
     });
 
+    it('refreshes a legacy item missing the new fields without error', async () => {
+      await saveMeta({
+        items: {
+          'legacy-item': {
+            wi: 10,
+            wiTitle: 'Legacy Title',
+            vprs: {},
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      const provider = {
+        getWorkItem: async (id) => ({
+          id,
+          title: 'Refreshed Title',
+          description: 'refreshed desc',
+        }),
+      };
+
+      await ticketRefresh('legacy-item', { provider });
+
+      const meta = await loadMeta();
+      const item = meta.items['legacy-item'];
+      assert.strictEqual(item.wiDescription, 'refreshed desc');
+      assert.ok(!('parentWiTitle' in item), 'should not fabricate parentWiTitle when parentWi is unset');
+      assert.ok(!('parentWiDescription' in item), 'should not fabricate parentWiDescription when parentWi is unset');
+    });
+
     it('fetches parentWiTitle and parentWiDescription when item has parentWi', async () => {
       await saveMeta({
         items: {
