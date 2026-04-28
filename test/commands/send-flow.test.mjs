@@ -6,7 +6,7 @@ import { buildSendEditContent } from '../../src/tui/editor.mjs';
 
 describe('runSendEditorFlow()', () => {
   it('regenerates output when the user changes the story in the editor — preview reflects the new story', async () => {
-    const vpr = { title: 'Nav Bar', story: 'old story', output: 'old output' };
+    const vpr = { title: 'Nav Bar', story: 'old story', output: null };
 
     // User opens the editor and changes the story.
     const openEditor = async () =>
@@ -39,7 +39,7 @@ describe('runSendEditorFlow()', () => {
   });
 
   it('aborts without prompting or regenerating when the saved story is empty/whitespace — matches `git commit` semantics', async () => {
-    const vpr = { title: 'Nav Bar', story: 'old story', output: 'old output' };
+    const vpr = { title: 'Nav Bar', story: 'old story', output: null };
 
     // User saves the buffer with a blank story — same as escaping the editor
     // without writing anything meaningful.
@@ -65,8 +65,66 @@ describe('runSendEditorFlow()', () => {
     assert.equal(promptCalled, false, 'must not prompt the user when the story is empty');
   });
 
+  it('skips the editor and prompts directly when the VPR is already prepared (story + output) — no wasted round-trip', async () => {
+    const vpr = { title: 'Nav Bar', story: 'already-good story', output: 'already-good output' };
+
+    let openCalls = 0;
+    const openEditor = async () => {
+      openCalls += 1;
+      return buildSendEditContent({ vpr });
+    };
+
+    let regenCalled = false;
+    const regenerate = async () => {
+      regenCalled = true;
+      return 'should not run';
+    };
+
+    let promptCalledWith = null;
+    const prompt = async (preview) => {
+      promptCalledWith = preview;
+      return 'y';
+    };
+
+    const result = await runSendEditorFlow({ vpr, openEditor, regenerate, prompt });
+
+    assert.equal(openCalls, 0, 'editor must not open when story+output are already prepared');
+    assert.equal(regenCalled, false, 'must not regenerate when nothing changed');
+    assert.equal(promptCalledWith?.story, 'already-good story', 'prompt must receive the existing prepared story');
+    assert.equal(promptCalledWith?.output, 'already-good output', 'prompt must receive the existing prepared output');
+    assert.equal(result.decision, 'send');
+    assert.equal(result.story, 'already-good story');
+    assert.equal(result.output, 'already-good output');
+  });
+
+  it('opens the editor on subsequent loops when an already-prepared VPR user answers e — first pass skipped only', async () => {
+    const vpr = { title: 'Nav Bar', story: 'already-good story', output: 'already-good output' };
+
+    let openCalls = 0;
+    const openEditor = async () => {
+      openCalls += 1;
+      return buildSendEditContent({ vpr: { title: 'Nav Bar', story: 'edited story' } });
+    };
+
+    let regenCalls = 0;
+    const regenerate = async () => {
+      regenCalls += 1;
+      return `regen-${regenCalls}`;
+    };
+
+    const answers = ['e', 'y'];
+    const prompt = async () => answers.shift();
+
+    const result = await runSendEditorFlow({ vpr, openEditor, regenerate, prompt });
+
+    assert.equal(openCalls, 1, 'first pass skipped editor; e answer opens it once');
+    assert.equal(result.decision, 'send');
+    assert.equal(result.story, 'edited story');
+    assert.equal(result.output, 'regen-1');
+  });
+
   it('re-opens the editor when the user answers e — loop continues until y or N', async () => {
-    const vpr = { title: 'Nav Bar', story: 'first', output: 'o' };
+    const vpr = { title: 'Nav Bar', story: 'first', output: null };
 
     let openCalls = 0;
     const openEditor = async () => {

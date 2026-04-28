@@ -20,9 +20,19 @@ import { buildSendEditContent, parseSendEditContent } from '../tui/editor.mjs';
 export async function runSendEditorFlow({ vpr, openEditor, regenerate, prompt }) {
   let current = { title: vpr.title ?? '', story: vpr.story ?? '', output: vpr.output ?? null };
 
+  // Already-prepared VPRs (non-empty story + output) skip editor on first
+  // pass and prompt directly — no wasted round-trip when story is already good.
+  let skipEditor = current.story.trim() !== '' && current.output != null;
+
   while (true) {
-    const edited = await openEditor(buildSendEditContent({ vpr: current }));
-    const parsed = parseSendEditContent(edited);
+    let parsed;
+    if (skipEditor) {
+      parsed = { title: current.title, story: current.story };
+      skipEditor = false;
+    } else {
+      const edited = await openEditor(buildSendEditContent({ vpr: current }));
+      parsed = parseSendEditContent(edited);
+    }
 
     // Empty/whitespace story = abandon, matching `git commit` semantics. No
     // regenerate, no prompt — escaping the editor never accidentally pushes.
