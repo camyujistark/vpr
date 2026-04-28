@@ -58,6 +58,41 @@ describe('buildPrompt()', () => {
     );
   });
 
+  it('keeps single-line headers intact when title or commit subjects contain newlines', () => {
+    const prompt = buildPrompt({
+      item: {
+        wi: 17150,
+        wiTitle: 'Slice ticket',
+        wiDescription: null,
+        parentWi: null,
+        parentWiTitle: null,
+        parentWiDescription: null,
+      },
+      vpr: { title: 'multi\nline title', story: 'do the thing' },
+      commits: [{ subject: 'feat: thing\nstray body line' }],
+    });
+
+    const titleLine = prompt
+      .split('\n')
+      .find(l => l.startsWith('PR Title:'));
+    assert.ok(titleLine, `expected a PR Title line; got:\n${prompt}`);
+    assert.ok(
+      titleLine.includes('multi') && titleLine.includes('line title'),
+      `expected the full title to stay on one line; got: ${JSON.stringify(titleLine)}\nfull prompt:\n${prompt}`
+    );
+
+    const commitBullets = prompt.split('\n').filter(l => l.startsWith('- '));
+    assert.equal(
+      commitBullets.length,
+      1,
+      `expected exactly one commit bullet; got ${commitBullets.length}:\n${commitBullets.join('\n')}`
+    );
+    assert.ok(
+      commitBullets[0].includes('feat: thing') && commitBullets[0].includes('stray body line'),
+      `expected commit subject to be flattened onto one bullet; got: ${commitBullets[0]}`
+    );
+  });
+
   it('falls back gracefully when wiDescription and parent fields are missing', () => {
     const prompt = buildPrompt({
       item: {

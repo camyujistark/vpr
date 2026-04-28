@@ -17,7 +17,8 @@ const DEFAULT_LLM_CMD = 'claude -p';
  * @returns {string}
  */
 export function buildPrompt({ item, vpr, commits }) {
-  const commitLines = commits.map(c => `- ${c.subject}`).join('\n');
+  const oneLine = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+  const commitLines = commits.map(c => `- ${oneLine(c.subject)}`).join('\n');
   const hasStory = Boolean(vpr.story && vpr.story.trim());
   const lines = [
     'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
@@ -33,7 +34,7 @@ export function buildPrompt({ item, vpr, commits }) {
     if (item.wiDescription) lines.push(item.wiDescription);
     lines.push('');
   }
-  lines.push(`PR Title: ${vpr.title}`, '');
+  lines.push(`PR Title: ${oneLine(vpr.title)}`, '');
   if (hasStory) {
     lines.push(`Story: ${vpr.story}`, '');
   } else {

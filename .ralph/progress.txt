@@ -8,3 +8,4 @@
 2026-04-28T23:12+10:00 vpr-stacked-pr-orchestration/generate-prompt-enrichment: buildPrompt is exported and includes a THIS SLICE (Task #wi) header with item.wiTitle/wiDescription.
 2026-04-28T23:13+10:00 vpr-stacked-pr-orchestration/generate-prompt-enrichment: buildPrompt emits PARENT PRD section before THIS SLICE when parentWi + parentWiDescription set.
 2026-04-28T23:16+10:00 vpr-stacked-pr-orchestration/generate-prompt-enrichment: graceful-fallback regression test — wiDescription/parent fields missing yields no broken sections and no "null" leakage.
+2026-04-28T23:19+10:00 vpr-stacked-pr-orchestration/generate-prompt-enrichment: buildPrompt collapses whitespace in title and commit subjects so single-line headers stay on one line; special-character escaping regression test added.
