@@ -255,8 +255,13 @@ export async function buildState() {
   }
 
   // 7. Assemble items array (chain-state enriched below)
+  // `rawCommits` is already oldest-first, so we use that index for both
+  // item-level and intra-item VPR sorting.
+  const chainIndexByChangeId = new Map();
+  rawCommits.forEach((c, i) => chainIndexByChangeId.set(c.changeId, i));
+
   const baseItems = Object.entries(metaItems).map(([itemName, itemData]) => {
-    const vprs = Object.entries(itemData.vprs ?? {}).map(([vprBookmark, vprMeta]) => {
+    const vprEntries = Object.entries(itemData.vprs ?? {}).map(([vprBookmark, vprMeta], declIdx) => {
       const commits = (vprCommits.get(vprBookmark) ?? []).map(c => ({
         changeId: c.changeId,
         sha: c.sha,
@@ -265,6 +270,15 @@ export async function buildState() {
       }));
 
       const hasConflict = commits.some(c => c.conflict);
+
+      // Earliest chain position of this VPR's commits, for intra-item sort.
+      // VPRs with no commits keep their meta-declaration index as a tiebreaker
+      // and sort to the end (Infinity).
+      let earliest = Infinity;
+      for (const c of commits) {
+        const idx = chainIndexByChangeId.get(c.changeId);
+        if (idx !== undefined && idx < earliest) earliest = idx;
+      }
 
       return {
         bookmark: vprBookmark,
@@ -275,8 +289,17 @@ export async function buildState() {
         sent: Object.prototype.hasOwnProperty.call(sent, vprBookmark),
         held: Boolean(vprMeta.held),
         conflict: hasConflict,
+        _earliest: earliest,
+        _declIdx: declIdx,
       };
     });
+
+    // Sort VPRs within the item by chain position; meta order tiebreaks empties
+    vprEntries.sort((a, b) => {
+      if (a._earliest !== b._earliest) return a._earliest - b._earliest;
+      return a._declIdx - b._declIdx;
+    });
+    const vprs = vprEntries.map(({ _earliest, _declIdx, ...rest }) => rest);
 
     return {
       name: itemName,
@@ -290,9 +313,6 @@ export async function buildState() {
   // Sort items by chain position so the TUI shows them in send order:
   // items whose earliest commit is closest to base come first. Items with no
   // commits (placeholder items) sort by meta-declaration order at the tail.
-  // `rawCommits` is already oldest-first, so we use that index.
-  const chainIndexByChangeId = new Map();
-  rawCommits.forEach((c, i) => chainIndexByChangeId.set(c.changeId, i));
   const itemEarliestIndex = new Map();
   for (const item of baseItems) {
     let earliest = Infinity;
