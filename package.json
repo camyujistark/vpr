@@ -10,6 +10,16 @@
     "start": "node bin/vpr.mjs",
     "test": "node --test test/*/*.test.mjs"
   },
-  "keywords": ["git", "pr", "pull-request", "tui", "virtual", "branch-chain"],
-  "license": "MIT"
+  "keywords": [
+    "git",
+    "pr",
+    "pull-request",
+    "tui",
+    "virtual",
+    "branch-chain"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.5.5"
+  }
 }
