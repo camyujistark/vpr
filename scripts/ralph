@@ -96,7 +96,10 @@ if [ -z "$PRD_FILE" ]; then
   fi
 fi
 
-cleanup() { [ -n "$TMP_PRD" ] && rm -f "$TMP_PRD"; }
+cleanup() {
+  [ -n "$TMP_PRD" ] && rm -f "$TMP_PRD"
+  rm -f "$REPO_ROOT/.vpr/.ralph-meta-slim.json"
+}
 trap cleanup EXIT
 
 mkdir -p "$(dirname "$PROGRESS_FILE")"
@@ -134,17 +137,33 @@ for ((i=1; i<=MAX_ITER; i++)); do
   echo ""
 
   # Snapshot current feedback state so the agent sees what's failing right now.
+  # Show the operator the full output for debugging, but only feed the agent the
+  # last 30 lines — failing-test stack traces dominate context otherwise and the
+  # tail almost always carries the actionable failure.
   echo "→ Running '$TEST_CMD' to snapshot feedback state..."
-  TEST_RESULT=$(cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 || true)
-  echo "$TEST_RESULT" | tail -20
+  TEST_RESULT_FULL=$(cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 || true)
+  echo "$TEST_RESULT_FULL" | tail -20
+  TEST_RESULT=$(echo "$TEST_RESULT_FULL" | tail -30)
   echo ""
   echo "→ Dispatching claude for iteration $i..."
   echo "────────────────────────────────────────"
 
-  # Build @-attachments. PRD is optional — only attach if a path is set.
+  # Slim the meta.json before attaching: drop eventLog (grows unbounded over
+  # the life of the project, ~50% of file size for active repos) and any items
+  # other than the one ralph is working on. Stable file path so Anthropic's
+  # prompt cache keys hit across iterations within the 5-min TTL.
+  META_SLIM="$REPO_ROOT/.vpr/.ralph-meta-slim.json"
+  jq --arg item "$ITEM" '
+    del(.eventLog)
+    | .items |= with_entries(select(.key == $item))
+  ' "$META_FILE" > "$META_SLIM"
+
+  # Build @-attachments in stable order so identical prefixes cache across
+  # iterations. PRD attached first (most stable), then slim meta, then skills,
+  # then progress (changes least to most).
   ATTACH=""
   [ -n "$PRD_FILE" ] && ATTACH="@$PRD_FILE "
-  ATTACH="${ATTACH}@$META_FILE @$PROGRESS_FILE @$TDD_SKILL @$CAVEMAN_SKILL"
+  ATTACH="${ATTACH}@$META_SLIM @$TDD_SKILL @$CAVEMAN_SKILL @$PROGRESS_FILE"
 
   # claude -p in default text mode emits nothing until the turn finishes.
   # Use --output-format stream-json --verbose to get one event per line as
