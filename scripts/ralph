@@ -6,7 +6,7 @@
 # test command, appends progress, and commits. Stops when all slices are
 # complete or when the agent requests human input.
 #
-# Usage: scripts/ralph <item> <max-iterations> [--prd <path>] [--test-cmd "<cmd>"]
+# Usage: scripts/ralph <item> <max-iterations> [--prd <path>] [--test-cmd "<cmd>"] [--quiet]
 #
 #   <item>            — item name in .vpr/meta.json (e.g. safron-mvp2-ui-virtual)
 #   <max-iterations>  — number of claude turns before auto-stop
@@ -14,6 +14,10 @@
 #                       item's parentWiDescription from meta.json is used inline.
 #   --test-cmd "..."  — shell command to run between iterations for feedback.
 #                       Defaults to "npm test".
+#   --quiet           — minimal output mode for sandbox / non-tty use. Skips the
+#                       jq event stream renderer; only prints iteration headers,
+#                       PICKED lines, and promise signals. Full stream-json log
+#                       still saved to .vpr/ralph.${ITEM}.iter${N}.jsonl per turn.
 
 set -e
 
@@ -21,6 +25,7 @@ ITEM=""
 MAX_ITER=""
 PRD_FILE=""
 TEST_CMD="npm test"
+QUIET=0
 
 # Positional args first, then flags.
 while [[ $# -gt 0 ]]; do
@@ -32,6 +37,10 @@ while [[ $# -gt 0 ]]; do
     --test-cmd)
       TEST_CMD="$2"
       shift 2
+      ;;
+    --quiet)
+      QUIET=1
+      shift
       ;;
     -h|--help)
       grep '^# ' "$0" | sed 's/^# \?//'
@@ -128,25 +137,31 @@ print_slice_landscape() {
 }
 
 for ((i=1; i<=MAX_ITER; i++)); do
-  echo ""
-  echo "════════════════════════════════════════"
-  echo "  Ralph iteration $i / $MAX_ITER  ($ITEM)"
-  echo "════════════════════════════════════════"
+  if [ "$QUIET" = "1" ]; then
+    echo "[iter $i/$MAX_ITER] $ITEM"
+  else
+    echo ""
+    echo "════════════════════════════════════════"
+    echo "  Ralph iteration $i / $MAX_ITER  ($ITEM)"
+    echo "════════════════════════════════════════"
 
-  print_slice_landscape
-  echo ""
+    print_slice_landscape
+    echo ""
+    echo "→ Running '$TEST_CMD' to snapshot feedback state..."
+  fi
 
   # Snapshot current feedback state so the agent sees what's failing right now.
   # Show the operator the full output for debugging, but only feed the agent the
   # last 30 lines — failing-test stack traces dominate context otherwise and the
   # tail almost always carries the actionable failure.
-  echo "→ Running '$TEST_CMD' to snapshot feedback state..."
   TEST_RESULT_FULL=$(cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 || true)
-  echo "$TEST_RESULT_FULL" | tail -20
+  [ "$QUIET" != "1" ] && echo "$TEST_RESULT_FULL" | tail -20
   TEST_RESULT=$(echo "$TEST_RESULT_FULL" | tail -30)
-  echo ""
-  echo "→ Dispatching claude for iteration $i..."
-  echo "────────────────────────────────────────"
+  if [ "$QUIET" != "1" ]; then
+    echo ""
+    echo "→ Dispatching claude for iteration $i..."
+    echo "────────────────────────────────────────"
+  fi
 
   # Slim the meta.json before attaching: drop eventLog (grows unbounded over
   # the life of the project, ~50% of file size for active repos) and any items
@@ -166,10 +181,13 @@ for ((i=1; i<=MAX_ITER; i++)); do
   ATTACH="${ATTACH}@$META_SLIM @$TDD_SKILL @$CAVEMAN_SKILL @$PROGRESS_FILE"
 
   # claude -p in default text mode emits nothing until the turn finishes.
-  # Use --output-format stream-json --verbose to get one event per line as
-  # they happen; tee raw JSON to a temp file for promise checks, and pipe
-  # through jq to render readable progress to the terminal in real time.
-  CLAUDE_OUT=$(mktemp)
+  # Use --output-format stream-json --verbose to get one event per line as they
+  # happen; tee raw JSON to a per-iteration log file (kept on disk for
+  # postmortem) and pipe through jq to render output. Verbose mode renders
+  # every tool call + text chunk; quiet mode emits only PICKED lines, promise
+  # tags, and a one-line completion summary — suitable for sandbox / non-tty
+  # contexts (sandcastle, CI).
+  CLAUDE_OUT="$REPO_ROOT/.vpr/ralph.${ITEM}.iter${i}.jsonl"
   claude -p --verbose --output-format stream-json --permission-mode bypassPermissions "\
 $ATTACH
 
@@ -241,13 +259,19 @@ $TEST_RESULT
       elif .type == "result" then
         "[32m✓ claude done (\((.duration_ms // 0) / 1000 | floor)s, \(.num_turns // 0) turns)[0m"
       else empty end
-    '
+    ' | { if [ "$QUIET" = "1" ]; then
+            # Strip ANSI, then keep only PICKED lines, <promise> tags, and the ✓ summary.
+            sed 's/\x1b\[[0-9;]*m//g' | grep -E '^(PICKED:|.*<promise>|✓)' || true
+          else
+            cat
+          fi; }
 
   result=$(<"$CLAUDE_OUT")
-  rm -f "$CLAUDE_OUT"
 
-  echo ""
-  echo "────────────────────────────────────────"
+  if [ "$QUIET" != "1" ]; then
+    echo ""
+    echo "────────────────────────────────────────"
+  fi
 
   # Safety net: ensure the slice bookmark lands on the new commit (@-) even if
   # the agent skipped step 7. Parses the PICKED: line the agent emits first.
@@ -257,28 +281,36 @@ $TEST_RESULT
       | awk '/^PICKED:/{print $2; exit}')
     if [ -n "$PICKED" ]; then
       if (cd "$REPO_ROOT" && jj bookmark set "$PICKED" -r @- -B >/dev/null 2>&1); then
-        echo "→ Bookmarked $PICKED on @-"
+        [ "$QUIET" != "1" ] && echo "→ Bookmarked $PICKED on @-"
       else
-        echo "warn: jj bookmark set failed for $PICKED (commit may be unchanged or @- empty)"
+        echo "warn: jj bookmark set failed for $PICKED (commit may be unchanged or @- empty)" >&2
       fi
     else
-      echo "warn: no PICKED: line in agent output — bookmark not set"
+      echo "warn: no PICKED: line in agent output — bookmark not set" >&2
     fi
   fi
 
   if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
-    echo ""
-    echo "════════════════════════════════════════"
-    echo "  All slices complete — exiting."
-    echo "════════════════════════════════════════"
+    if [ "$QUIET" = "1" ]; then
+      echo "COMPLETE"
+    else
+      echo ""
+      echo "════════════════════════════════════════"
+      echo "  All slices complete — exiting."
+      echo "════════════════════════════════════════"
+    fi
     exit 0
   fi
 
   if [[ "$result" == *"<promise>HUMAN-INPUT-NEEDED</promise>"* ]]; then
-    echo ""
-    echo "════════════════════════════════════════"
-    echo "  Human input requested — exiting for review."
-    echo "════════════════════════════════════════"
+    if [ "$QUIET" = "1" ]; then
+      echo "HUMAN-INPUT-NEEDED"
+    else
+      echo ""
+      echo "════════════════════════════════════════"
+      echo "  Human input requested — exiting for review."
+      echo "════════════════════════════════════════"
+    fi
     exit 2
   fi
 done
