@@ -2,19 +2,58 @@
 # scripts/ralph — ralph loop for working through VPR slices via TDD.
 #
 # Each iteration: picks the next unimplemented slice from .vpr/meta.json,
-# applies /tdd to make ONE acceptance criterion pass, runs npm test,
-# appends progress, and commits. Stops when all slices are complete or
-# when the agent requests human input.
+# applies /tdd to make ONE acceptance criterion pass, runs the configured
+# test command, appends progress, and commits. Stops when all slices are
+# complete or when the agent requests human input.
 #
-# Usage: scripts/ralph <max-iterations>
+# Usage: scripts/ralph <item> <max-iterations> [--prd <path>] [--test-cmd "<cmd>"]
+#
+#   <item>            — item name in .vpr/meta.json (e.g. safron-mvp2-ui-virtual)
+#   <max-iterations>  — number of claude turns before auto-stop
+#   --prd <path>      — optional file attached as parent context. If omitted, the
+#                       item's parentWiDescription from meta.json is used inline.
+#   --test-cmd "..."  — shell command to run between iterations for feedback.
+#                       Defaults to "npm test".
 
 set -e
 
-if [ -z "$1" ]; then
-  echo "Usage: $0 <max-iterations>"
+ITEM=""
+MAX_ITER=""
+PRD_FILE=""
+TEST_CMD="npm test"
+
+# Positional args first, then flags.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prd)
+      PRD_FILE="$2"
+      shift 2
+      ;;
+    --test-cmd)
+      TEST_CMD="$2"
+      shift 2
+      ;;
+    -h|--help)
+      grep '^# ' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+    *)
+      if [ -z "$ITEM" ]; then ITEM="$1"
+      elif [ -z "$MAX_ITER" ]; then MAX_ITER="$1"
+      else
+        echo "Unknown argument: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$ITEM" ] || [ -z "$MAX_ITER" ]; then
+  echo "Usage: $0 <item> <max-iterations> [--prd <path>] [--test-cmd \"<cmd>\"]"
   echo ""
   echo "Each iteration runs 'claude -p' once to advance one acceptance criterion"
-  echo "of the highest-priority unblocked slice."
+  echo "of the highest-priority unblocked slice in <item>."
   echo ""
   echo "Exit signals (set by claude):"
   echo "  <promise>COMPLETE</promise>           → all slices done; ralph exits 0"
@@ -24,12 +63,41 @@ if [ -z "$1" ]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PROGRESS_FILE="$REPO_ROOT/.vpr/progress.txt"
-PRD_FILE="$REPO_ROOT/docs/specs/2026-04-28-vpr-stacked-pr-orchestration.md"
+PROGRESS_FILE="$REPO_ROOT/.vpr/progress.${ITEM}.txt"
 META_FILE="$REPO_ROOT/.vpr/meta.json"
 TDD_SKILL="$HOME/.claude/skills/tdd/SKILL.md"
 CAVEMAN_SKILL="$HOME/.claude/plugins/marketplaces/caveman/skills/caveman/SKILL.md"
-ITEM="vpr-stacked-pr-orchestration"
+
+if [ ! -f "$META_FILE" ]; then
+  echo "Error: $META_FILE not found. Run vpr init first." >&2
+  exit 1
+fi
+
+if ! jq -e --arg item "$ITEM" '.items[$item]' "$META_FILE" >/dev/null 2>&1; then
+  echo "Error: item '$ITEM' not found in $META_FILE" >&2
+  exit 1
+fi
+
+# If no --prd supplied, materialise the item's parentWiDescription to a temp
+# file so it can be @-attached just like a real PRD path. Empty when neither
+# parentWiDescription nor wiDescription are populated.
+TMP_PRD=""
+if [ -z "$PRD_FILE" ]; then
+  PARENT_DESC="$(jq -r --arg item "$ITEM" '.items[$item].parentWiDescription // .items[$item].wiDescription // ""' "$META_FILE")"
+  if [ -n "$PARENT_DESC" ]; then
+    TMP_PRD="$(mktemp -t vpr-ralph-prd.XXXXXX.md)"
+    PARENT_TITLE="$(jq -r --arg item "$ITEM" '.items[$item].parentWiTitle // .items[$item].wiTitle // ""' "$META_FILE")"
+    PARENT_WI="$(jq -r --arg item "$ITEM" '.items[$item].parentWi // .items[$item].wi // ""' "$META_FILE")"
+    {
+      [ -n "$PARENT_TITLE" ] && echo "# $PARENT_TITLE${PARENT_WI:+ (#$PARENT_WI)}" && echo ""
+      echo "$PARENT_DESC"
+    } > "$TMP_PRD"
+    PRD_FILE="$TMP_PRD"
+  fi
+fi
+
+cleanup() { [ -n "$TMP_PRD" ] && rm -f "$TMP_PRD"; }
+trap cleanup EXIT
 
 mkdir -p "$(dirname "$PROGRESS_FILE")"
 touch "$PROGRESS_FILE"
@@ -37,12 +105,16 @@ touch "$PROGRESS_FILE"
 # Print a landscape snapshot: each slice with its blockers and a count of
 # progress.txt entries (the agent's worklog).
 print_slice_landscape() {
-  echo "→ Slice landscape (entries in .vpr/progress.txt | blocked-by):"
+  echo "→ Slice landscape (entries in $PROGRESS_FILE | blocked-by):"
+  # Read slice spec from `acceptance` field (machine-readable, holds
+  # ## What to build / ## Acceptance criteria / ## Blocked by sections).
+  # `story` is the human-curated PR narrative — separate concern, not the
+  # spec ralph drives against.
   jq -r --arg item "$ITEM" '
     .items[$item].vprs | to_entries[] |
     .key as $bm |
-    .value.story as $story |
-    ($story | capture("(?s)## Blocked by\\s*\n(?<b>.*?)(?=\n## |$)").b // "") as $blocked |
+    (.value.acceptance // "") as $spec |
+    ($spec | capture("(?s)## Blocked by\\s*\n(?<b>.*?)(?=\n## |$)").b // "") as $blocked |
     "\($bm)\t\($blocked | gsub("\n"; " ") | gsub("^\\s+|\\s+$"; ""))"
   ' "$META_FILE" | while IFS=$'\t' read -r bookmark blocked; do
     short="${bookmark##*/}"
@@ -52,22 +124,27 @@ print_slice_landscape() {
   done
 }
 
-for ((i=1; i<=$1; i++)); do
+for ((i=1; i<=MAX_ITER; i++)); do
   echo ""
   echo "════════════════════════════════════════"
-  echo "  Ralph iteration $i / $1"
+  echo "  Ralph iteration $i / $MAX_ITER  ($ITEM)"
   echo "════════════════════════════════════════"
 
   print_slice_landscape
   echo ""
 
   # Snapshot current feedback state so the agent sees what's failing right now.
-  echo "→ Running npm test to snapshot feedback state..."
-  TEST_RESULT=$(cd "$REPO_ROOT" && npm test 2>&1 || true)
+  echo "→ Running '$TEST_CMD' to snapshot feedback state..."
+  TEST_RESULT=$(cd "$REPO_ROOT" && eval "$TEST_CMD" 2>&1 || true)
   echo "$TEST_RESULT" | tail -20
   echo ""
   echo "→ Dispatching claude for iteration $i..."
   echo "────────────────────────────────────────"
+
+  # Build @-attachments. PRD is optional — only attach if a path is set.
+  ATTACH=""
+  [ -n "$PRD_FILE" ] && ATTACH="@$PRD_FILE "
+  ATTACH="${ATTACH}@$META_FILE @$PROGRESS_FILE @$TDD_SKILL @$CAVEMAN_SKILL"
 
   # claude -p in default text mode emits nothing until the turn finishes.
   # Use --output-format stream-json --verbose to get one event per line as
@@ -75,31 +152,32 @@ for ((i=1; i<=$1; i++)); do
   # through jq to render readable progress to the terminal in real time.
   CLAUDE_OUT=$(mktemp)
   claude -p --verbose --output-format stream-json --permission-mode bypassPermissions "\
-@$PRD_FILE @$META_FILE @$PROGRESS_FILE @$TDD_SKILL @$CAVEMAN_SKILL
+$ATTACH
 
-You are working through the VPR Stacked PR Orchestration project, one slice at a time, using strict TDD.
+You are working through item '$ITEM', one slice at a time, using strict TDD.
 
 CONTEXT:
-- The PRD is in the spec file: problem, solution, user stories, implementation decisions, testing decisions.
-- The slice plan lives in .vpr/meta.json under item 'vpr-stacked-pr-orchestration'. Each VPR there is a slice; its 'story' field holds: ## What to build / ## Acceptance criteria / ## Blocked by.
-- Progress so far is in .vpr/progress.txt (each line: timestamp, slice-bookmark, what was accomplished).
+- The parent PRD (if attached above) holds problem, solution, user stories, implementation decisions, testing decisions.
+- The slice plan lives in .vpr/meta.json under item '$ITEM'. Each VPR there is a slice; its 'acceptance' field holds the machine-readable TDD spec: ## What to build / ## Acceptance criteria / ## Blocked by. (The 'story' field is for human-curated PR narrative — usually written post-QA — and is NOT the spec.)
+- Progress so far is in $PROGRESS_FILE (each line: timestamp, slice-bookmark, what was accomplished).
 - The TDD skill governs HOW you implement: red-green-refactor, vertical tracer bullets, behavior-not-implementation tests.
-- The caveman skill governs HOW you communicate: terse, drop articles/filler, fragments OK. Apply at intensity 'full' to ALL assistant text in this run (including the PICKED line, progress.txt entry, and commit message subject — keep the conventional-commit prefix intact). Skip caveman only for the literal <promise>...</promise> tags and for any HUMAN-INPUT-NEEDED question (those need clarity).
+- The caveman skill governs HOW you communicate: terse, drop articles/filler, fragments OK. Apply at intensity 'full' to ALL assistant text in this run (including the PICKED line, progress entry, and commit message subject — keep the conventional-commit prefix intact). Skip caveman only for the literal <promise>...</promise> tags and for any HUMAN-INPUT-NEEDED question (those need clarity).
 
 THIS ITERATION:
 0. As your VERY FIRST line of output (before any tool calls), print:
      PICKED: <slice-bookmark> — <one-sentence reason>
    so the operator can see what you chose.
 1. Read .vpr/meta.json. Find the next slice to work on:
-   - Walk the slices in 'Blocked by' order: a slice is workable only if all its blockers' acceptance criteria are met.
+   - Skip slices whose 'acceptance' field is empty or has no '## Acceptance criteria' section — those are placeholders for future work, not yet specced.
+   - Walk the remaining slices in 'Blocked by' order: a slice is workable only if all its blockers' acceptance criteria are met.
    - Among workable slices, pick the highest priority (earliest in dependency order).
    - If a slice is partially complete (some acceptance criteria done, some not), continue it before starting a new one.
-2. Identify ONE acceptance criterion from that slice's story that is not yet met.
+2. Identify ONE acceptance criterion from that slice's 'acceptance' field that is not yet met.
 3. Apply /tdd: write ONE failing test for that criterion (RED), then minimal implementation to pass (GREEN), then refactor if natural.
-4. Run 'npm test'. ALL tests must be green before you finish this iteration. If a test you didn't touch is failing, fix it before moving on (treat it as a regression).
-5. Append one line to .vpr/progress.txt:
+4. Run '$TEST_CMD'. ALL tests must be green before you finish this iteration. If a test you didn't touch is failing, fix it before moving on (treat it as a regression).
+5. Append one line to $PROGRESS_FILE:
      '\$(date -Iminutes) <slice-bookmark>: <one-line summary of what you accomplished>'
-6. Make a single git commit using conventional-commit format (e.g. 'feat(ticket-sync): add planTicketSync pure helper'). One commit per iteration.
+6. Make a single git commit using conventional-commit format (e.g. 'feat(scope): summary'). One commit per iteration.
 7. Tag the commit with the slice's jj bookmark so vpr status groups it under the slice:
      jj bookmark set <slice-bookmark> -r @- -B
    (the new commit is at @- after git commit in this colocated repo; -B permits sideways/backward moves on resumed slices.)
@@ -109,10 +187,10 @@ CONSTRAINTS:
 - ONLY one slice per iteration. If you finish the slice, stop — the next iteration picks the next.
 - If you need clarification on the slice's spec, the interface, or design intent, output <promise>HUMAN-INPUT-NEEDED</promise> followed by your question, then stop. Do NOT invent answers.
 - If this slice's acceptance criteria are NOW all met, output <promise>SLICE-DONE</promise> at the end of your response.
-- If EVERY slice in the item has all acceptance criteria met (the whole orchestration project is implementation-complete), output <promise>COMPLETE</promise>.
-- Never modify the PRD spec file. If you discover the spec is wrong, output <promise>HUMAN-INPUT-NEEDED</promise> with the discrepancy.
+- If EVERY slice in '$ITEM' has all acceptance criteria met, output <promise>COMPLETE</promise>.
+- Never modify the parent PRD. If you discover the spec is wrong, output <promise>HUMAN-INPUT-NEEDED</promise> with the discrepancy.
 
-CURRENT TEST STATE (output of 'npm test' just before this iteration):
+CURRENT TEST STATE (output of '$TEST_CMD' just before this iteration):
 $TEST_RESULT
 " | tee "$CLAUDE_OUT" | jq --unbuffered -r '
       def short(s): if (s | length) > 100 then "…" + s[-99:] else s end;
@@ -187,4 +265,4 @@ $TEST_RESULT
 done
 
 echo ""
-echo "Ralph loop completed $1 iterations without reaching COMPLETE."
+echo "Ralph loop completed $MAX_ITER iterations without reaching COMPLETE."

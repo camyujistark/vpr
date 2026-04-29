@@ -6,8 +6,9 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execSync, spawnSync } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +109,16 @@ VPR v2 — Virtual Pull Request Manager
     vpr send <vpr> --force          Delete stale branch bookmark if it exists
     vpr send --all                  Send all
     vpr send --dry-run              Preview
+
+  Ralph:
+    vpr ralph <item> <max-iter>     TDD loop — claude advances one acceptance
+                                    criterion per iteration until COMPLETE,
+                                    SLICE-DONE rolls to next, HUMAN-INPUT-NEEDED
+                                    pauses for review.
+      --prd <path>                  Override the parent PRD attached to claude
+                                    (defaults to item.parentWiDescription).
+      --test-cmd "<cmd>"            Test command run between iterations
+                                    (default: "npm test").
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -283,13 +294,14 @@ try {
     case 'edit': {
       const query = args[0];
       if (!query) {
-        console.error('Usage: vpr edit <vpr> [--story "..." | --title "..." | --output "..."]');
+        console.error('Usage: vpr edit <vpr> [--story "..." | --title "..." | --acceptance "..." | --output "..."]');
         process.exit(1);
       }
       const flags = parseFlags(args.slice(1));
       const updates = {};
       if (flags.story !== undefined) updates.story = flags.story;
       if (flags.title !== undefined) updates.title = flags.title;
+      if (flags.acceptance !== undefined) updates.acceptance = flags.acceptance;
       if (flags.output !== undefined) updates.output = flags.output;
       const { editVpr } = await import('../src/commands/edit.mjs');
       await editVpr(query, updates);
@@ -484,6 +496,38 @@ try {
         throw err;
       }
       break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr ralph <item> <max-iter> [--prd <path>] [--test-cmd "<cmd>"]
+    // -----------------------------------------------------------------------
+    case 'ralph': {
+      const positional = args.filter(a => !a.startsWith('--'));
+      const item = positional[0];
+      const maxIter = positional[1];
+      if (!item || !maxIter) {
+        console.error('Usage: vpr ralph <item> <max-iter> [--prd <path>] [--test-cmd "<cmd>"]');
+        process.exit(1);
+      }
+      if (!/^\d+$/.test(maxIter)) {
+        console.error('Error: <max-iter> must be a positive integer');
+        process.exit(1);
+      }
+
+      const flags = parseFlags(args);
+      const __dirname = dirname(fileURLToPath(import.meta.url));
+      const scriptPath = join(__dirname, '..', 'scripts', 'ralph');
+      if (!existsSync(scriptPath)) {
+        console.error(`Error: ralph script not found at ${scriptPath}`);
+        process.exit(1);
+      }
+
+      const childArgs = [item, maxIter];
+      if (flags.prd) childArgs.push('--prd', String(flags.prd));
+      if (flags['test-cmd']) childArgs.push('--test-cmd', String(flags['test-cmd']));
+
+      const result = spawnSync(scriptPath, childArgs, { stdio: 'inherit' });
+      process.exit(result.status ?? 1);
     }
 
     // -----------------------------------------------------------------------

@@ -45,10 +45,16 @@ export function findVpr(meta, query) {
 
 /**
  * Update fields on a VPR found by query.
- * Updatable fields: title, story, output.
+ * Updatable fields: title, story, acceptance, output.
+ *
+ * `story` holds the human-curated PR narrative (typically refined post-QA).
+ * `acceptance` holds the machine-readable TDD spec (acceptance criteria
+ * that ralph drives against). They are separate concerns: story is for
+ * humans reading the PR, acceptance is for the agent driving the
+ * implementation.
  *
  * @param {string} query  — bookmark name, partial bookmark, or partial title
- * @param {object} updates  — e.g. { story: '...', title: '...', output: '...' }
+ * @param {object} updates  — e.g. { story, title, acceptance, output }
  * @returns {Promise<void>}
  */
 export async function editVpr(query, updates) {
@@ -61,6 +67,7 @@ export async function editVpr(query, updates) {
   // Apply only recognised fields
   if ('title' in updates) vpr.title = updates.title;
   if ('story' in updates) vpr.story = updates.story;
+  if ('acceptance' in updates) vpr.acceptance = updates.acceptance;
   if ('output' in updates) vpr.output = updates.output;
 
   meta.items[itemName].vprs[bookmark] = vpr;

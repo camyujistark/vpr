@@ -76,7 +76,7 @@ export async function addVpr(title, { item } = {}) {
   jj(`bookmark set ${bookmark} -r ${target}`);
 
   // Register in meta
-  meta.items[item].vprs[bookmark] = { title, story: '', output: null };
+  meta.items[item].vprs[bookmark] = { title, story: '', acceptance: '', output: null };
   await saveMeta(meta);
   await appendEvent('cli', 'vpr.add', { bookmark, item, title });
 
