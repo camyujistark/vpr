@@ -21,5 +21,8 @@
   "license": "MIT",
   "dependencies": {
     "@ai-hero/sandcastle": "^0.5.5"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }

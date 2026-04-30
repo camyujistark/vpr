@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { migrateMeta } from './migration.mjs';
 
 const MAX_EVENT_LOG = 100;
 
@@ -22,7 +23,12 @@ export async function loadMeta() {
   if (!existsSync(path)) return emptyMeta();
   try {
     const raw = readFileSync(path, 'utf-8');
-    return JSON.parse(raw);
+    const meta = JSON.parse(raw);
+    const migrated = migrateMeta(meta);
+    if (JSON.stringify(migrated) !== JSON.stringify(meta)) {
+      await saveMeta(migrated);
+    }
+    return migrated;
   } catch {
     return emptyMeta();
   }

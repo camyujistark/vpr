@@ -1,6 +1,6 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,10 +41,39 @@ describe('meta core', () => {
 
     it('returns parsed object when .vpr/meta.json exists', async () => {
       const { saveMeta, loadMeta } = await freshImport();
-      const data = { items: { foo: { wi: 1, wiTitle: 'Foo', vprs: {} } }, hold: [], sent: {}, eventLog: [] };
+      const data = { items: { foo: { wi: 1, wiTitle: 'Foo', vprs: {}, dependsOn: [] } }, hold: [], sent: {}, eventLog: [] };
       await saveMeta(data);
       const loaded = await loadMeta();
       assert.deepStrictEqual(loaded, data);
+    });
+
+    it('migrates on load: adds dependsOn:[] to items that lack it', async () => {
+      const { saveMeta, loadMeta } = await freshImport();
+      const preMigration = { items: { foo: { wi: 1, wiTitle: 'Foo', vprs: {} } }, hold: [], sent: {}, eventLog: [] };
+      await saveMeta(preMigration);
+      const loaded = await loadMeta();
+      assert.deepStrictEqual(loaded.items.foo.dependsOn, []);
+    });
+
+    it('writes back to disk when migration changed something', async () => {
+      const { saveMeta, loadMeta } = await freshImport();
+      const preMigration = { items: { foo: { wi: 1 } }, hold: [], sent: {}, eventLog: [] };
+      await saveMeta(preMigration);
+      await loadMeta();
+      const raw = readFileSync(join(tmpDir, '.vpr', 'meta.json'), 'utf-8');
+      const onDisk = JSON.parse(raw);
+      assert.deepStrictEqual(onDisk.items.foo.dependsOn, []);
+    });
+
+    it('does not write back when migration changed nothing', async () => {
+      const { saveMeta, loadMeta } = await freshImport();
+      const alreadyMigrated = { items: { foo: { wi: 1, dependsOn: ['bar'] } }, hold: [], sent: {}, eventLog: [] };
+      await saveMeta(alreadyMigrated);
+      const mtimeBefore = statSync(join(tmpDir, '.vpr', 'meta.json')).mtimeMs;
+      await new Promise(r => setTimeout(r, 10));
+      await loadMeta();
+      const mtimeAfter = statSync(join(tmpDir, '.vpr', 'meta.json')).mtimeMs;
+      assert.strictEqual(mtimeBefore, mtimeAfter, 'file should not be rewritten when nothing changed');
     });
   });
 

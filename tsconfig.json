@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022"
+  },
+  "include": [
+    "bin/**/*.mjs",
+    "core/**/*.mjs",
+    "commands/**/*.mjs",
+    "test/**/*.mjs"
+  ]
+}
