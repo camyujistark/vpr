@@ -278,12 +278,15 @@ try {
     case 'add': {
       const title = args[0];
       if (!title) {
-        console.error('Usage: vpr add "title" [--item <name>]');
+        console.error('Usage: vpr add "title" [--item <name>] [--model <claude-model-id>]');
         process.exit(1);
       }
       const flags = parseFlags(args.slice(1));
       const { addVpr } = await import('../src/commands/add.mjs');
-      const result = await addVpr(title, { item: flags.item || undefined });
+      const result = await addVpr(title, {
+        item: flags.item || undefined,
+        model: flags.model || undefined,
+      });
       console.log(JSON.stringify(result, null, 2));
       break;
     }
@@ -294,7 +297,7 @@ try {
     case 'edit': {
       const query = args[0];
       if (!query) {
-        console.error('Usage: vpr edit <vpr> [--story "..." | --title "..." | --acceptance "..." | --output "..."]');
+        console.error('Usage: vpr edit <vpr> [--story "..." | --title "..." | --acceptance "..." | --output "..." | --model <claude-model-id>]');
         process.exit(1);
       }
       const flags = parseFlags(args.slice(1));
@@ -303,6 +306,7 @@ try {
       if (flags.title !== undefined) updates.title = flags.title;
       if (flags.acceptance !== undefined) updates.acceptance = flags.acceptance;
       if (flags.output !== undefined) updates.output = flags.output;
+      if (flags.model !== undefined) updates.model = flags.model;
       const { editVpr } = await import('../src/commands/edit.mjs');
       await editVpr(query, updates);
       break;

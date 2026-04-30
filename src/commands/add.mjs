@@ -26,10 +26,10 @@ function slugify(title) {
  * - Registers VPR in meta.items[item].vprs.
  *
  * @param {string} title
- * @param {{ item?: string }} opts
+ * @param {{ item?: string, model?: string }} opts
  * @returns {Promise<{ bookmark: string, item: string, title: string }>}
  */
-export async function addVpr(title, { item } = {}) {
+export async function addVpr(title, { item, model } = {}) {
   const meta = await loadMeta();
 
   // Resolve item name
@@ -76,7 +76,17 @@ export async function addVpr(title, { item } = {}) {
   jj(`bookmark set ${bookmark} -r ${target}`);
 
   // Register in meta
-  meta.items[item].vprs[bookmark] = { title, story: '', acceptance: '', output: null };
+  meta.items[item].vprs[bookmark] = {
+    title,
+    story: '',
+    acceptance: '',
+    output: null,
+    // `model` hints to ralph/sandcastle which Claude model to run for this
+    // slice. Empty = caller's default (typically Sonnet). Set to e.g.
+    // "claude-opus-4-7" for slices that need cross-cutting refactors or
+    // unfamiliar-codebase exploration.
+    model: model ?? '',
+  };
   await saveMeta(meta);
   await appendEvent('cli', 'vpr.add', { bookmark, item, title });
 

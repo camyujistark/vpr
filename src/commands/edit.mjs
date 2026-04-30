@@ -69,6 +69,7 @@ export async function editVpr(query, updates) {
   if ('story' in updates) vpr.story = updates.story;
   if ('acceptance' in updates) vpr.acceptance = updates.acceptance;
   if ('output' in updates) vpr.output = updates.output;
+  if ('model' in updates) vpr.model = updates.model;
 
   meta.items[itemName].vprs[bookmark] = vpr;
   await saveMeta(meta);
