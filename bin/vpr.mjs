@@ -111,14 +111,17 @@ VPR v2 — Virtual Pull Request Manager
     vpr send --dry-run              Preview
 
   Ralph:
-    vpr ralph <item> <max-iter>     TDD loop — claude advances one acceptance
-                                    criterion per iteration until COMPLETE,
-                                    SLICE-DONE rolls to next, HUMAN-INPUT-NEEDED
-                                    pauses for review.
+    vpr ralph <item> <max-iter>     TDD loop. Default: Docker sandbox via
+                                    .sandcastle/main.ts (isolated worktree).
+                                    Each iteration = one acceptance criterion
+                                    until COMPLETE / SLICE-DONE rolls to next /
+                                    HUMAN-INPUT-NEEDED pauses for review.
+      --host                        Run on host (no Docker isolation).
+                                    Faster but trusts the agent fully.
       --prd <path>                  Override the parent PRD attached to claude
-                                    (defaults to item.parentWiDescription).
+                                    (host mode only; sandcastle reads meta.json).
       --test-cmd "<cmd>"            Test command run between iterations
-                                    (default: "npm test").
+                                    (host mode only; default: "npm test").
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -158,6 +161,23 @@ try {
     // -----------------------------------------------------------------------
     case 'ticket': {
       const [sub, ...ticketArgs] = args;
+      // Top-level `vpr ticket --help` or `vpr ticket` (no sub) prints the
+      // ticket subset of HELP so users can find the right verb.
+      if (sub === undefined || sub === '--help' || sub === '-h') {
+        console.log(`vpr ticket — manage items (each backed by an Azure DevOps work item)
+
+  vpr ticket new "title"                 Create item + work item
+  vpr ticket new "title" --parent <wi>   Create as child of parent WI
+  vpr ticket new <wi-id>                 Attach to existing work item
+  vpr ticket list                        List items (JSON)
+  vpr ticket edit <name>                 Edit item interactively
+  vpr ticket done <name>                 Close item
+  vpr ticket hold <name>                 Park item — drops to bottom of status
+  vpr ticket unhold <name>               Restore a held item
+
+Pass --help to any subcommand for its own usage.`);
+        break;
+      }
       const { ticketNew, ticketList, ticketEdit, ticketDone, ticketHold, ticketUnhold } = await import('../src/commands/ticket.mjs');
 
       switch (sub) {
@@ -277,9 +297,17 @@ try {
     // -----------------------------------------------------------------------
     case 'add': {
       const title = args[0];
-      if (!title) {
-        console.error('Usage: vpr add "title" [--item <name>] [--model <claude-model-id>]');
-        process.exit(1);
+      if (!title || title === '--help' || title === '-h') {
+        const stream = title ? console.log : console.error;
+        stream(`vpr add — create a new VPR slice in the current item
+
+  vpr add "title"                       Create slice in current item
+  vpr add "title" --item <name>         Target a specific item
+  vpr add "title" --model <claude-id>   Suggest a default model for /ralph
+
+The slice gets a title; story + acceptance live on the slice and can be
+filled in later via \`vpr edit\`.`);
+        process.exit(title ? 0 : 1);
       }
       const flags = parseFlags(args.slice(1));
       const { addVpr } = await import('../src/commands/add.mjs');
@@ -296,9 +324,18 @@ try {
     // -----------------------------------------------------------------------
     case 'edit': {
       const query = args[0];
-      if (!query) {
-        console.error('Usage: vpr edit <vpr> [--story "..." | --title "..." | --acceptance "..." | --output "..." | --model <claude-model-id>]');
-        process.exit(1);
+      if (!query || query === '--help' || query === '-h') {
+        const stream = query ? console.log : console.error;
+        stream(`vpr edit — update fields on an existing VPR slice
+
+  vpr edit <vpr> --story "..."          Set the story
+  vpr edit <vpr> --title "..."          Set the title
+  vpr edit <vpr> --acceptance "..."     Set acceptance criteria
+  vpr edit <vpr> --output "..."         Set the PR URL output
+  vpr edit <vpr> --model <claude-id>    Set the suggested /ralph model
+
+<vpr> matches the bookmark suffix; partial matches are accepted.`);
+        process.exit(query ? 0 : 1);
       }
       const flags = parseFlags(args.slice(1));
       const updates = {};
@@ -317,9 +354,15 @@ try {
     // -----------------------------------------------------------------------
     case 'remove': {
       const query = args[0];
-      if (!query) {
-        console.error('Usage: vpr remove <vpr>');
-        process.exit(1);
+      if (!query || query === '--help' || query === '-h') {
+        const stream = query ? console.log : console.error;
+        stream(`vpr remove — dissolve a VPR slice
+
+  vpr remove <vpr>                      Drop the slice from the item
+
+The slice's bookmark is deleted; commits stay in the chain. Useful when
+a slice's content has been folded into another (e.g. a squash).`);
+        process.exit(query ? 0 : 1);
       }
       const { removeVpr } = await import('../src/commands/remove.mjs');
       await removeVpr(query);
@@ -503,15 +546,29 @@ try {
     }
 
     // -----------------------------------------------------------------------
-    // vpr ralph <item> <max-iter> [--prd <path>] [--test-cmd "<cmd>"]
+    // vpr ralph <item> <max-iter> [--host] [--prd <path>] [--test-cmd "<cmd>"]
     // -----------------------------------------------------------------------
     case 'ralph': {
       const positional = args.filter(a => !a.startsWith('--'));
       const item = positional[0];
       const maxIter = positional[1];
-      if (!item || !maxIter) {
-        console.error('Usage: vpr ralph <item> <max-iter> [--prd <path>] [--test-cmd "<cmd>"]');
-        process.exit(1);
+      if (!item || maxIter === undefined || item === '--help' || item === '-h') {
+        const stream = item === '--help' || item === '-h' ? console.log : console.error;
+        stream(`vpr ralph — TDD loop driving slices to completion
+
+  vpr ralph <item> <max-iter>            Run inside Docker sandbox (default)
+  vpr ralph <item> <max-iter> --host     Run on host (no isolation, faster)
+
+  --prd <path>                           Override the PRD attached to claude
+  --test-cmd "<cmd>"                     Test command between iterations
+
+Default mode: sandcastle (Docker) — uses .sandcastle/main.ts. Worktree
+isolation, jj inside the container, can't escape the repo. Slower per
+iteration (container boot) but safer.
+
+Host mode (--host): claude -p with bypassPermissions on your real repo.
+Faster startup, no isolation. Use when you trust the slice + want speed.`);
+        process.exit(item ? 0 : 1);
       }
       if (!/^\d+$/.test(maxIter)) {
         console.error('Error: <max-iter> must be a positive integer');
@@ -520,16 +577,55 @@ try {
 
       const flags = parseFlags(args);
       const __dirname = dirname(fileURLToPath(import.meta.url));
+
+      // Default = sandcastle (Docker). --host opts back into the host script.
+      if (!flags.host) {
+        const sandcastleMain = join(process.cwd(), '.sandcastle', 'main.ts');
+        if (!existsSync(sandcastleMain)) {
+          console.error(`Error: .sandcastle/main.ts not found in ${process.cwd()}`);
+          console.error("Hint: this repo isn't set up for sandcastle. Run with --host to use host mode, or scaffold sandcastle first.");
+          process.exit(1);
+        }
+        const childArgs = ['tsx', sandcastleMain, item];
+        const result = spawnSync('npx', childArgs, {
+          stdio: 'inherit',
+          env: { ...process.env, SANDCASTLE_MAX_ITER: maxIter },
+        });
+
+        // Post-ralph: surface the agent's temp branch + the integration
+        // command. Sandcastle's `branch` strategy leaves the work on
+        // `sandcastle/ralph-<item>/<timestamp>` and never runs the
+        // git-merge that breaks under jj colocation — so we don't auto-merge.
+        // The user runs `vpr sandcastle-sync <item>` (or jj git import +
+        // jj rebase manually) when ready.
+        try {
+          const branches = execSync(
+            `git branch --list 'sandcastle/ralph-${item}/*' --sort=-committerdate`,
+            { encoding: 'utf-8' },
+          ).split('\n').map(b => b.replace(/^[*+ ]+/, '').trim()).filter(Boolean);
+          const tempBranch = branches[0];
+          if (tempBranch) {
+            console.log(`\n→ Sandcastle work preserved on temp branch:`);
+            console.log(`    ${tempBranch}`);
+            console.log(`\n  To integrate into your jj chain:`);
+            console.log(`    jj git import`);
+            console.log(`    jj log -r 'all() & ::${tempBranch}@git ~ ::main'   # see commits`);
+            console.log(`    jj rebase -r <change-id> -d <slice-bookmark>      # bring each across`);
+            console.log(`    git branch -D ${tempBranch}                       # cleanup when done`);
+          }
+        } catch { /* git not available or no branches — ignore */ }
+        process.exit(result.status ?? 1);
+      }
+
+      // --host: legacy host-mode ralph script.
       const scriptPath = join(__dirname, '..', 'scripts', 'ralph');
       if (!existsSync(scriptPath)) {
         console.error(`Error: ralph script not found at ${scriptPath}`);
         process.exit(1);
       }
-
       const childArgs = [item, maxIter];
       if (flags.prd) childArgs.push('--prd', String(flags.prd));
       if (flags['test-cmd']) childArgs.push('--test-cmd', String(flags['test-cmd']));
-
       const result = spawnSync(scriptPath, childArgs, { stdio: 'inherit' });
       process.exit(result.status ?? 1);
     }
@@ -545,7 +641,7 @@ try {
     }
 
     // -----------------------------------------------------------------------
-    // No args — TUI not yet implemented
+    // No args — launch the TUI
     // -----------------------------------------------------------------------
     case undefined: {
       const { startTui } = await import('../src/tui/tui.mjs');
@@ -554,11 +650,21 @@ try {
     }
 
     // -----------------------------------------------------------------------
+    // vpr help / --help / -h — top-level usage
+    // -----------------------------------------------------------------------
+    case 'help':
+    case '--help':
+    case '-h': {
+      console.log(HELP);
+      break;
+    }
+
+    // -----------------------------------------------------------------------
     // Unknown command
     // -----------------------------------------------------------------------
     default: {
       console.error(`Unknown command: ${cmd}`);
-      console.error('Run `vpr help` for usage.');
+      console.error('Run `vpr --help` for usage.');
       process.exit(1);
     }
   }

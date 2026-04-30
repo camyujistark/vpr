@@ -284,6 +284,7 @@ export async function buildState() {
         bookmark: vprBookmark,
         title: vprMeta.title ?? '',
         story: vprMeta.story ?? '',
+        acceptance: vprMeta.acceptance ?? '',
         output: vprMeta.output ?? null,
         commits,
         sent: Object.prototype.hasOwnProperty.call(sent, vprBookmark),
