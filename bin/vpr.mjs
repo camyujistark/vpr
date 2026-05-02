@@ -80,6 +80,9 @@ VPR v2 — Virtual Pull Request Manager
     vpr ticket done <name>          Close item
     vpr ticket hold <name>          Park item — moves to bottom of vpr status
     vpr ticket unhold <name>        Restore a held item
+    vpr ticket stories <name> --prd <path>   Extract "## User Stories" from
+                                    a PRD into item.userStories. Surfaces
+                                    in PR descriptions at send time.
     vpr plan pull 17148             Pull a parent WI; create one item per child Task
 
   VPRs:
@@ -107,6 +110,8 @@ VPR v2 — Virtual Pull Request Manager
   Push:
     vpr send <vpr>                  Send one VPR
     vpr send <vpr> --force          Delete stale branch bookmark if it exists
+    vpr send <vpr> --target <ref>   Override the target branch (default = chain top)
+    vpr send <vpr> --skip-lint      Skip the ESLint pre-flight gate
     vpr send --all                  Send all
     vpr send --dry-run              Preview
 
@@ -122,6 +127,21 @@ VPR v2 — Virtual Pull Request Manager
                                     (host mode only; sandcastle reads meta.json).
       --test-cmd "<cmd>"            Test command run between iterations
                                     (host mode only; default: "npm test").
+    vpr sync <item>                 Advance slice bookmarks from Ralph-Slice
+                                    trailers on the latest sandcastle temp
+                                    branch. Auto-runs after \`vpr ralph\`;
+                                    invoke manually for live per-iter syncs.
+    vpr recover --yes               Undo the most recent ralph run by
+                                    restoring jj from the pre-ralph op
+                                    snapshot in .vpr/ralph-snapshot.txt.
+                                    Use when sandcastle's merge-back
+                                    cascaded conflicts onto the chain.
+    vpr push-sent                   List sent VPR bookmarks whose local
+                                    commit_id diverged from origin (preview).
+    vpr push-sent --yes             Force-push the listed bookmarks. Use
+                                    after rebasing the chain onto an
+                                    upstream PR that was squash-merged or
+                                    force-updated.
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -258,9 +278,51 @@ Pass --help to any subcommand for its own usage.`);
           break;
         }
 
+        case 'stories': {
+          // vpr ticket stories <name> --prd <path>
+          // Extracts numbered "## User Stories" entries from a PRD file and
+          // stores them on the item as userStories: string[]. Surfaces in
+          // PR body at send time + readable from `vpr ticket list`.
+          const name = ticketArgs[0];
+          const flags = parseFlags(ticketArgs.slice(1));
+          if (!name || !flags.prd || name === '--help' || name === '-h') {
+            const stream = (name === '--help' || name === '-h') ? console.log : console.error;
+            stream(`vpr ticket stories <name> --prd <path>
+
+Extracts the "## User Stories" section from a PRD markdown file and stores
+the numbered list on the item. Surfaces in PR descriptions under "## User
+Stories Verified" when slices ship.`);
+            process.exit(name && flags.prd ? 0 : 1);
+          }
+          const { readFileSync } = await import('node:fs');
+          const md = readFileSync(String(flags.prd), 'utf-8');
+          const m = md.match(/## User Stories\s*\n\n([\s\S]*?)(?=\n## )/);
+          if (!m) {
+            console.error(`Error: no "## User Stories" section in ${flags.prd}`);
+            process.exit(1);
+          }
+          const stories = [];
+          const re = /^\d+\.\s+([\s\S]+?)(?=\n\d+\.|\n##|\Z)/gm;
+          let mm;
+          while ((mm = re.exec(m[1])) !== null) {
+            stories.push(mm[1].replace(/\s+/g, ' ').trim());
+          }
+          const { loadMeta, saveMeta, appendEvent } = await import('../src/core/meta.mjs');
+          const meta = await loadMeta();
+          if (!meta.items[name]) {
+            console.error(`Error: item "${name}" not found in meta`);
+            process.exit(1);
+          }
+          meta.items[name].userStories = stories;
+          await saveMeta(meta);
+          await appendEvent('cli', 'ticket.stories', { name, count: stories.length });
+          console.log(`Stored ${stories.length} user stories on ${name}.`);
+          break;
+        }
+
         default: {
           console.error(`Unknown ticket sub-command: ${sub ?? '(none)'}`);
-          console.error('Available: new, list, edit, done, hold, unhold');
+          console.error('Available: new, list, edit, done, hold, unhold, stories');
           process.exit(1);
         }
       }
@@ -304,6 +366,8 @@ Pass --help to any subcommand for its own usage.`);
   vpr add "title"                       Create slice in current item
   vpr add "title" --item <name>         Target a specific item
   vpr add "title" --model <claude-id>   Suggest a default model for /ralph
+  vpr add "title" --manual              Mark slice as a manual update
+                                        (commits made outside a ralph loop)
 
 The slice gets a title; story + acceptance live on the slice and can be
 filled in later via \`vpr edit\`.`);
@@ -314,6 +378,7 @@ filled in later via \`vpr edit\`.`);
       const result = await addVpr(title, {
         item: flags.item || undefined,
         model: flags.model || undefined,
+        manual: flags.manual === true || flags.manual === 'true',
       });
       console.log(JSON.stringify(result, null, 2));
       break;
@@ -503,6 +568,29 @@ a slice's content has been folded into another (e.g. a squash).`);
 
       const query = args.find(a => !a.startsWith('--'));
 
+      // Pre-send audit: trailer-based bookmark check across the whole chain.
+      // Catches drift caused by manual rebases / divergent change-ids that
+      // moved bookmarks off their slice tip. Skipped with --skip-audit for
+      // emergency overrides.
+      if (!flags['skip-audit']) {
+        try {
+          const { auditBookmarks } = await import('../src/commands/audit-bookmarks.mjs');
+          const report = await auditBookmarks();
+          const repairable = report.drift.filter(d => d.kind !== 'missing-tip');
+          if (repairable.length > 0) {
+            console.error(`Bookmark drift detected — ${repairable.length} unsent bookmark${repairable.length === 1 ? '' : 's'} sit off their Ralph-Slice tip:`);
+            for (const d of repairable) {
+              const cur = d.current ? d.current.slice(0, 8) : '(none)';
+              const exp = d.expected ? d.expected.slice(0, 8) : '(none)';
+              console.error(`    ${d.bookmark}\n      ${cur} → expected ${exp}`);
+            }
+            console.error(`\nRun \`vpr sync --repair\` to fix, then re-send.`);
+            console.error(`Or pass --skip-audit if you know what you're doing.`);
+            process.exit(1);
+          }
+        } catch { /* audit failure shouldn't block send if optional */ }
+      }
+
       if (flags['dry-run']) {
         if (!query) {
           console.error('Usage: vpr send <vpr> --dry-run');
@@ -515,7 +603,8 @@ a slice's content has been folded into another (e.g. a squash).`);
         const config = loadConfig() ?? {};
         const { createProvider } = await import('../src/providers/index.mjs');
         const provider = createProvider({ provider: 'none', ...config });
-        const result = await send(query, { provider, dryRun: true });
+        const targetOverride = flags.target ? String(flags.target) : undefined;
+        const result = await send(query, { provider, dryRun: true, targetBranch: targetOverride });
         console.log(`\n  Branch: ${result.branchName}`);
         console.log(`  Target: ${result.targetBranch}`);
         console.log(`  Title:  ${result.prTitle}`);
@@ -532,7 +621,13 @@ a slice's content has been folded into another (e.g. a squash).`);
       const provider = createProvider({ provider: 'none', ...config });
 
       try {
-        const result = await send(query, { provider, force: Boolean(flags.force) });
+        const targetOverride = flags.target ? String(flags.target) : undefined;
+        const result = await send(query, {
+          provider,
+          force: Boolean(flags.force),
+          targetBranch: targetOverride,
+          skipLint: Boolean(flags['skip-lint']),
+        });
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
         if (err.code === 'BRANCH_COLLISION') {
@@ -541,6 +636,91 @@ a slice's content has been folded into another (e.g. a squash).`);
           process.exit(1);
         }
         throw err;
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr sync <item>  — advance slice bookmarks from Ralph-Slice trailers
+    // -----------------------------------------------------------------------
+    case 'sync': {
+      const flags = parseFlags(args);
+      const positional = args.filter(a => !a.startsWith('--'));
+      const item = positional[0];
+
+      // --check audits the entire chain (no item arg needed) using
+      // Ralph-Slice trailers from `main..HEAD` to find drift.
+      if (flags.check) {
+        const { auditBookmarks } = await import('../src/commands/audit-bookmarks.mjs');
+        const report = await auditBookmarks();
+        if (report.ok.length > 0) {
+          console.log(`✓ ${report.ok.length} bookmark${report.ok.length === 1 ? '' : 's'} on slice tip.`);
+        }
+        if (report.drift.length === 0) {
+          console.log('No drift detected.');
+        } else {
+          console.log(`\n⚠ Drift in ${report.drift.length} bookmark${report.drift.length === 1 ? '' : 's'}:`);
+          for (const d of report.drift) {
+            const cur = d.current ? d.current.slice(0, 8) : '(none)';
+            const exp = d.expected ? d.expected.slice(0, 8) : '(no Ralph-Slice trailer found)';
+            console.log(`    ${d.kind.padEnd(12)} ${d.bookmark}\n      current: ${cur} → expected: ${exp}`);
+          }
+          console.log('\nRun `vpr sync --repair` to apply fixes (skips missing-tip).');
+          process.exit(1);
+        }
+        break;
+      }
+
+      if (flags.repair) {
+        const { auditBookmarks, repairBookmarks } = await import('../src/commands/audit-bookmarks.mjs');
+        try { execSync('jj git import', { stdio: 'ignore' }); } catch { /* ignore */ }
+        const report = await auditBookmarks();
+        const { repaired, skipped } = await repairBookmarks(report);
+        if (repaired.length > 0) {
+          console.log(`✓ Repaired ${repaired.length}:`);
+          for (const r of repaired) console.log(`    ${r.bookmark} → ${r.sha.slice(0, 8)}`);
+        }
+        if (skipped.length > 0) {
+          console.log(`\n⚠ Skipped ${skipped.length}:`);
+          for (const s of skipped) console.log(`    ${s.bookmark}: ${s.reason}`);
+        }
+        if (repaired.length === 0 && skipped.length === 0) {
+          console.log('Nothing to repair.');
+        }
+        break;
+      }
+
+      if (!item || item === '--help' || item === '-h') {
+        const stream = item ? console.log : console.error;
+        stream(`vpr sync — advance slice bookmarks from Ralph-Slice trailers
+
+  vpr sync <item>           Walk the latest sandcastle/ralph-<item>/* branch,
+                            group commits by their Ralph-Slice trailer, and
+                            move each slice's jj bookmark to its tip commit.
+  vpr sync --check          Audit-only: scan main..HEAD for drift between
+                            unsent bookmarks and their slice tips. Exits 1
+                            on drift. No mutations.
+  vpr sync --repair         Same scan, applies fixes via \`jj bookmark set\`.
+
+Idempotent. Safe to run mid-ralph (between iterations) or after a run
+completes. Combine with /loop for live per-iteration syncing while
+ralph is running.`);
+        process.exit(item ? 0 : 1);
+      }
+      try { execSync('jj git import', { stdio: 'ignore' }); } catch { /* ignore */ }
+      const { syncRalphBookmarks } = await import('../src/commands/sync-ralph.mjs');
+      const { advanced, skipped } = await syncRalphBookmarks(item);
+      if (Object.keys(advanced).length > 0) {
+        console.log(`Slice bookmarks advanced (${Object.keys(advanced).length}):`);
+        for (const [slice, sha] of Object.entries(advanced)) {
+          console.log(`  ${slice} → ${sha.slice(0, 8)}`);
+        }
+      } else {
+        console.log('No bookmarks advanced.');
+      }
+      if (skipped.length > 0) {
+        console.log('\nSkipped:');
+        for (const s of skipped) console.log(`  ${s}`);
       }
       break;
     }
@@ -586,34 +766,57 @@ Faster startup, no isolation. Use when you trust the slice + want speed.`);
           console.error("Hint: this repo isn't set up for sandcastle. Run with --host to use host mode, or scaffold sandcastle first.");
           process.exit(1);
         }
+
+        // Pre-ralph: snapshot jj op-log head so the entire run can be undone
+        // with a single `vpr recover` if sandcastle's git refs collide with
+        // host jj on import (cascade via divergent change-ids).
+        try {
+          const { snapshotJjOp } = await import('../src/core/jj-snapshot.mjs');
+          const opId = snapshotJjOp();
+          if (opId) console.log(`→ jj op snapshot: ${opId} (recover with: vpr recover)`);
+        } catch { /* not jj-colocated — skip */ }
+
         const childArgs = ['tsx', sandcastleMain, item];
         const result = spawnSync('npx', childArgs, {
           stdio: 'inherit',
           env: { ...process.env, SANDCASTLE_MAX_ITER: maxIter },
         });
 
-        // Post-ralph: surface the agent's temp branch + the integration
-        // command. Sandcastle's `branch` strategy leaves the work on
-        // `sandcastle/ralph-<item>/<timestamp>` and never runs the
-        // git-merge that breaks under jj colocation — so we don't auto-merge.
-        // The user runs `vpr sandcastle-sync <item>` (or jj git import +
-        // jj rebase manually) when ready.
+        // Post-ralph: auto-advance slice bookmarks based on Ralph-Slice
+        // trailers so the chain reflects the iteration's work. Sandcastle
+        // produces commits on a temp branch; this maps each slice back to its
+        // bookmark on host. Idempotent — safe to re-run.
         try {
-          const branches = execSync(
-            `git branch --list 'sandcastle/ralph-${item}/*' --sort=-committerdate`,
-            { encoding: 'utf-8' },
-          ).split('\n').map(b => b.replace(/^[*+ ]+/, '').trim()).filter(Boolean);
-          const tempBranch = branches[0];
-          if (tempBranch) {
-            console.log(`\n→ Sandcastle work preserved on temp branch:`);
-            console.log(`    ${tempBranch}`);
-            console.log(`\n  To integrate into your jj chain:`);
-            console.log(`    jj git import`);
-            console.log(`    jj log -r 'all() & ::${tempBranch}@git ~ ::main'   # see commits`);
-            console.log(`    jj rebase -r <change-id> -d <slice-bookmark>      # bring each across`);
-            console.log(`    git branch -D ${tempBranch}                       # cleanup when done`);
+          execSync('jj git import', { stdio: 'ignore' });
+        } catch { /* not jj-colocated — ignore */ }
+        try {
+          const { syncRalphBookmarks } = await import('../src/commands/sync-ralph.mjs');
+          const { advanced, skipped } = await syncRalphBookmarks(item);
+          if (Object.keys(advanced).length > 0) {
+            console.log(`\n→ Slice bookmarks advanced (${Object.keys(advanced).length}):`);
+            for (const [slice, sha] of Object.entries(advanced)) {
+              console.log(`    ${slice} → ${sha.slice(0, 8)}`);
+            }
           }
-        } catch { /* git not available or no branches — ignore */ }
+          if (skipped.length > 0) {
+            console.log(`\n  Skipped:`);
+            for (const s of skipped) console.log(`    ${s}`);
+          }
+        } catch (err) {
+          console.error(`\n  Bookmark sync failed: ${err.message}`);
+        }
+
+        // Recovery hint — always print after a sandcastle run so the user has
+        // a one-liner if anything looks off (cascade abandons, divergent
+        // imports, wrong bookmark advances).
+        try {
+          const { readSnapshot } = await import('../src/core/jj-snapshot.mjs');
+          const snap = readSnapshot();
+          if (snap) {
+            console.log(`\n  Undo this entire ralph run: vpr recover  (snapshot: ${snap})`);
+          }
+        } catch { /* ignore */ }
+
         process.exit(result.status ?? 1);
       }
 
@@ -628,6 +831,67 @@ Faster startup, no isolation. Use when you trust the slice + want speed.`);
       if (flags['test-cmd']) childArgs.push('--test-cmd', String(flags['test-cmd']));
       const result = spawnSync(scriptPath, childArgs, { stdio: 'inherit' });
       process.exit(result.status ?? 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr push-sent — re-push every sent bookmark that diverged from origin
+    // -----------------------------------------------------------------------
+    case 'push-sent': {
+      const flags = parseFlags(args);
+      const { previewPushSent, pushSent } = await import('../src/commands/push-sent.mjs');
+      const { toPush, skipped } = await previewPushSent();
+
+      if (toPush.length === 0 && skipped.length === 0) {
+        console.log('All sent bookmarks already in sync with origin.');
+        break;
+      }
+
+      if (toPush.length > 0) {
+        console.log(`Sent bookmarks diverged from origin (${toPush.length}):`);
+        for (const b of toPush) console.log(`    ${b}`);
+      }
+      if (skipped.length > 0) {
+        console.log(`\n⚠ Will skip ${skipped.length}:`);
+        for (const s of skipped) console.log(`    ${s.bookmark}: ${s.reason}`);
+      }
+
+      if (!flags.yes) {
+        console.log(`\nRe-run with --yes to force-push the ${toPush.length} listed bookmark${toPush.length === 1 ? '' : 's'}.`);
+        break;
+      }
+
+      const { pushed, skipped: pushSkipped } = await pushSent(toPush);
+      if (pushed.length > 0) {
+        console.log(`\n✓ Pushed ${pushed.length} bookmark${pushed.length === 1 ? '' : 's'}.`);
+      }
+      if (pushSkipped.length > 0) {
+        console.log(`\n⚠ Push errors:`);
+        for (const s of pushSkipped) console.log(`    ${s.bookmark}: ${s.reason}`);
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr recover — restore jj from the pre-ralph snapshot
+    // -----------------------------------------------------------------------
+    case 'recover': {
+      const flags = parseFlags(args);
+      const { readSnapshot, restoreFromSnapshot } = await import('../src/core/jj-snapshot.mjs');
+      const snap = readSnapshot();
+      if (!snap) {
+        console.error('Error: no snapshot at .vpr/ralph-snapshot.txt');
+        console.error('Hint: snapshots are written automatically by `vpr ralph` (sandcastle mode).');
+        process.exit(1);
+      }
+      if (!flags.yes) {
+        console.log(`This will run: jj op restore ${snap}`);
+        console.log('Effect: undo every jj op since the most recent ralph run started.');
+        console.log('Re-run with --yes to confirm.');
+        process.exit(1);
+      }
+      restoreFromSnapshot();
+      console.log(`\n✓ Restored to op ${snap}.`);
+      break;
     }
 
     // -----------------------------------------------------------------------

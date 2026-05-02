@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { join } from 'node:path';
 import { jj, jjSafe, getBaseBranch } from '../core/jj.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState, computeChainState } from '../core/state.mjs';
@@ -79,7 +82,141 @@ export async function sendChecks(query) {
     message: hasConflict ? 'Conflicts detected — resolve before sending' : 'No conflicts',
   };
 
-  return [storyCheck, outputCheck, commitsCheck, conflictsCheck];
+  // Chain-order check — block if any earlier VPR in the jj chain
+  // (across ALL items, not just the current one) is still unsent. Stops
+  // out-of-order sends like pushing slice 6 of item B while slice 1 of
+  // item A is still queued.
+  const chainOrderCheck = await chainOrderCheckFor(bookmark);
+
+  // Lint gate — runs `npm run lint` against the working copy. Catches
+  // ESLint errors that tsc misses (e.g. `_omit` unused-var on destructure).
+  // Skipped when there is no lint script in package.json.
+  const lintCheck = await lintCheckRun();
+
+  // Backlog warning — counts unsent VPRs across the whole chain. >3
+  // signals "you've got a queue", reminding the user to step through one at
+  // a time instead of batching (commit chains often have hidden cross-VPR
+  // coupling that surfaces only on per-PR CI).
+  const backlogCheck = backlogCheckRun(state);
+
+  return [storyCheck, outputCheck, commitsCheck, conflictsCheck, chainOrderCheck, lintCheck, backlogCheck];
+}
+
+/**
+ * Count unsent VPRs across all items. Returns a soft warning (`pass=true`
+ * when ≤3, `pass=false` when >3) — does not block send. UI surfaces it
+ * during dry-run so the user knows to review each PR individually rather
+ * than batch-pushing.
+ *
+ * @param {{ items: Array<{ vprs: Array<{ sent?: boolean, held?: boolean }> }> }} state
+ * @returns {{ name: string, pass: boolean, message: string }}
+ */
+function backlogCheckRun(state) {
+  let unsentCount = 0;
+  for (const item of state.items) {
+    for (const vpr of item.vprs) {
+      if (!vpr.sent && !vpr.held) unsentCount++;
+    }
+  }
+  // The current send is one of the unsent — counting the rest as backlog.
+  const backlog = Math.max(0, unsentCount - 1);
+  if (backlog <= 3) {
+    return { name: 'backlog', pass: true, message: `${backlog} other VPR${backlog === 1 ? '' : 's'} queued` };
+  }
+  return {
+    name: 'backlog',
+    pass: false,
+    message: `${backlog} other VPRs queued — step through one at a time, don't batch`,
+  };
+}
+
+/**
+ * Run `npm run lint` and report pass/fail. Skipped when the script is
+ * missing. Lints the working copy — caller should `jj edit <bookmark>`
+ * first if per-commit lint state matters (CI lints each PR branch).
+ *
+ * @returns {Promise<{ name: string, pass: boolean, message: string }>}
+ */
+async function lintCheckRun() {
+  // Lookup the lint script. Missing script = skip-pass so repos without
+  // lint don't get blocked.
+  let hasScript = false;
+  try {
+    const { readFileSync } = await import('node:fs');
+    const pkg = JSON.parse(readFileSync('package.json', 'utf-8'));
+    hasScript = Boolean(pkg.scripts?.lint);
+  } catch { /* no package.json — fall through */ }
+  if (!hasScript) {
+    return { name: 'lint', pass: true, message: 'No lint script — skipped' };
+  }
+
+  try {
+    execSync('npm run --silent lint', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { name: 'lint', pass: true, message: 'ESLint clean' };
+  } catch (err) {
+    // ESLint exits non-zero on errors. Surface the first error line so
+    // the caller can act without re-running lint manually.
+    const stdout = (err.stdout ?? '').toString();
+    const stderr = (err.stderr ?? '').toString();
+    const out = stdout || stderr;
+    const errLine = out.split('\n').find(l => /\berror\b/i.test(l))?.trim() ?? 'lint errors detected';
+    return {
+      name: 'lint',
+      pass: false,
+      message: `ESLint failed — ${errLine.slice(0, 160)}`,
+    };
+  }
+}
+
+/**
+ * Walk the jj ancestors of `bookmark` and verify every other VPR
+ * bookmark in that ancestor set is already sent. Blocks send when an
+ * earlier (ancestor) VPR is still unsent.
+ *
+ * @param {string} bookmark
+ * @returns {Promise<{ name: string, pass: boolean, message: string }>}
+ */
+async function chainOrderCheckFor(bookmark) {
+  const state = await buildState();
+  // Map bookmark → sent? for every VPR in meta.
+  const sentByBookmark = new Map();
+  for (const item of state.items) {
+    for (const vpr of item.vprs) {
+      sentByBookmark.set(vpr.bookmark, Boolean(vpr.sent));
+    }
+  }
+
+  // Get the list of VPR bookmarks that are ancestors of this one in the
+  // jj chain. `jj log -r 'bookmarks() & ::<bookmark>'` returns the
+  // current bookmark plus every bookmark on commits in its ancestry.
+  const out = jjSafe(`log -r 'bookmarks() & ::${bookmark}' --no-graph -T 'bookmarks ++ "\\n"'`);
+  if (!out) {
+    return { name: 'chain-order', pass: true, message: 'No upstream bookmarks to check' };
+  }
+  const bookmarks = out
+    .split('\n')
+    .flatMap(line => line.split(/\s+/))
+    .map(b => b.trim())
+    .filter(Boolean)
+    // Drop sandcastle/* and other non-VPR bookmarks — only check VPR-managed ones.
+    .filter(b => sentByBookmark.has(b))
+    // Don't block on the bookmark we're about to send.
+    .filter(b => b !== bookmark);
+
+  const unsentAncestors = bookmarks.filter(b => sentByBookmark.get(b) === false);
+  if (unsentAncestors.length === 0) {
+    return { name: 'chain-order', pass: true, message: 'All ancestor VPRs are sent' };
+  }
+  // Show the *first* unsent ancestor so the user knows where to start.
+  const first = unsentAncestors[unsentAncestors.length - 1];
+  return {
+    name: 'chain-order',
+    pass: false,
+    message: `Out of order: ${unsentAncestors.length} earlier VPR(s) still unsent — send "${first}" first`,
+  };
 }
 
 /**
@@ -99,7 +236,7 @@ export async function sendChecks(query) {
  *   targetBranch: string
  * }>}
  */
-export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false } = {}) {
+export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false, skipLint = false } = {}) {
   if (!query) {
     const nextUp = await resolveNextUpBookmark();
     if (!nextUp) throw new Error('No sendable VPRs — chain is empty or fully sent');
@@ -146,16 +283,33 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
 
   console.log(`Target: ${targetBranch}`);
 
-  // 1. Pre-flight checks — block on story or conflicts failures
+  // 1. Pre-flight checks — block on story, conflicts, or chain-order failures.
+  // Chain-order ensures the jj chain is sent oldest-first across all items
+  // (no skipping ahead — pushing slice 6 of item B while slice 1 of item A
+  // is queued would bundle item A's commits into item B's PR).
   const checks = await sendChecks(query);
   const storyCheck = checks.find(c => c.name === 'story');
   const conflictsCheck = checks.find(c => c.name === 'conflicts');
+  const chainOrderCheck = checks.find(c => c.name === 'chain-order');
 
   if (!storyCheck.pass) {
     throw new Error(`Send blocked: ${storyCheck.message}`);
   }
   if (!conflictsCheck.pass) {
     throw new Error(`Send blocked: ${conflictsCheck.message}`);
+  }
+  if (chainOrderCheck && !chainOrderCheck.pass && !force) {
+    throw new Error(`Send blocked: ${chainOrderCheck.message} (use --force to override).`);
+  }
+  const lintCheck = checks.find(c => c.name === 'lint');
+  if (lintCheck && !lintCheck.pass && !skipLint) {
+    throw new Error(`Send blocked: ${lintCheck.message} (use --skip-lint to override).`);
+  }
+  // Backlog warning — non-blocking, surfaced so the user pauses before
+  // batch-pushing a long queue.
+  const backlogCheck = checks.find(c => c.name === 'backlog');
+  if (backlogCheck && !backlogCheck.pass) {
+    console.warn(`⚠ ${backlogCheck.message}`);
   }
 
   // Chain/meta order check: a fast-forward push of `bookmark` from
@@ -221,8 +375,27 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     prTitle = `${tpIndex}: ${vpr.title}`;
   }
 
-  // 4. PR body
-  const prBody = vpr.output || vpr.story || '';
+  // 4. PR body — story/output plus User Stories Verified (from item.userStories).
+  // QA checklist (slice.acceptance) is NOT shipped to the PR — posting it as a
+  // PR thread fires a duplicate Slack notification via the AzPipelines
+  // subscription. Saved to .vpr/qa/<branch>.md instead so the dev can walk it
+  // locally after the PR is up.
+  const narrative = vpr.output || vpr.story || '';
+  const stories = Array.isArray(item.userStories) ? item.userStories : [];
+  const storiesSection = stories.length
+    ? `\n\n## User Stories Verified\n\n${stories.map((s, i) => `- [ ] ${i + 1}. ${s}`).join('\n')}\n`
+    : '';
+  // Azure DevOps caps PR description at 4000 chars. When the parent's
+  // userStories list is long, drop it before truncating the narrative —
+  // the narrative carries this VPR's actual scope and is more important.
+  let prBody = `${narrative}${storiesSection}`.trim();
+  if (prBody.length > 4000) {
+    prBody = narrative.trim();
+    if (prBody.length > 4000) {
+      prBody = prBody.slice(0, 3990) + '\n…';
+    }
+  }
+  const acceptance = (vpr.acceptance || '').trim();
 
   // 5. Dry run — return plan without executing
   if (dryRun) {
@@ -264,6 +437,20 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     prId = pr?.id ?? null;
   }
 
+  // 8b. Persist the QA checklist to .vpr/qa/<branch>.md so the dev can tick
+  // each acceptance criterion locally after manually verifying it against the
+  // running PR. The file uses GitHub-task-list format so editors render
+  // tickable boxes.
+  let qaFilePath = null;
+  if (acceptance) {
+    const qaDir = join('.vpr', 'qa');
+    mkdirSync(qaDir, { recursive: true });
+    qaFilePath = join(qaDir, `${branchName.replace(/\//g, '-')}.md`);
+    const ticked = acceptance.replace(/^- /gm, '- [ ] ');
+    const heading = prId ? `# QA — ${prTitle} (PR ${prId})` : `# QA — ${prTitle}`;
+    writeFileSync(qaFilePath, `${heading}\n\n${ticked}\n`);
+  }
+
   // 9. Move VPR from items to sent in meta
   const freshMeta = await loadMeta();
   const vprData = freshMeta.items[itemName]?.vprs[bookmark];
@@ -294,5 +481,5 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   await appendEvent('cli', 'vpr.send', { bookmark, branchName, prId, prTitle, targetBranch });
 
   // 12. Return result
-  return { branchName, prTitle, prId, targetBranch };
+  return { branchName, prTitle, prId, targetBranch, qaFilePath };
 }

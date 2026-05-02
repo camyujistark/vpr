@@ -37,6 +37,7 @@ export function buildTree(state) {
         bookmark: vpr.bookmark,
         title: vpr.title,
         story: vpr.story,
+        acceptance: vpr.acceptance,
         output: vpr.output,
         sent: vpr.sent,
         held: false,
@@ -47,6 +48,21 @@ export function buildTree(state) {
         commitCount: vpr.commits.length,
         itemName: item.name,
       });
+
+      // Preview row — when a slice has no commits + no story yet, dim the
+      // first line of acceptance below the title so the TUI surfaces what
+      // the slice is meant to do (otherwise the row looks blank).
+      if (vpr.commits.length === 0 && !vpr.story && vpr.acceptance) {
+        const firstLine = vpr.acceptance.split('\n').find(l => l.trim()) ?? ''
+        if (firstLine) {
+          rows.push({
+            type: 'vpr-preview',
+            bookmark: vpr.bookmark,
+            preview: firstLine.slice(0, 100),
+            itemName: item.name,
+          });
+        }
+      }
 
       for (const commit of vpr.commits) {
         rows.push({

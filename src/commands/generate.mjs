@@ -21,7 +21,12 @@ export function buildPrompt({ item, vpr, commits }) {
   const commitLines = commits.map(c => `- ${oneLine(c.subject)}`).join('\n');
   const hasStory = Boolean(vpr.story && vpr.story.trim());
   const lines = [
-    'Generate a concise PR description in markdown. Output ONLY the markdown. Use ## Summary with 1-3 bullets, then ## Changes.',
+    'Generate a terse PR description in markdown. Output ONLY the markdown. Two sections: ## Summary (1-2 bullets max) and ## Changes (one bullet per commit/component).',
+    'STYLE: terse. No filler ("this PR", "lays groundwork for", "no UI wiring yet"). No restating the title. Each bullet ≤ 2 short sentences. No closing summaries.',
+    hasStory
+      ? 'Summary: MUST include the user-facing motivation from Story (the WHY, paraphrase Story\'s actual wording — domain terms, comparisons, goals). Then indicate scope of THIS PR honestly ("pure helper", "wiring only", "foundation") so reviewer knows what is/isn\'t in this diff. Do not drop the Story content for brevity — Story is the most important input. Stay terse but keep the story\'s substance.'
+      : '',
+    'Changes: technical and specific. WHAT the code does (algorithm/return shape/branching/API) — not what file it sits in. Tight phrasing. Example: NOT "add foo helper that does X", but "`foo(schema, col, val)` — maps enum codes to `{kind: \'mapped\'|\'unknown\'|\'no-enum\'}`, coerces value to string".',
     '',
   ];
   if (item && item.parentWi && item.parentWiDescription) {

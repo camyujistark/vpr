@@ -131,6 +131,12 @@ function renderUngrouped(item, picked) {
   return `    ${DIM}${item.changeId.slice(0, 8)}${RESET} ${item.subject}`;
 }
 
+function renderVprPreview(item) {
+  // Dim subline beneath an empty slice's title so the user sees a hint of
+  // its acceptance without drilling in.
+  return `      ${DIM}${item.preview}${RESET}`;
+}
+
 function renderHoldHeader(item) {
   return `${DIM}  ⏸ On Hold (${item.count})${RESET}`;
 }
@@ -144,6 +150,7 @@ function renderRow(item, picked) {
   switch (item.type) {
     case 'item': return renderItem(item);
     case 'vpr': return renderVpr(item);
+    case 'vpr-preview': return renderVprPreview(item);
     case 'commit': return renderCommit(item, picked);
     case 'ungrouped-header': return renderUngroupedHeader(item);
     case 'ungrouped': return renderUngrouped(item, picked);

@@ -95,9 +95,13 @@ function parseLine(line) {
   if (!changeId || !sha) return null;
   if (!subject.trim()) return null; // skip undescribed commits (empty working-copy tips)
 
-  // bookmarksRaw may be empty string, space-separated, or contain remote suffixes like "name@remote"
+  // bookmarksRaw may be empty string, space-separated, or contain remote suffixes like "name@remote".
+  // jj also appends `*` for bookmarks whose local position differs from a remote tracking ref.
+  // Strip the trailing `*` so name comparisons against meta.sent / meta.items match cleanly.
   // We only want the local bookmark names (no @suffix) that match VPR bookmark keys.
-  const allBookmarks = bookmarksRaw ? bookmarksRaw.split(' ').map(b => b.trim()).filter(Boolean) : [];
+  const allBookmarks = bookmarksRaw
+    ? bookmarksRaw.split(' ').map(b => b.trim().replace(/\*$/, '')).filter(Boolean)
+    : [];
   const bookmarks = allBookmarks.filter(b => !b.includes('@'));
   const hasRemote = allBookmarks.some(b => b.includes('@'));
 
@@ -280,6 +284,14 @@ export async function buildState() {
         if (idx !== undefined && idx < earliest) earliest = idx;
       }
 
+      // After `vpr send`, the bookmark gets renamed from the slice name to a
+      // `feat/<wi>-...` branch and recorded in meta.sent under that new key.
+      // Check both the original key AND any sent entry whose originalBookmark
+      // points back at this slice name so the rename doesn't lose track of
+      // sent state.
+      const isSent = Object.prototype.hasOwnProperty.call(sent, vprBookmark)
+        || Object.values(sent).some(e => e?.originalBookmark === vprBookmark);
+
       return {
         bookmark: vprBookmark,
         title: vprMeta.title ?? '',
@@ -287,7 +299,7 @@ export async function buildState() {
         acceptance: vprMeta.acceptance ?? '',
         output: vprMeta.output ?? null,
         commits,
-        sent: Object.prototype.hasOwnProperty.call(sent, vprBookmark),
+        sent: isSent,
         held: Boolean(vprMeta.held),
         conflict: hasConflict,
         _earliest: earliest,

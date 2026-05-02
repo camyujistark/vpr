@@ -3,6 +3,9 @@
  */
 
 import { execSync } from 'child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BaseProvider } from './base.mjs';
 import { getBaseBranch } from '../core/jj.mjs';
 
@@ -16,6 +19,15 @@ function az(cmd) {
   );
 }
 
+/**
+ * Bash single-quote a value so backticks, $, !, etc. are literal.
+ * Single quotes preserve everything except single quotes; embed those as '\''.
+ */
+function sq(value) {
+  const s = String(value ?? '');
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 export class AzureDevOpsProvider extends BaseProvider {
   get name() { return 'Azure DevOps'; }
 
@@ -27,33 +39,31 @@ export class AzureDevOpsProvider extends BaseProvider {
   _az(cmd) { return az(cmd); }
 
   updateWorkItemDescription(id, body) {
-    const desc = String(body ?? '').replace(/"/g, '\\"');
-    this._az(`boards work-item update --id ${id} --description "${desc}" --org "${this.org}"`);
+    this._az(`boards work-item update --id ${id} --description ${sq(body)} --org ${sq(this.org)}`);
   }
 
   createWorkItem(title, description = '') {
-    const desc = description.replace(/"/g, '\\"');
     const result = az(
-      `boards work-item create --type "${this.wiType}" --title "${title.replace(/"/g, '\\"')}"` +
-      (desc ? ` --description "${desc}"` : '') +
-      ` --project "${this.project}" --organization "${this.org}"`
+      `boards work-item create --type ${sq(this.wiType)} --title ${sq(title)}` +
+      (description ? ` --description ${sq(description)}` : '') +
+      ` --project ${sq(this.project)} --organization ${sq(this.org)}`
     );
     return { id: result.id, url: result.url };
   }
 
   linkParent(childId, parentId) {
     az(
-      `boards work-item relation add --id ${childId} --relation-type "Parent" --target-id ${parentId} --org "${this.org}"`
+      `boards work-item relation add --id ${childId} --relation-type Parent --target-id ${parentId} --org ${sq(this.org)}`
     );
   }
 
   assignTo(id, user) {
-    az(`boards work-item update --id ${id} --assigned-to "${user}" --org "${this.org}"`);
+    az(`boards work-item update --id ${id} --assigned-to ${sq(user)} --org ${sq(this.org)}`);
   }
 
   getWorkItem(id) {
     const result = az(
-      `boards work-item show --id ${id} --org "${this.org}"`
+      `boards work-item show --id ${id} --org ${sq(this.org)}`
     );
     const f = result.fields || {};
     const assigned = f['System.AssignedTo'];
@@ -82,7 +92,7 @@ export class AzureDevOpsProvider extends BaseProvider {
 
   getChildren(id) {
     const result = az(
-      `boards work-item show --id ${id} --expand relations --org "${this.org}"`
+      `boards work-item show --id ${id} --expand relations --org ${sq(this.org)}`
     );
     const rels = result.relations || [];
     const childIds = rels
@@ -97,22 +107,22 @@ export class AzureDevOpsProvider extends BaseProvider {
 
   updateWorkItem(id, fields) {
     const args = [];
-    if (fields.title) args.push(`--title "${fields.title.replace(/"/g, '\\"')}"`);
-    if (fields.state) args.push(`--state "${fields.state}"`);
-    if (fields.description) args.push(`--description "${fields.description.replace(/"/g, '\\"')}"`);
+    if (fields.title) args.push(`--title ${sq(fields.title)}`);
+    if (fields.state) args.push(`--state ${sq(fields.state)}`);
+    if (fields.description) args.push(`--description ${sq(fields.description)}`);
     if (args.length === 0) return;
-    az(`boards work-item update --id ${id} ${args.join(' ')} --org "${this.org}"`);
+    az(`boards work-item update --id ${id} ${args.join(' ')} --org ${sq(this.org)}`);
   }
 
   createPR(sourceBranch, targetBranch, title, body, workItemId) {
     const wiFlag = workItemId ? ` --work-items ${workItemId}` : '';
     const result = az(
-      `repos pr create --repository "${this.repo}"` +
-      ` --source-branch "${sourceBranch}" --target-branch "${targetBranch}"` +
-      ` --title "${title.replace(/"/g, '\\"')}"` +
-      ` --description "${(body || '').replace(/"/g, '\\"')}"` +
+      `repos pr create --repository ${sq(this.repo)}` +
+      ` --source-branch ${sq(sourceBranch)} --target-branch ${sq(targetBranch)}` +
+      ` --title ${sq(title)}` +
+      ` --description ${sq(body || '')}` +
       `${wiFlag}` +
-      ` --project "${this.project}" --organization "${this.org}"`
+      ` --project ${sq(this.project)} --organization ${sq(this.org)}`
     );
     return { id: result.pullRequestId, url: result.url };
   }
@@ -144,8 +154,47 @@ export class AzureDevOpsProvider extends BaseProvider {
 
   _listActivePRs(top = 5) {
     return az(
-      `repos pr list --repository "${this.repo}" --status active --top ${top}` +
-      ` --project "${this.project}" --organization "${this.org}"`
+      `repos pr list --repository ${sq(this.repo)} --status active --top ${top}` +
+      ` --project ${sq(this.project)} --organization ${sq(this.org)}`
     );
+  }
+
+  /**
+   * Resolve the repository UUID from its name. Cached on the instance — the
+   * `az devops invoke` calls below need the UUID, but the user-facing config
+   * uses the human-readable repo name.
+   */
+  _getRepoId() {
+    if (this._repoId) return this._repoId;
+    const result = az(
+      `repos show --repository ${sq(this.repo)}` +
+      ` --project ${sq(this.project)} --organization ${sq(this.org)}`
+    );
+    this._repoId = result.id;
+    return this._repoId;
+  }
+
+  /**
+   * Post a comment to a PR as a new thread. Used after PR creation to attach
+   * the QA checklist as a separate, tickable comment.
+   */
+  postPRComment(prId, content) {
+    const repoId = this._getRepoId();
+    const body = JSON.stringify({
+      comments: [{ parentCommentId: 0, content: String(content ?? ''), commentType: 1 }],
+      status: 1,
+    });
+    const tmpFile = join(tmpdir(), `vpr-pr-comment-${process.pid}-${Date.now()}.json`);
+    writeFileSync(tmpFile, body);
+    try {
+      az(
+        `devops invoke --area git --resource pullRequestThreads` +
+        ` --route-parameters project=${sq(this.project)} repositoryId=${sq(repoId)} pullRequestId=${prId}` +
+        ` --http-method POST --api-version 7.1 --in-file ${sq(tmpFile)}` +
+        ` --org ${sq(this.org)}`
+      );
+    } finally {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
   }
 }

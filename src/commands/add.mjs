@@ -26,10 +26,10 @@ function slugify(title) {
  * - Registers VPR in meta.items[item].vprs.
  *
  * @param {string} title
- * @param {{ item?: string, model?: string }} opts
- * @returns {Promise<{ bookmark: string, item: string, title: string }>}
+ * @param {{ item?: string, model?: string, manual?: boolean }} opts
+ * @returns {Promise<{ bookmark: string, item: string, title: string, manual?: boolean }>}
  */
-export async function addVpr(title, { item, model } = {}) {
+export async function addVpr(title, { item, model, manual } = {}) {
   const meta = await loadMeta();
 
   // Resolve item name
@@ -86,9 +86,13 @@ export async function addVpr(title, { item, model } = {}) {
     // "claude-opus-4-7" for slices that need cross-cutting refactors or
     // unfamiliar-codebase exploration.
     model: model ?? '',
+    // `manual: true` marks slices created outside a ralph TDD loop — ad-hoc
+    // commits made directly by a human or claude during interactive work.
+    // Used downstream to differentiate spec-driven slices from manual edits.
+    ...(manual ? { manual: true } : {}),
   };
   await saveMeta(meta);
-  await appendEvent('cli', 'vpr.add', { bookmark, item, title });
+  await appendEvent('cli', 'vpr.add', { bookmark, item, title, manual: !!manual });
 
-  return { bookmark, item, title };
+  return manual ? { bookmark, item, title, manual: true } : { bookmark, item, title };
 }
