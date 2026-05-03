@@ -70,7 +70,8 @@ export function formatStatus(state, dagView = null, opts = {}) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
     const dagNode = dagView?.nodes?.get(item.name);
     const depthLabel = dagNode != null ? gray(` depth=${dagNode.depth}`) : '';
-    lines.push(`${bold(cyan(item.name))}  ${wiLabel}${depthLabel}  ${dim(item.wiTitle)}`);
+    const readyMarker = dagNode?.ready ? green(' ▶') : '';
+    lines.push(`${bold(cyan(item.name))}${readyMarker}  ${wiLabel}${depthLabel}  ${dim(item.wiTitle)}`);
 
     if (dagNode?.blockers?.length > 0) {
       lines.push(`  ${red('blocked by:')} ${dagNode.blockers.join(', ')}`);

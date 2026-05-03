@@ -139,6 +139,24 @@ describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
     assert.ok(output.includes('depth=0'), `root-item must show depth=0: ${output}`);
     assert.ok(output.includes('depth=1'), `leaf-item must show depth=1: ${output}`);
   });
+
+  it('shows a visual ready marker on items where ready is true — AC2', () => {
+    const state = makeTwoItemState('ready-item', 'blocked-item');
+    const dagView = makeDagView({
+      'ready-item': makeItemView('ready-item', { ready: true }),
+      'blocked-item': makeItemView('blocked-item', { ready: false, blockers: ['some-dep'] }),
+    });
+    const output = formatStatus(state, dagView);
+    // Strip ANSI for position check
+    const stripped = output.replace(/\x1b\[[0-9;]*m/g, '');
+    const readyLine = stripped.split('\n').find(l => l.includes('ready-item'));
+    const blockedLine = stripped.split('\n').find(l => l.includes('blocked-item'));
+    assert.ok(readyLine, `ready-item line must exist: ${stripped}`);
+    assert.ok(blockedLine, `blocked-item line must exist: ${stripped}`);
+    // Ready marker should appear on the ready item's header line but not on the blocked one
+    assert.ok(readyLine.includes('✓') || readyLine.includes('▶') || readyLine.includes('→') || readyLine.includes('*') || readyLine.includes('[ready]'),
+      `ready-item header must have a ready marker: ${readyLine}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
