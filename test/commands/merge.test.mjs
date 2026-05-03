@@ -8,9 +8,25 @@
  */
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = resolve(fileURLToPath(import.meta.url), '../../../');
+const vprBin = join(repoRoot, 'bin/vpr.mjs');
+
+function runVprResult(args, cwd) {
+  try {
+    const stdout = execSync(`node ${vprBin} ${args}`, {
+      cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return { stdout, stderr: '', code: 0 };
+  } catch (err) {
+    return { stdout: err.stdout ?? '', stderr: err.stderr ?? '', code: err.status ?? 1 };
+  }
+}
 
 import { mergeVpr } from '../../src/commands/merge.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
@@ -153,6 +169,18 @@ describe('mergeVpr()', () => {
     const meta = await loadMeta();
     const dst = meta.items['my-item'].vprs['my-item/dst-feature'];
     assert.equal(dst.story, 'New story text');
+  });
+
+  it('AC11: vpr --help lists vpr merge command', () => {
+    const tmpHelpDir = mkdtempSync(join(tmpdir(), 'vpr-merge-help-'));
+    try {
+      mkdirSync(join(tmpHelpDir, '.vpr'), { recursive: true });
+      const res = runVprResult('--help', tmpHelpDir);
+      const combined = res.stdout + res.stderr;
+      assert.ok(combined.includes('vpr merge'), `--help should list vpr merge, got: ${combined.slice(0, 500)}`);
+    } finally {
+      rmSync(tmpHelpDir, { recursive: true, force: true });
+    }
   });
 
   it('AC3: refuses non-adjacent merge with clear error', async () => {

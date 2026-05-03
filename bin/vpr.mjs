@@ -117,6 +117,7 @@ VPR v2 — Virtual Pull Request Manager
     vpr send --all                  Send all
     vpr send --dry-run              Preview
     vpr abandon <branchName>        Mark a sent VPR as abandoned (audit trail preserved)
+    vpr merge <src> --into <dst>    Squash src VPR into adjacent dst VPR
 
   Ralph:
     vpr ralph <item> <max-iter>     TDD loop. Default: Docker sandbox via
