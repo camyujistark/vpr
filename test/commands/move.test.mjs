@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { moveCommit } from '../../src/commands/move.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../');
 const vprBin = join(repoRoot, 'bin/vpr.mjs');
@@ -25,6 +26,28 @@ function teardown() {
     tmpDir = null;
   }
 }
+
+describe('moveCommit — module export', () => {
+  it('exports moveCommit as an async function (AC1)', () => {
+    assert.strictEqual(typeof moveCommit, 'function');
+    const result = moveCommit('abc', { toVpr: 'x' });
+    assert.ok(result instanceof Promise, 'moveCommit should return a Promise');
+    result.catch(() => {}); // suppress unhandled rejection
+  });
+
+  it('throws "Install jj for surgical commit moves" when jj is absent (AC2)', async () => {
+    await assert.rejects(
+      () => moveCommit('abc123', { toVpr: 'my-vpr' }),
+      (err) => {
+        assert.ok(
+          err.message.includes('Install jj for surgical commit moves'),
+          `unexpected message: ${err.message}`
+        );
+        return true;
+      }
+    );
+  });
+});
 
 describe('vpr move — requires jj', () => {
   before(() => { originalCwd = process.cwd(); setup(); });
