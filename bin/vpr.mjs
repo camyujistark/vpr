@@ -204,6 +204,9 @@ Pass --help to any subcommand for its own usage.`);
         break;
       }
       const { ticketNew, ticketList, ticketEdit, ticketDone, ticketHold, ticketUnhold } = await import('../src/commands/ticket.mjs');
+      const { createProvider: createTicketProvider } = await import('../src/providers/index.mjs');
+      const ticketProviderConfig = loadConfig() ?? {};
+      const provider = createTicketProvider({ provider: 'none', ...ticketProviderConfig });
 
       switch (sub) {
         case 'new': {
@@ -219,10 +222,6 @@ Pass --help to any subcommand for its own usage.`);
             console.error('Error: --parent only applies when creating a new WI from a title');
             process.exit(1);
           }
-
-          const config = loadConfig() ?? {};
-          const { createProvider } = await import('../src/providers/index.mjs');
-          const provider = createProvider({ provider: 'none', ...config });
 
           const result = await ticketNew(titleOrId, { provider, parentId });
           console.log(JSON.stringify(result, null, 2));
