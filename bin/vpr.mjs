@@ -446,6 +446,19 @@ a slice's content has been folded into another (e.g. a squash).`);
     }
 
     // -----------------------------------------------------------------------
+    // vpr move <commit>  — surgically re-parent a commit (requires jj)
+    // -----------------------------------------------------------------------
+    case 'move': {
+      const { hasJj } = await import('../src/core/jj-detect.mjs');
+      if (!hasJj()) {
+        console.error('Install jj for surgical commit moves');
+        process.exit(1);
+      }
+      console.error('vpr move: not yet implemented');
+      process.exit(1);
+    }
+
+    // -----------------------------------------------------------------------
     // vpr clear --yes  — remove every VPR and item
     // -----------------------------------------------------------------------
     case 'clear': {
