@@ -1,8 +1,31 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = resolve(fileURLToPath(import.meta.url), '../../../');
+const vprBin = join(repoRoot, 'bin/vpr.mjs');
+
+function runVpr(args, cwd, opts = {}) {
+  return execSync(`node ${vprBin} ${args}`, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    ...opts,
+  });
+}
+
+function runVprResult(args, cwd) {
+  try {
+    const stdout = runVpr(args, cwd);
+    return { stdout, stderr: '', code: 0 };
+  } catch (err) {
+    return { stdout: err.stdout ?? '', stderr: err.stderr ?? '', code: err.status ?? 1 };
+  }
+}
 
 import { saveMeta, loadMeta } from '../../src/core/meta.mjs';
 import { abandonVpr } from '../../src/commands/abandon.mjs';
@@ -143,5 +166,77 @@ describe('abandonVpr()', () => {
     // abandoning v1 — alpha still released via v2
     const result = await abandonVpr('feat/1-alpha-v1');
     assert.deepStrictEqual(result.newlyBlocked, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC8–9: CLI vpr abandon <branchName>
+// ---------------------------------------------------------------------------
+
+describe('vpr abandon CLI', () => {
+  let cliTmpDir;
+  let cliOriginalCwd;
+
+  before(() => { cliOriginalCwd = process.cwd(); });
+  after(() => {
+    process.chdir(cliOriginalCwd);
+    if (cliTmpDir) rmSync(cliTmpDir, { recursive: true, force: true });
+  });
+  beforeEach(() => {
+    if (cliTmpDir) rmSync(cliTmpDir, { recursive: true, force: true });
+    cliTmpDir = mkdtempSync(join(tmpdir(), 'vpr-abandon-cli-'));
+    mkdirSync(join(cliTmpDir, '.vpr'), { recursive: true });
+  });
+
+  it('AC8: prints "Abandoned <branchName>" on success', () => {
+    writeFileSync(
+      join(cliTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: { alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [], vprs: {} } },
+        hold: [],
+        sent: { 'feat/1-alpha': { itemName: 'alpha', prId: 10, sentAt: '2025-01-01T00:00:00Z' } },
+        eventLog: [],
+      })
+    );
+    const out = runVpr('abandon feat/1-alpha', cliTmpDir).trim();
+    assert.strictEqual(out, 'Abandoned feat/1-alpha');
+  });
+
+  it('AC8: lists newly-blocked items under "Newly blocked downstream:"', () => {
+    writeFileSync(
+      join(cliTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [], vprs: {} },
+          beta:  { wi: 2, wiTitle: 'Beta',  dependsOn: ['alpha'], vprs: {} },
+        },
+        hold: [],
+        sent: { 'feat/1-alpha': { itemName: 'alpha', prId: 10, sentAt: '2025-01-01T00:00:00Z' } },
+        eventLog: [],
+      })
+    );
+    const out = runVpr('abandon feat/1-alpha', cliTmpDir).trim();
+    assert.ok(out.includes('Abandoned feat/1-alpha'), `missing header: ${out}`);
+    assert.ok(out.includes('Newly blocked downstream:'), `missing section header: ${out}`);
+    assert.ok(out.includes('beta'), `missing beta in output: ${out}`);
+  });
+
+  it('AC9: exits non-zero with clear error for unknown branch', () => {
+    writeFileSync(
+      join(cliTmpDir, '.vpr/meta.json'),
+      JSON.stringify({ items: {}, hold: [], sent: {}, eventLog: [] })
+    );
+    const res = runVprResult('abandon feat/999-ghost', cliTmpDir);
+    assert.notStrictEqual(res.code, 0);
+    assert.ok(
+      res.stderr.includes('feat/999-ghost') || res.stdout.includes('feat/999-ghost'),
+      `expected branch name in error output, got: ${res.stderr}`
+    );
+  });
+
+  it('AC8: vpr --help mentions abandon', () => {
+    const res = runVprResult('--help', cliTmpDir);
+    const combined = res.stdout + res.stderr;
+    assert.ok(combined.includes('abandon'), `--help should mention abandon, got: ${combined.slice(0, 500)}`);
   });
 });

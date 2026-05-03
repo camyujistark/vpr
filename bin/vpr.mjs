@@ -114,6 +114,7 @@ VPR v2 — Virtual Pull Request Manager
     vpr send <vpr> --skip-lint      Skip the ESLint pre-flight gate
     vpr send --all                  Send all
     vpr send --dry-run              Preview
+    vpr abandon <branchName>        Mark a sent VPR as abandoned (audit trail preserved)
 
   Ralph:
     vpr ralph <item> <max-iter>     TDD loop. Default: Docker sandbox via
@@ -554,6 +555,38 @@ runs jj squash to physically merge commits. src is removed from meta.`);
           const wi = v.wi != null ? `wi#${v.wi}` : 'wi#-';
           console.log(`${v.name}  ${wi}  (depth=${v.depth}, vprs=${v.vprCount})`);
         }
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr abandon <branchName>  — mark sent VPR as abandoned
+    // -----------------------------------------------------------------------
+    case 'abandon': {
+      const branchName = args[0];
+      if (!branchName || branchName === '--help' || branchName === '-h') {
+        const stream = branchName ? console.log : console.error;
+        stream(`vpr abandon <branchName>  — mark a sent VPR as abandoned
+
+Stamps abandoned=true and abandonedAt on the sent record.
+The record is preserved for audit purposes.
+Prints any downstream items that become newly blocked.`);
+        process.exit(branchName ? 0 : 1);
+      }
+      const { abandonVpr } = await import('../src/commands/abandon.mjs');
+      try {
+        const result = await abandonVpr(branchName);
+        console.log(`Abandoned ${result.branchName}`);
+        if (result.newlyBlocked.length > 0) {
+          console.log('Newly blocked downstream:');
+          for (const v of result.newlyBlocked) {
+            const wi = v.wi != null ? `wi#${v.wi}` : 'wi#-';
+            console.log(`  ${v.name}  ${wi}`);
+          }
+        }
+      } catch (err) {
+        console.error(err.message);
+        process.exit(1);
       }
       break;
     }
