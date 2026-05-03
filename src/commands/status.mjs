@@ -21,13 +21,31 @@ function cyan(s) { return `${c.cyan}${s}${c.reset}`; }
 function gray(s) { return `${c.gray}${s}${c.reset}`; }
 
 /**
+ * Lifecycle group order for sorting items when dagView is provided.
+ * Lower = higher priority (appears first).
+ */
+function lifecycleRank(dagView, itemName) {
+  if (!dagView) return 0;
+  const view = dagView.nodes?.get(itemName);
+  if (!view) return 0;
+  if (view.done) return 3;
+  if (view.released && !view.done) return 1; // in-flight
+  if (view.ready) return 0; // ready to work
+  return 2; // blocked
+}
+
+/**
  * Format state as a human-readable string (no color-stripping needed for tests).
  * Exported for testability.
  *
  * @param {object} state - result of buildState()
+ * @param {object|null} [dagView] - result of dag.analyze(), optional
+ * @param {object} [opts]
+ * @param {boolean} [opts.showAll] - include done items (default false)
  * @returns {string}
  */
-export function formatStatus(state) {
+export function formatStatus(state, dagView = null, opts = {}) {
+  const { showAll = false } = opts;
   const lines = [];
 
   if (state.items.length === 0 && state.ungrouped.length === 0 && state.hold.length === 0) {
@@ -35,8 +53,13 @@ export function formatStatus(state) {
     return lines.join('\n');
   }
 
-  const activeItems = state.items.filter(i => !i.held);
+  const nonHeld = state.items.filter(i => !i.held);
   const heldItems = state.items.filter(i => i.held);
+
+  // Sort non-held items by lifecycle group when dagView available
+  const activeItems = dagView
+    ? [...nonHeld].sort((a, b) => lifecycleRank(dagView, a.name) - lifecycleRank(dagView, b.name))
+    : nonHeld;
 
   for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';

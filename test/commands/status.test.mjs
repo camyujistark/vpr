@@ -41,6 +41,63 @@ function makeState(vprs = []) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Helpers for lifecycle grouping tests
+// ---------------------------------------------------------------------------
+
+function makeItemView(name, overrides = {}) {
+  return {
+    name,
+    wi: null,
+    status: 'ready',
+    blockers: [],
+    depth: 0,
+    vprCount: 0,
+    released: false,
+    done: false,
+    ready: true,
+    ...overrides,
+  };
+}
+
+function makeDagView(nodeMap) {
+  const nodes = new Map(Object.entries(nodeMap));
+  return { nodes };
+}
+
+function makeTwoItemState(name1, name2) {
+  return {
+    items: [
+      { name: name1, wi: 1, wiTitle: 'Item One', held: false, vprs: [] },
+      { name: name2, wi: 2, wiTitle: 'Item Two', held: false, vprs: [] },
+    ],
+    ungrouped: [],
+    hold: [],
+    conflicts: new Set(),
+    sent: {},
+    eventLog: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
+
+describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
+  it('ready items appear before in-flight (released) items — AC1 ready-first ordering', () => {
+    const state = makeTwoItemState('in-flight-item', 'ready-item');
+    const dagView = makeDagView({
+      'in-flight-item': makeItemView('in-flight-item', { status: 'released', released: true, done: false, ready: false }),
+      'ready-item': makeItemView('ready-item', { status: 'ready', depth: 0, ready: true }),
+    });
+    const output = formatStatus(state, dagView);
+    const readyPos = output.indexOf('ready-item');
+    const inFlightPos = output.indexOf('in-flight-item');
+    assert.ok(readyPos !== -1 && inFlightPos !== -1, `Both items must appear in output: ${output}`);
+    assert.ok(readyPos < inFlightPos, `ready-item (pos ${readyPos}) must appear before in-flight-item (pos ${inFlightPos})\n${output}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe('formatStatus()', () => {
   it('shows "planned, no work yet" for a VPR with 0 commits', () => {
     const state = makeState([{
