@@ -309,6 +309,15 @@ export async function ticketDone(name, opts = {}) {
         `Cannot mark done — unsent VPRs still in items.vprs: ${unsentBookmarks.join(', ')}`
       );
     }
+
+    const unmergedBranches = Object.entries(meta.sent ?? {})
+      .filter(([, rec]) => rec.itemName === name && !rec.mergedAt)
+      .map(([branch]) => branch);
+    if (unmergedBranches.length > 0) {
+      throw new Error(
+        `Cannot mark done — sent VPRs not yet merged: ${unmergedBranches.join(', ')}`
+      );
+    }
   }
 
   delete meta.items[name];

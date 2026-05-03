@@ -300,6 +300,37 @@ describe('ticket commands', () => {
       const meta = await loadMeta();
       assert.ok(meta.items['scaffold-app'], 'item should still exist');
     });
+
+    it('AC3: refuses if any sent record for the item lacks mergedAt', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10-scaffold-merged': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+          'feat/10-scaffold-open': { itemName: 'scaffold-app', prId: 2, sentAt: '2025-01-03T00:00:00Z' },
+          'feat/11-other': { itemName: 'other-item', prId: 3, sentAt: '2025-01-04T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      await assert.rejects(
+        () => ticketDone('scaffold-app'),
+        /feat\/10-scaffold-open/
+      );
+    });
+
+    it('AC3: does not refuse when all sent records have mergedAt', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10-scaffold': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      await assert.doesNotReject(() => ticketDone('scaffold-app'));
+    });
   });
 
   // -------------------------------------------------------------------------
