@@ -261,3 +261,94 @@ describe('vpr abandon CLI', () => {
     assert.ok(combined.includes('abandon'), `--help should mention abandon, got: ${combined.slice(0, 500)}`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC11–13: Integration tests
+// ---------------------------------------------------------------------------
+
+describe('integration: abandon lifecycle', () => {
+  let intTmpDir;
+  let intOriginalCwd;
+
+  before(() => { intOriginalCwd = process.cwd(); });
+  after(() => {
+    process.chdir(intOriginalCwd);
+    if (intTmpDir) rmSync(intTmpDir, { recursive: true, force: true });
+  });
+  beforeEach(() => {
+    if (intTmpDir) rmSync(intTmpDir, { recursive: true, force: true });
+    intTmpDir = mkdtempSync(join(tmpdir(), 'vpr-abandon-int-'));
+    mkdirSync(join(intTmpDir, '.vpr'), { recursive: true });
+    process.chdir(intTmpDir);
+  });
+
+  // AC11: send A; B depends on A; abandon A's branch; B is blocked
+  it('AC11: after abandoning A\'s only sent record, B.ready=false and B.blockers=[A]', async () => {
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {
+          itemA: { wi: 1, wiTitle: 'A', dependsOn: [], vprs: {} },
+          itemB: { wi: 2, wiTitle: 'B', dependsOn: ['itemA'], vprs: {} },
+        },
+        hold: [],
+        sent: {
+          'feat/1-itemA': { itemName: 'itemA', prId: 10, sentAt: '2025-01-01T00:00:00Z' },
+        },
+        eventLog: [],
+      })
+    );
+
+    const { abandonVpr: abandon } = await import('../../src/commands/abandon.mjs');
+    const { status: dagStatus } = await import('../../src/core/dag.mjs');
+    const { loadMeta: lm } = await import('../../src/core/meta.mjs');
+
+    await abandon('feat/1-itemA');
+
+    const state = await lm();
+    const view = dagStatus('itemB', state);
+    assert.strictEqual(view.ready, false, 'itemB should not be ready');
+    assert.deepStrictEqual(view.blockers, ['itemA'], 'itemB.blockers should be [itemA]');
+  });
+
+  // AC12: abandoning already-abandoned VPR — exits 0 with warning, no double-stamp
+  it('AC12: abandoning already-abandoned VPR warns and no-ops via CLI (exits 0)', () => {
+    const originalAt = '2024-06-01T12:00:00Z';
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {},
+        hold: [],
+        sent: {
+          'feat/1-alpha': { itemName: 'alpha', abandoned: true, abandonedAt: originalAt },
+        },
+        eventLog: [],
+      })
+    );
+    // Should exit 0 (no throw) and emit warning
+    let out = '';
+    let err = '';
+    try {
+      out = runVpr('abandon feat/1-alpha', intTmpDir);
+    } catch (e) {
+      assert.fail(`Expected exit 0 for already-abandoned, got non-zero: ${e.stderr}`);
+    }
+    // abandonedAt should not be overwritten
+    const meta = JSON.parse(readFileSync(join(intTmpDir, '.vpr/meta.json'), 'utf8'));
+    assert.strictEqual(meta.sent['feat/1-alpha'].abandonedAt, originalAt);
+  });
+
+  // AC13: abandon non-existent branch — exits non-zero with clear error
+  it('AC13: abandoning non-existent branch exits non-zero with clear error', () => {
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({ items: {}, hold: [], sent: {}, eventLog: [] })
+    );
+    const res = runVprResult('abandon feat/999-ghost', intTmpDir);
+    assert.notStrictEqual(res.code, 0, 'should exit non-zero');
+    assert.ok(
+      res.stderr.includes('feat/999-ghost') || res.stdout.includes('feat/999-ghost'),
+      `expected branch name in error output, got stderr: ${res.stderr}`
+    );
+  });
+});
