@@ -90,13 +90,10 @@ export async function migrateVprs({ dryRun = false } = {}) {
     const diff = jjSafe(`diff -r '${bookmark}' --summary`);
     const isEmpty = !diff || diff.trim() === '';
     if (!isEmpty) {
-      // Bookmark commit has content. Chain state reported this VPR as
-      // a placeholder (commits[]=0) — typically because the bookmark
-      // sits on a side branch off the main chain, so the chain-range
-      // computation can't see it. Either way, the commit has real work
-      // and the bookmark is its anchor; skip rather than delete.
+      // Anchor commit has real work — migrating would delete real content.
+      // Record in refused so the caller can surface a clear error.
       const subject = jjSafe(`log -r '${bookmark}' --no-graph --template 'change_id.short() ++ " " ++ description.first_line()'`) ?? bookmark;
-      skipped.push(`${bookmark} (filled — bookmark commit has content: ${subject})`);
+      refused.push(`${bookmark}: ${subject}`);
       continue;
     }
 

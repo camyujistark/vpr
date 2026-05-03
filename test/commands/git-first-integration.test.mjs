@@ -17,6 +17,9 @@ import { hasJj } from '../../src/core/jj-detect.mjs';
 import { addVpr } from '../../src/commands/add.mjs';
 import { migrateVprs } from '../../src/commands/migrate.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
+import { execSync as _execSync } from 'node:child_process';
+
+const JJ_AVAILABLE = (() => { try { _execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../');
 const vprBin = join(repoRoot, 'bin/vpr.mjs');
@@ -133,6 +136,47 @@ describe('git-first integration: vpr migrate idempotence', () => {
     await migrateVprs({ dryRun: false });
     const after2 = await loadMeta();
     assert.deepStrictEqual(after2, after1);
+  });
+});
+
+describe('git-first integration: vpr migrate refusal on non-empty anchor', { skip: !JJ_AVAILABLE }, () => {
+  let jjTmpDir;
+  let jjOriginalCwd;
+
+  before(() => { jjOriginalCwd = process.cwd(); });
+  after(() => {
+    if (jjOriginalCwd) process.chdir(jjOriginalCwd);
+    if (jjTmpDir) { rmSync(jjTmpDir, { recursive: true, force: true }); jjTmpDir = null; }
+  });
+
+  beforeEach(async () => {
+    if (jjOriginalCwd) process.chdir(jjOriginalCwd);
+    if (jjTmpDir) { rmSync(jjTmpDir, { recursive: true, force: true }); }
+    jjTmpDir = mkdtempSync(join(tmpdir(), 'vpr-migrate-nonempty-'));
+    mkdirSync(join(jjTmpDir, '.vpr'), { recursive: true });
+    _execSync('git init', { cwd: jjTmpDir, stdio: 'pipe' });
+    _execSync('git config user.email "t@t.com"', { cwd: jjTmpDir, stdio: 'pipe' });
+    _execSync('git config user.name "T"', { cwd: jjTmpDir, stdio: 'pipe' });
+    _execSync('jj git init --colocate', { cwd: jjTmpDir, stdio: 'pipe' });
+    process.chdir(jjTmpDir);
+  });
+
+  it('AC13: migrate throws when a placeholder anchor commit has a non-empty diff', async () => {
+    // Set up a VPR bookmark on a commit that has real file content.
+    // This simulates an "anchor" commit that accidentally has work in it.
+    _execSync('echo "content" > file.txt && git add file.txt && git commit -m "add file"', { cwd: jjTmpDir, shell: true, stdio: 'pipe' });
+    _execSync('jj bookmark create my-item/with-content', { cwd: jjTmpDir, stdio: 'pipe' });
+    _execSync('jj new', { cwd: jjTmpDir, stdio: 'pipe' });
+
+    await saveMeta({
+      items: { 'my-item': { wi: 1, wiTitle: 'My Item', vprs: { 'my-item/with-content': { title: 'With Content', story: '', acceptance: '', output: null } } } },
+      hold: [], sent: {}, eventLog: [],
+    });
+
+    await assert.rejects(
+      () => migrateVprs({ dryRun: false }),
+      /refused|real work/i
+    );
   });
 });
 
