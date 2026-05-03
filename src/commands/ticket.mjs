@@ -1,6 +1,7 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { hasJj, jj, jjSafe } from '../core/jj.mjs';
 import { computeTicketSync } from './ticket-sync.mjs';
+import { wouldCycle } from '../core/dag.mjs';
 
 /**
  * Quote a string for use as a literal bookmark name in a jj revset.
@@ -151,15 +152,54 @@ export async function ticketList() {
 
 /**
  * Update fields on an existing item.
+ *
+ * Special keys handled before the generic merge:
+ *   addDependsOn: string[]    — add dep names (validates, cycle-checks, idempotent)
+ *   removeDependsOn: string[] — remove dep names (idempotent)
+ *
  * @param {string} name
- * @param {object} updates  — e.g. { wiTitle: 'New Title' }
+ * @param {object} updates
  * @returns {Promise<void>}
  */
 export async function ticketEdit(name, updates) {
   const meta = await loadMeta();
   if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
 
-  Object.assign(meta.items[name], updates);
+  const { addDependsOn, removeDependsOn, ...rest } = updates;
+
+  if (addDependsOn != null) {
+    const knownNames = new Set(Object.keys(meta.items));
+    const unknown = addDependsOn.filter(d => !knownNames.has(d));
+    if (unknown.length > 0) {
+      throw new Error(`unknown dep name(s): ${unknown.join(', ')}`);
+    }
+
+    const item = meta.items[name];
+    const current = item.dependsOn ?? [];
+    const toAdd = addDependsOn.filter(d => !current.includes(d));
+
+    for (const dep of toAdd) {
+      // wouldCycle(state, from, to) = "to would gain from as a dep"
+      // We are adding name -> dep (name depends on dep), so: to=name, from=dep
+      const cycle = wouldCycle(meta, dep, name);
+      if (cycle) {
+        throw new Error(`cycle: ${cycle.join(' -> ')}`);
+      }
+    }
+
+    item.dependsOn = [...current, ...toAdd];
+  }
+
+  if (removeDependsOn != null) {
+    const item = meta.items[name];
+    const current = item.dependsOn ?? [];
+    item.dependsOn = current.filter(d => !removeDependsOn.includes(d));
+  }
+
+  if (Object.keys(rest).length > 0) {
+    Object.assign(meta.items[name], rest);
+  }
+
   await saveMeta(meta);
   await appendEvent('cli', 'ticket.edit', { name, updates });
 }

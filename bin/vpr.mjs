@@ -233,13 +233,24 @@ Pass --help to any subcommand for its own usage.`);
         case 'edit': {
           const name = ticketArgs[0];
           if (!name) {
-            console.error('Usage: vpr ticket edit <name> [--title "..."]');
+            console.error('Usage: vpr ticket edit <name> [--title "..."] [--depends-on a,b] [--remove-depends-on a,b]');
             process.exit(1);
           }
           const flags = parseFlags(ticketArgs.slice(1));
           const updates = {};
           if (flags.title) updates.wiTitle = flags.title;
-          await ticketEdit(name, updates);
+          if (flags['depends-on']) {
+            updates.addDependsOn = flags['depends-on'].split(',').map(s => s.trim()).filter(Boolean);
+          }
+          if (flags['remove-depends-on']) {
+            updates.removeDependsOn = flags['remove-depends-on'].split(',').map(s => s.trim()).filter(Boolean);
+          }
+          try {
+            await ticketEdit(name, updates);
+          } catch (err) {
+            console.error(err.message);
+            process.exit(1);
+          }
           break;
         }
 

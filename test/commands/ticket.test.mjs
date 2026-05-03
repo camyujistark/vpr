@@ -425,3 +425,143 @@ describe('ticket commands', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// ticketEdit() dep management — no jj required
+// ---------------------------------------------------------------------------
+
+{
+  let depTmpDir;
+  let depOriginalCwd;
+
+  function depSetup() {
+    depTmpDir = mkdtempSync(join(tmpdir(), 'vpr-ticket-dep-'));
+    mkdirSync(join(depTmpDir, '.vpr'), { recursive: true });
+    depOriginalCwd = process.cwd();
+    process.chdir(depTmpDir);
+  }
+
+  function depTeardown() {
+    if (depOriginalCwd) process.chdir(depOriginalCwd);
+    if (depTmpDir) {
+      rmSync(depTmpDir, { recursive: true, force: true });
+      depTmpDir = null;
+    }
+  }
+
+  describe('ticketEdit() addDependsOn', () => {
+    beforeEach(async () => {
+      depTeardown();
+      depSetup();
+      await saveMeta({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [], vprs: {} },
+          beta:  { wi: 2, wiTitle: 'Beta',  dependsOn: [], vprs: {} },
+          gamma: { wi: 3, wiTitle: 'Gamma', dependsOn: [], vprs: {} },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    after(() => depTeardown());
+
+    it('adds dep names to dependsOn', async () => {
+      await ticketEdit('alpha', { addDependsOn: ['beta'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, ['beta']);
+    });
+
+    it('initializes dependsOn array if item is missing it', async () => {
+      await saveMeta({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', vprs: {} },
+          beta:  { wi: 2, wiTitle: 'Beta',  vprs: {} },
+        },
+        hold: [], sent: {}, eventLog: [],
+      });
+      await ticketEdit('alpha', { addDependsOn: ['beta'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, ['beta']);
+    });
+
+    it('is idempotent — adding already-present dep is a no-op', async () => {
+      await ticketEdit('alpha', { addDependsOn: ['beta'] });
+      await ticketEdit('alpha', { addDependsOn: ['beta'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, ['beta']);
+    });
+
+    it('rejects unknown dep names with a clear error', async () => {
+      await assert.rejects(
+        () => ticketEdit('alpha', { addDependsOn: ['nonexistent'] }),
+        /unknown.*nonexistent/i
+      );
+    });
+
+    it('does not persist anything on rejection of unknown names', async () => {
+      await assert.rejects(
+        () => ticketEdit('alpha', { addDependsOn: ['nonexistent'] }),
+        /unknown/i
+      );
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, []);
+    });
+
+    it('rejects when adding dep would create a cycle', async () => {
+      await ticketEdit('beta', { addDependsOn: ['alpha'] });
+      await assert.rejects(
+        () => ticketEdit('alpha', { addDependsOn: ['beta'] }),
+        /cycle/i
+      );
+    });
+
+    it('does not persist on cycle', async () => {
+      await ticketEdit('beta', { addDependsOn: ['alpha'] });
+      await assert.rejects(
+        () => ticketEdit('alpha', { addDependsOn: ['beta'] }),
+        /cycle/i
+      );
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, []);
+    });
+  });
+
+  describe('ticketEdit() removeDependsOn', () => {
+    beforeEach(async () => {
+      depTeardown();
+      depSetup();
+      await saveMeta({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: ['beta', 'gamma'], vprs: {} },
+          beta:  { wi: 2, wiTitle: 'Beta',  dependsOn: [], vprs: {} },
+          gamma: { wi: 3, wiTitle: 'Gamma', dependsOn: [], vprs: {} },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+    });
+
+    after(() => depTeardown());
+
+    it('removes dep names from dependsOn', async () => {
+      await ticketEdit('alpha', { removeDependsOn: ['beta'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, ['gamma']);
+    });
+
+    it('is idempotent — removing absent dep is a no-op', async () => {
+      await ticketEdit('alpha', { removeDependsOn: ['nonexistent-dep'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, ['beta', 'gamma']);
+    });
+
+    it('can remove multiple deps at once', async () => {
+      await ticketEdit('alpha', { removeDependsOn: ['beta', 'gamma'] });
+      const meta = await loadMeta();
+      assert.deepStrictEqual(meta.items['alpha'].dependsOn, []);
+    });
+  });
+}
