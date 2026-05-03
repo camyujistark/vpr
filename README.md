@@ -218,34 +218,49 @@ For AI agents and scripting — JSON output where relevant.
 
 ```bash
 # Items
-vpr ticket new "Ding Convertor"     create item + work item + parallel branch
-vpr ticket new 17065                attach to existing work item
-vpr ticket list                     list all items
-vpr ticket edit <name>              update item
-vpr ticket done <name>              close item
+vpr ticket new "Ding Convertor"              create item + work item + parallel branch
+vpr ticket new 17065                         attach to existing work item
+vpr ticket list                              list all items
+vpr ticket edit <name>                       update item
+vpr ticket edit <name> --depends-on a,b      add item dependencies
+vpr ticket edit <name> --remove-depends-on a remove item dependencies
+vpr ticket done <name>                       close item, stamp itemDone on sent records
+vpr ticket done <name> --check-merged        poll provider for merge status first
+vpr ticket done <name> --force               bypass preconditions
+
+# DAG
+vpr next                                     print ready items (depth-sorted, no blockers)
 
 # VPRs
-vpr add "Scaffold"                  create VPR in current item
-vpr add "Scaffold" --item ding-app  create VPR in specific item
-vpr edit <vpr> --story "..."        write story
-vpr edit <vpr> --title "..."        set title
-vpr remove <vpr>                    dissolve VPR
-vpr list                            JSON: items → VPRs → commits + eventLog
-vpr status                          human-readable overview
-vpr log [N]                         jj graph with VPR annotations
+vpr add "Scaffold"                           create VPR in current item
+vpr add "Scaffold" --item ding-app           create VPR in specific item
+vpr edit <vpr> --story "..."                 write story
+vpr edit <vpr> --title "..."                 set title
+vpr remove <vpr>                             dissolve VPR
+vpr abandon <vpr>                            mark sent VPR as abandoned
+vpr merge <src> --into <dst>                 squash adjacent VPR into another
+vpr move <changeId> --to <vpr>               move commit to different VPR (jj required)
+vpr list                                     JSON: items → VPRs → commits + eventLog
+vpr status                                   human-readable overview (ready-first)
+vpr status --all                             include done items
+vpr log [N]                                  jj graph with VPR annotations
 
 # AI
-vpr generate <vpr>                  generate output from story + commits
-vpr generate --all                  generate all empty outputs
+vpr generate <vpr>                           generate output from story + commits
+vpr generate --all                           generate all empty outputs
 
 # Work
-vpr hold <changeId>                 park a commit
-vpr unhold <changeId>               release
+vpr hold <changeId>                          park a commit
+vpr unhold <changeId>                        release
+
+# Maintenance
+vpr migrate                                  convert legacy anchor-commit VPRs (dry-run)
+vpr migrate --apply                          write migration changes
 
 # Push
-vpr send <vpr>                      send one VPR
-vpr send --all                      send all (asks for order)
-vpr send --dry-run                  preview
+vpr send <vpr>                               send one VPR
+vpr send --all                               send all (asks for order)
+vpr send --dry-run                           preview
 ```
 
 ## Data Model
@@ -258,6 +273,7 @@ vpr send --dry-run                  preview
     "ding-app": {
       "wi": 17065,
       "wiTitle": "Ding Convertor app",
+      "dependsOn": ["shared-ui"],
       "vprs": {
         "ding/scaffold": {
           "title": "Scaffold",
@@ -274,7 +290,13 @@ vpr send --dry-run                  preview
   },
   "hold": [],
   "sent": {
-    "feat/17065-ding-scaffold": { "prId": 4952 }
+    "feat/17065-ding-scaffold": {
+      "prId": 4952,
+      "itemName": "ding-app",
+      "itemDone": false,
+      "mergedAt": null,
+      "abandoned": false
+    }
   },
   "eventLog": [
     { "ts": "2026-04-06T...", "actor": "claude", "action": "add", "item": "ding-app", "vpr": "scaffold" }
