@@ -56,10 +56,15 @@ export function formatStatus(state, dagView = null, opts = {}) {
   const nonHeld = state.items.filter(i => !i.held);
   const heldItems = state.items.filter(i => i.held);
 
+  // Hide done items unless showAll requested
+  const visibleNonHeld = (dagView && !showAll)
+    ? nonHeld.filter(i => !dagView.nodes?.get(i.name)?.done)
+    : nonHeld;
+
   // Sort non-held items by lifecycle group when dagView available
   const activeItems = dagView
-    ? [...nonHeld].sort((a, b) => lifecycleRank(dagView, a.name) - lifecycleRank(dagView, b.name))
-    : nonHeld;
+    ? [...visibleNonHeld].sort((a, b) => lifecycleRank(dagView, a.name) - lifecycleRank(dagView, b.name))
+    : visibleNonHeld;
 
   for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
@@ -125,9 +130,11 @@ export function formatStatus(state, dagView = null, opts = {}) {
 /**
  * Print human-readable colored VPR status to console.
  *
+ * @param {object} [opts]
+ * @param {boolean} [opts.showAll] - include done items
  * @returns {Promise<void>}
  */
-export async function status() {
+export async function status(opts = {}) {
   const state = await buildState();
-  console.log(formatStatus(state));
+  console.log(formatStatus(state, null, opts));
 }

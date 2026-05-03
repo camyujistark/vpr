@@ -642,8 +642,9 @@ Prints any downstream items that become newly blocked.`);
     // vpr status  — human-readable overview
     // -----------------------------------------------------------------------
     case 'status': {
+      const flags = parseFlags(args);
       const { status } = await import('../src/commands/status.mjs');
-      await status();
+      await status({ showAll: Boolean(flags.all) });
       break;
     }
 

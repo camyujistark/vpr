@@ -94,6 +94,28 @@ describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
     assert.ok(readyPos !== -1 && inFlightPos !== -1, `Both items must appear in output: ${output}`);
     assert.ok(readyPos < inFlightPos, `ready-item (pos ${readyPos}) must appear before in-flight-item (pos ${inFlightPos})\n${output}`);
   });
+
+  it('hides done items by default when dagView is provided — AC5', () => {
+    const state = makeTwoItemState('done-item', 'ready-item');
+    const dagView = makeDagView({
+      'done-item': makeItemView('done-item', { done: true, ready: false, released: true }),
+      'ready-item': makeItemView('ready-item', { ready: true }),
+    });
+    const output = formatStatus(state, dagView);
+    assert.ok(!output.includes('done-item'), `Done items must be hidden by default: ${output}`);
+    assert.ok(output.includes('ready-item'), `Ready items must still appear: ${output}`);
+  });
+
+  it('shows done items when showAll is true — AC5/AC9', () => {
+    const state = makeTwoItemState('done-item', 'ready-item');
+    const dagView = makeDagView({
+      'done-item': makeItemView('done-item', { done: true, ready: false, released: true }),
+      'ready-item': makeItemView('ready-item', { ready: true }),
+    });
+    const output = formatStatus(state, dagView, { showAll: true });
+    assert.ok(output.includes('done-item'), `Done items must appear with showAll: ${output}`);
+    assert.ok(output.includes('ready-item'), `Ready items must still appear: ${output}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
