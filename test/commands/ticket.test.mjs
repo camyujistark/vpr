@@ -375,6 +375,39 @@ describe('ticket commands', () => {
         /feat\/10-open/
       );
     });
+
+    it('AC6: calls provider.updateWorkItem with state Done on success', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      let calledWith = null;
+      const provider = {
+        updateWorkItem: async (wi, fields) => { calledWith = { wi, fields }; },
+      };
+
+      await ticketDone('scaffold-app', { provider });
+
+      assert.deepStrictEqual(calledWith, { wi: 10, fields: { state: 'Done' } });
+    });
+
+    it('AC6: succeeds without provider (no updateWorkItem call)', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      await assert.doesNotReject(() => ticketDone('scaffold-app'));
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -332,7 +332,14 @@ export async function ticketDone(name, opts = {}) {
     }
   }
 
+  const wi = meta.items[name].wi;
+
   delete meta.items[name];
   await saveMeta(meta);
+
+  if (provider && typeof provider.updateWorkItem === 'function') {
+    await provider.updateWorkItem(wi, { state: 'Done' });
+  }
+
   await appendEvent('cli', 'ticket.done', { name });
 }
