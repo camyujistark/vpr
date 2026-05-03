@@ -2,6 +2,8 @@
  * Azure DevOps provider — work items via `az boards`, PRs via `az repos`.
  */
 
+export const TERMINAL_STATES = ['Done', 'Closed', 'Resolved', 'Removed'];
+
 import { execSync } from 'child_process';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -112,6 +114,16 @@ export class AzureDevOpsProvider extends BaseProvider {
     if (fields.description) args.push(`--description ${sq(fields.description)}`);
     if (args.length === 0) return;
     az(`boards work-item update --id ${id} ${args.join(' ')} --org ${sq(this.org)}`);
+  }
+
+  getPRStatus(prId) {
+    const pr = this._az(
+      `repos pr show --id ${prId}` +
+      ` --repository ${sq(this.repo)}` +
+      ` --project ${sq(this.project)} --organization ${sq(this.org)}`
+    );
+    const merged = pr.status === 'completed';
+    return { merged, mergedAt: merged ? (pr.completionQueueTime ?? null) : null };
   }
 
   createPR(sourceBranch, targetBranch, title, body, workItemId) {
