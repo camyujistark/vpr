@@ -298,9 +298,21 @@ export async function ticketUpdate(name, { provider }) {
  * @returns {Promise<void>}
  */
 export async function ticketDone(name, opts = {}) {
-  const { force = false } = opts;
+  const { force = false, checkMerged = false, provider } = opts;
   const meta = await loadMeta();
   if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+
+  if (checkMerged && provider) {
+    const unmerged = Object.entries(meta.sent ?? {})
+      .filter(([, rec]) => rec.itemName === name && !rec.mergedAt);
+    for (const [branch, rec] of unmerged) {
+      const status = await provider.getPRStatus(rec.prId);
+      if (status.merged && status.mergedAt) {
+        meta.sent[branch].mergedAt = status.mergedAt;
+      }
+    }
+    await saveMeta(meta);
+  }
 
   if (!force) {
     const unsentBookmarks = Object.keys(meta.items[name].vprs ?? {});

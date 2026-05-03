@@ -331,6 +331,50 @@ describe('ticket commands', () => {
 
       await assert.doesNotReject(() => ticketDone('scaffold-app'));
     });
+
+    it('AC4: --check-merged stamps mergedAt via provider and succeeds', async () => {
+      const MERGED_AT = '2025-01-05T10:00:00Z';
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10-open': { itemName: 'scaffold-app', prId: 42, sentAt: '2025-01-01T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      const provider = {
+        getPRStatus: async (prId) => ({ merged: true, mergedAt: MERGED_AT }),
+        updateWorkItem: async () => {},
+      };
+
+      await ticketDone('scaffold-app', { checkMerged: true, provider });
+
+      const meta = await loadMeta();
+      assert.ok(!meta.items['scaffold-app'], 'item removed after success');
+      assert.strictEqual(meta.sent['feat/10-open'].mergedAt, MERGED_AT, 'mergedAt stamped');
+    });
+
+    it('AC4: --check-merged leaves record unmerged if provider returns merged: false', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10-open': { itemName: 'scaffold-app', prId: 42, sentAt: '2025-01-01T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      const provider = {
+        getPRStatus: async () => ({ merged: false, mergedAt: null }),
+        updateWorkItem: async () => {},
+      };
+
+      await assert.rejects(
+        () => ticketDone('scaffold-app', { checkMerged: true, provider }),
+        /feat\/10-open/
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
