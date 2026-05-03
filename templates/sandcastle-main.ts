@@ -110,9 +110,19 @@ const writeJjSnapshot = () => {
   }
 };
 
-const runOne = (VPR_ITEM: string) => {
+// After a successful run, advance slice bookmarks from Ralph-Slice trailers.
+// Requires jj; silently skips if jj is absent or sync finds nothing to do.
+const syncAfterRun = (VPR_ITEM: string) => {
+  try {
+    execSync(`node bin/vpr.mjs sync ${VPR_ITEM}`, { stdio: "inherit" });
+  } catch {
+    console.error(`⚠ vpr sync ${VPR_ITEM} failed (non-fatal) — run manually if needed`);
+  }
+};
+
+const runOne = async (VPR_ITEM: string) => {
   writeSentinel(VPR_ITEM);
-  return run({
+  await run({
     // Prefix in log output. Distinguishes parallel agents.
     name: `ralph-${VPR_ITEM}`,
 
@@ -163,6 +173,7 @@ const runOne = (VPR_ITEM: string) => {
       },
     },
   });
+  syncAfterRun(VPR_ITEM);
 };
 
 checkGitClean();
