@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { hasJj } from '../core/jj-detect.mjs';
 import { jjSafe } from '../core/jj.mjs';
@@ -46,6 +47,8 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
     // jj path: squash all src commits into dst in a single invocation
     const range = srcClaims.join(' | ');
     jjSafe(`squash --from "${range}" --into "${dst}" --quiet`);
+  } else if (!hasJj()) {
+    gitSquashFallback(src, dst);
   }
 
   // Meta update: transfer claims, apply optional title/story overrides, remove src
@@ -69,6 +72,61 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
   jjExportIfAvailable();
 
   return { src, dst };
+}
+
+/**
+ * Git-only squash: collapse src bookmark's commits into dst bookmark.
+ *
+ * For a linear stack (src is ancestor of dst), creates a squash commit whose
+ * tree is dst's current tree and whose parent is src's parent — collapsing
+ * the combined range to one commit.  For a diverged case uses merge-tree.
+ * Deletes the src branch after squash.  Silently no-ops if the git ops fail
+ * (e.g. branches don't exist as git refs).
+ *
+ * @param {string} src  bookmark / branch name of the source VPR
+ * @param {string} dst  bookmark / branch name of the destination VPR
+ */
+function gitSquashFallback(src, dst) {
+  const OPTS = { stdio: 'pipe', encoding: 'utf8' };
+  try {
+    execSync('git rev-parse --git-dir', OPTS);
+    const srcTip = execSync(`git rev-parse refs/heads/${src}`, OPTS).trim();
+    const dstTip = execSync(`git rev-parse refs/heads/${dst}`, OPTS).trim();
+
+    let squashParent;
+    let squashTree;
+
+    let srcIsAncestor = false;
+    try {
+      execSync(`git merge-base --is-ancestor ${srcTip} ${dstTip}`, OPTS);
+      srcIsAncestor = true;
+    } catch { /* not ancestor */ }
+
+    if (srcIsAncestor) {
+      // Linear stack: src commits → dst commits.  Squash by taking dst's tree
+      // and re-parenting at src's parent, collapsing the full range to one commit.
+      squashParent = execSync(`git rev-parse ${srcTip}^`, OPTS).trim();
+      squashTree = execSync(`git rev-parse ${dstTip}^{tree}`, OPTS).trim();
+    } else {
+      // Diverged or src-above-dst: use merge-tree to combine both sides.
+      const mergeOut = execSync(
+        `git merge-tree --write-tree --no-messages ${dstTip} ${srcTip}`,
+        OPTS
+      );
+      squashTree = mergeOut.split('\n')[0].trim();
+      squashParent = dstTip;
+    }
+
+    const newCommit = execSync(
+      `git commit-tree ${squashTree} -p ${squashParent} -m "Squash: merge ${src} into ${dst}"`,
+      OPTS
+    ).trim();
+
+    execSync(`git update-ref refs/heads/${dst} ${newCommit}`, OPTS);
+    execSync(`git branch -D ${src}`, OPTS);
+  } catch {
+    // Graceful fallback: meta-only already handled above
+  }
 }
 
 /**
