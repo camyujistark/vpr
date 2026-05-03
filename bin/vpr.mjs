@@ -520,7 +520,7 @@ runs jj squash to physically merge commits. src is removed from meta.`);
         process.exit(src === '--help' || src === '-h' ? 0 : 1);
       }
       const { mergeVpr } = await import('../src/commands/merge.mjs');
-      await mergeVpr(src, dst);
+      await mergeVpr(src, { into: dst });
       console.log(`Merged ${src} → ${dst}`);
       break;
     }

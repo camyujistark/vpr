@@ -1,6 +1,7 @@
 /**
  * Tests for vpr merge <src> --into <dst>
  *
+ * AC1: mergeVpr(src, { into, title, story }) signature.
  * AC8: Works with jj squash when jj is available; falls back to a
  * git-based approach (meta-only claim transfer) when jj is absent.
  * Both paths produce identical meta state (src removed, claims on dst).
@@ -59,14 +60,21 @@ describe('mergeVpr()', () => {
     });
   });
 
+  it('AC1: accepts { into } object as second arg', async () => {
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
+    const meta = await loadMeta();
+    assert.ok(!meta.items['my-item'].vprs['my-item/src-feature'], 'src removed');
+    assert.ok(meta.items['my-item'].vprs['my-item/dst-feature'], 'dst exists');
+  });
+
   it('removes src VPR from meta after merge', async () => {
-    await mergeVpr('my-item/src-feature', 'my-item/dst-feature');
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
     const meta = await loadMeta();
     assert.ok(!meta.items['my-item'].vprs['my-item/src-feature'], 'src should be removed');
   });
 
   it('dst VPR gains claims from src VPR', async () => {
-    await mergeVpr('my-item/src-feature', 'my-item/dst-feature');
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
     const meta = await loadMeta();
     const dstClaims = meta.items['my-item'].vprs['my-item/dst-feature'].claims ?? [];
     assert.ok(dstClaims.includes('abc123'), 'abc123 should be in dst claims');
@@ -76,22 +84,20 @@ describe('mergeVpr()', () => {
 
   it('throws if src VPR not found', async () => {
     await assert.rejects(
-      () => mergeVpr('my-item/nonexistent', 'my-item/dst-feature'),
+      () => mergeVpr('my-item/nonexistent', { into: 'my-item/dst-feature' }),
       /not found/i
     );
   });
 
   it('throws if dst VPR not found', async () => {
     await assert.rejects(
-      () => mergeVpr('my-item/src-feature', 'my-item/nonexistent'),
+      () => mergeVpr('my-item/src-feature', { into: 'my-item/nonexistent' }),
       /not found/i
     );
   });
 
   it('produces same meta state regardless of jj availability (git fallback)', async () => {
-    // In this test env jj is not available, so git-fallback path runs.
-    // Verify meta state is correct (same contract as jj path).
-    await mergeVpr('my-item/src-feature', 'my-item/dst-feature');
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
     const meta = await loadMeta();
     assert.ok(!meta.items['my-item'].vprs['my-item/src-feature'], 'src removed');
     const dst = meta.items['my-item'].vprs['my-item/dst-feature'];

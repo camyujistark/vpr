@@ -14,10 +14,10 @@ import { jjExportIfAvailable } from '../core/jj-detect.mjs';
  * Git-only path is a pure meta operation (claims transfer).
  *
  * @param {string} src  bookmark name of the VPR to fold in
- * @param {string} dst  bookmark name of the VPR to fold into
+ * @param {{ into: string, title?: string, story?: string }} opts
  * @returns {Promise<{ src: string, dst: string }>}
  */
-export async function mergeVpr(src, dst) {
+export async function mergeVpr(src, { into: dst, title, story } = {}) {
   const meta = await loadMeta();
 
   const srcEntry = findVprEntry(meta, src);
