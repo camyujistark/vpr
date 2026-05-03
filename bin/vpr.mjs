@@ -459,6 +459,40 @@ a slice's content has been folded into another (e.g. a squash).`);
     }
 
     // -----------------------------------------------------------------------
+    // vpr migrate [--dry-run]  — convert old-shape anchor commits to meta-only
+    // -----------------------------------------------------------------------
+    case 'migrate': {
+      const flags = parseFlags(args);
+      const dryRun = Boolean(flags['dry-run']);
+      if (args[0] === '--help' || args[0] === '-h') {
+        console.log(`vpr migrate [--dry-run]  — convert old-shape VPRs to meta-only
+
+  vpr migrate           Removes empty jj anchor commits, converts meta in place.
+  vpr migrate --dry-run Print what would be migrated without making changes.
+
+Old shape: vpr add created an empty jj bookmark anchor commit.
+New shape: VPR is meta-only; branch created lazily on first real commit.
+Refuses if any anchor commit has a non-empty diff (real work would be lost).
+Writes a timestamped backup to .vpr/meta.json.pre-migrate-<timestamp>.`);
+        process.exit(0);
+      }
+      const { migrateVprs } = await import('../src/commands/migrate.mjs');
+      const result = await migrateVprs({ dryRun });
+      if (result.converted.length === 0 && result.skipped.length === 0) {
+        console.log('Nothing to migrate.');
+      } else {
+        if (result.converted.length > 0) {
+          const label = dryRun ? 'Would convert' : 'Converted';
+          console.log(`${label}: ${result.converted.join(', ')}`);
+        }
+        if (result.skipped.length > 0) {
+          console.log(`Skipped: ${result.skipped.join(', ')}`);
+        }
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
     // vpr merge <src> --into <dst>  — fold one VPR into another
     // -----------------------------------------------------------------------
     case 'merge': {
