@@ -121,6 +121,18 @@ describe('mergeVpr()', () => {
     );
   });
 
+  it('AC12: event log includes src, dst, item, srcCommits, jjUsed', async () => {
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
+    const meta = await loadMeta();
+    const ev = meta.eventLog.find(e => e.action === 'vpr.merge');
+    assert.ok(ev, 'event logged');
+    assert.equal(ev.detail.src, 'my-item/src-feature');
+    assert.equal(ev.detail.dst, 'my-item/dst-feature');
+    assert.equal(ev.detail.item, 'my-item');
+    assert.deepEqual(ev.detail.srcCommits, ['abc123', 'def456']);
+    assert.equal(typeof ev.detail.jjUsed, 'boolean');
+  });
+
   it('AC8: dst title and story preserved when no overrides given', async () => {
     await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
     const meta = await loadMeta();

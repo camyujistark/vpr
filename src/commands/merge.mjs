@@ -60,7 +60,13 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
   delete meta.items[srcEntry.itemName].vprs[src];
 
   await saveMeta(meta);
-  await appendEvent('cli', 'vpr.merge', { src, dst });
+  await appendEvent('cli', 'vpr.merge', {
+    src,
+    dst,
+    item: srcEntry.itemName,
+    srcCommits: srcClaims,
+    jjUsed: hasJj() && srcClaims.length > 0,
+  });
   jjExportIfAvailable();
 
   return { src, dst };
