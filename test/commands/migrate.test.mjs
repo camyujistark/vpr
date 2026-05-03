@@ -77,4 +77,9 @@ describe('migrateVprs()', () => {
     const after = await loadMeta();
     assert.deepStrictEqual(after, before, 'dry-run should not change meta');
   });
+
+  it('dry-run returns dryRun: true in result', async () => {
+    const result = await migrateVprs({ dryRun: true });
+    assert.strictEqual(result.dryRun, true);
+  });
 });
