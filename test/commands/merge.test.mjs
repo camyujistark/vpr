@@ -286,6 +286,81 @@ describe('integration: vpr merge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC13: jj path integration test (skipped when jj is not installed)
+// ---------------------------------------------------------------------------
+
+const JJ_AVAILABLE = (() => {
+  try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; }
+})();
+
+describe('AC13: jj path squashes commits and cleans up src bookmark', { skip: !JJ_AVAILABLE }, () => {
+  let jjDir;
+  let savedCwdAc13;
+
+  function sh13(cmd, cwd = jjDir) {
+    return execSync(cmd, { cwd, encoding: 'utf8', stdio: 'pipe' }).trim();
+  }
+
+  before(() => { savedCwdAc13 = process.cwd(); });
+  after(() => {
+    process.chdir(savedCwdAc13);
+    if (jjDir) rmSync(jjDir, { recursive: true, force: true });
+  });
+
+  beforeEach(async () => {
+    if (jjDir) rmSync(jjDir, { recursive: true, force: true });
+    jjDir = mkdtempSync(join(tmpdir(), 'vpr-merge-jj-ac13-'));
+    mkdirSync(join(jjDir, '.vpr'), { recursive: true });
+    process.chdir(jjDir);
+
+    sh13('git init');
+    sh13('git config user.email "test@example.com"');
+    sh13('git config user.name "Test"');
+    sh13('jj git init --colocate');
+    sh13('jj config set --repo user.email "test@example.com"');
+    sh13('jj config set --repo user.name "Test"');
+
+    // Create a src commit on item-a/vpr-1
+    writeFileSync(join(jjDir, 'src-file.txt'), 'src-content');
+    sh13('jj describe -m "Add src file"');
+    sh13('jj bookmark set item-a/vpr-1');
+    const srcChangeId = sh13('jj log -r "item-a/vpr-1" --no-graph --template "change_id.short()"');
+    sh13('jj new');
+
+    // Create a dst commit on item-a/vpr-2 (stacked above src)
+    writeFileSync(join(jjDir, 'dst-file.txt'), 'dst-content');
+    sh13('jj describe -m "Add dst file"');
+    sh13('jj bookmark set item-a/vpr-2');
+    sh13('jj new');
+
+    await saveMeta({
+      items: {
+        'item-a': {
+          wi: 1, wiTitle: 'A', dependsOn: [],
+          vprs: {
+            'item-a/vpr-1': { title: 'VPR 1', story: '', acceptance: '', output: null, claims: [srcChangeId] },
+            'item-a/vpr-2': { title: 'VPR 2', story: '', acceptance: '', output: null, claims: [] },
+          },
+        },
+      },
+      hold: [], sent: {}, eventLog: [],
+    });
+  });
+
+  it('AC13: src bookmark gone and dst bookmark contains combined commits after jj squash', async () => {
+    await mergeVpr('item-a/vpr-1', { into: 'item-a/vpr-2' });
+    // src bookmark deleted
+    const bookmarks = sh13('jj bookmark list --template "self.name() ++ \\"\\n\\""');
+    assert.ok(!bookmarks.includes('item-a/vpr-1'), 'src bookmark deleted');
+    assert.ok(bookmarks.includes('item-a/vpr-2'), 'dst bookmark exists');
+    // dst bookmark's commit should include src-file.txt
+    sh13('jj git export');
+    const srcContent = sh13('git show refs/heads/item-a/vpr-2:src-file.txt');
+    assert.equal(srcContent, 'src-content', 'src changes present in dst after squash');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC5: git fallback squashes actual commits on real git branches
 // ---------------------------------------------------------------------------
 

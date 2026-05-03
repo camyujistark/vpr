@@ -44,9 +44,10 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
   const srcClaims = srcMeta.claims ?? [];
 
   if (hasJj() && srcClaims.length > 0) {
-    // jj path: squash all src commits into dst in a single invocation
+    // jj path: squash all src commits into dst, then remove src bookmark (AC7)
     const range = srcClaims.join(' | ');
     jjSafe(`squash --from "${range}" --into "${dst}" --quiet`);
+    jjSafe(`bookmark delete ${src}`);
   } else if (!hasJj()) {
     gitSquashFallback(src, dst);
   }
