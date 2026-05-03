@@ -167,6 +167,27 @@ describe('abandonVpr()', () => {
     const result = await abandonVpr('feat/1-alpha-v1');
     assert.deepStrictEqual(result.newlyBlocked, []);
   });
+
+  // AC10: appends vpr.abandon event to event log
+  it('AC10: appends { actor: cli, action: vpr.abandon, detail: { branchName, itemName } } to eventLog', async () => {
+    await saveMeta({
+      items: { alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [], vprs: {} } },
+      hold: [],
+      sent: {
+        'feat/1-alpha': { itemName: 'alpha', prId: 42, sentAt: '2025-01-01T00:00:00Z' },
+      },
+      eventLog: [],
+    });
+
+    await abandonVpr('feat/1-alpha');
+
+    const meta = await loadMeta();
+    const event = meta.eventLog.find(e => e.action === 'vpr.abandon');
+    assert.ok(event, 'vpr.abandon event must be in eventLog');
+    assert.strictEqual(event.actor, 'cli');
+    assert.strictEqual(event.detail.branchName, 'feat/1-alpha');
+    assert.strictEqual(event.detail.itemName, 'alpha');
+  });
 });
 
 // ---------------------------------------------------------------------------
