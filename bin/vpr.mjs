@@ -461,6 +461,23 @@ a slice's content has been folded into another (e.g. a squash).`);
     }
 
     // -----------------------------------------------------------------------
+    // vpr next  — list unblocked items
+    // -----------------------------------------------------------------------
+    case 'next': {
+      const { next: nextCmd } = await import('../src/commands/next.mjs');
+      const items = await nextCmd();
+      if (items.length === 0) {
+        console.log('(no ready items)');
+      } else {
+        for (const v of items) {
+          const wi = v.wi != null ? `wi#${v.wi}` : 'wi#-';
+          console.log(`${v.name}  ${wi}  (depth=${v.depth}, vprs=${v.vprCount})`);
+        }
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
     // vpr status  — human-readable overview
     // -----------------------------------------------------------------------
     case 'status': {
