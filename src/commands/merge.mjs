@@ -43,10 +43,9 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
   const srcClaims = srcMeta.claims ?? [];
 
   if (hasJj() && srcClaims.length > 0) {
-    // jj path: physically squash src commits into dst
-    for (const changeId of srcClaims) {
-      jjSafe(`squash --from ${changeId} --into ${dst} --quiet`);
-    }
+    // jj path: squash all src commits into dst in a single invocation
+    const range = srcClaims.join(' | ');
+    jjSafe(`squash --from "${range}" --into "${dst}" --quiet`);
   }
 
   // Meta update: transfer claims, apply optional title/story overrides, remove src
