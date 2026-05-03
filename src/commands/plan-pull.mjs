@@ -1,4 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
+import { TERMINAL_STATES } from '../providers/azure-devops.mjs';
 
 function slugify(title) {
   return title
@@ -41,6 +42,11 @@ export async function planPull(parentId, { provider }) {
     wisInMeta.set(item.wi, name);
   }
 
+  const wisInSent = new Set();
+  for (const rec of Object.values(meta.sent ?? {})) {
+    if (rec.wi != null) wisInSent.add(rec.wi);
+  }
+
   const results = [];
   for (const child of children) {
     if (!child) continue;
@@ -55,6 +61,15 @@ export async function planPull(parentId, { provider }) {
     }
     if (wisInMeta.has(child.id)) {
       results.push({ wi: child.id, status: 'exists', name: wisInMeta.get(child.id) });
+      continue;
+    }
+    if (wisInSent.has(child.id)) {
+      results.push({ wi: child.id, status: 'skipped', reason: 'already in sent' });
+      continue;
+    }
+    const wiDetails = provider.getWorkItem(child.id);
+    if (wiDetails && TERMINAL_STATES.includes(wiDetails.state)) {
+      results.push({ wi: child.id, status: 'skipped', reason: `terminal state: ${wiDetails.state}` });
       continue;
     }
     let name = slugify(child.title);
