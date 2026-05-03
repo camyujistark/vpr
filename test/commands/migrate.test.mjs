@@ -4,7 +4,7 @@
  */
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,19 @@ describe('migrateVprs()', () => {
     // The structure test verifies the contract for the jj env where it would throw.
     const result = await migrateVprs({ dryRun: false });
     assert.ok(Array.isArray(result.refused), 'refused should be an array');
+  });
+
+  it('writes a timestamped backup when mutations happen (jj env only)', async () => {
+    // Without jj, no mutations happen so no backup is written.
+    // This test verifies backup behavior is guarded by actual conversions.
+    const result = await migrateVprs({ dryRun: false });
+    const vprDir = join(tmpDir, '.vpr');
+    const backupFiles = readdirSync(vprDir).filter(f => f.startsWith('meta.json.pre-migrate-'));
+    if (result.converted.length > 0) {
+      assert.strictEqual(backupFiles.length, 1, 'should write exactly one backup');
+    } else {
+      assert.strictEqual(backupFiles.length, 0, 'no backup when nothing converted');
+    }
   });
 
   it('does not touch meta.sent records', async () => {
