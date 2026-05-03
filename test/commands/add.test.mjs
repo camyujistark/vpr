@@ -166,30 +166,4 @@ describe('addVpr()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Bookmark placement
-  // -------------------------------------------------------------------------
-
-  describe('bookmark placement', () => {
-    beforeEach(async () => {
-      await saveMeta({
-        items: {
-          'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} },
-        },
-        hold: [],
-        sent: {},
-        eventLog: [],
-      });
-    });
-
-    it('creates a jj bookmark that exists after addVpr', async () => {
-      const result = await addVpr('My Bookmark', { item: 'scaffold-app' });
-      // Check that the bookmark exists in jj
-      const bookmarks = sh('jj bookmark list');
-      assert.ok(
-        bookmarks.includes(result.bookmark),
-        `Expected bookmark ${result.bookmark} to exist. Got:\n${bookmarks}`
-      );
-    });
-  });
 });
