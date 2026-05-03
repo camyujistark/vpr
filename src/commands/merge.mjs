@@ -49,12 +49,14 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
     }
   }
 
-  // Meta update: transfer claims, remove src
+  // Meta update: transfer claims, apply optional title/story overrides, remove src
   const existingDstClaims = dstMeta.claims ?? [];
-  const merged = [...new Set([...existingDstClaims, ...srcClaims])];
-  if (merged.length > 0) {
-    meta.items[srcEntry.itemName].vprs[dst].claims = merged;
+  const mergedClaims = [...new Set([...existingDstClaims, ...srcClaims])];
+  if (mergedClaims.length > 0) {
+    meta.items[srcEntry.itemName].vprs[dst].claims = mergedClaims;
   }
+  if (title !== undefined) meta.items[srcEntry.itemName].vprs[dst].title = title;
+  if (story !== undefined) meta.items[srcEntry.itemName].vprs[dst].story = story;
   delete meta.items[srcEntry.itemName].vprs[src];
 
   await saveMeta(meta);

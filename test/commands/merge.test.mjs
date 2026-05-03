@@ -121,6 +121,28 @@ describe('mergeVpr()', () => {
     );
   });
 
+  it('AC8: dst title and story preserved when no overrides given', async () => {
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature' });
+    const meta = await loadMeta();
+    const dst = meta.items['my-item'].vprs['my-item/dst-feature'];
+    assert.equal(dst.title, 'Dst Feature', 'dst title preserved');
+    assert.equal(dst.story, '', 'dst story preserved');
+  });
+
+  it('AC9: --title overrides dst title in meta', async () => {
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature', title: 'New Title' });
+    const meta = await loadMeta();
+    const dst = meta.items['my-item'].vprs['my-item/dst-feature'];
+    assert.equal(dst.title, 'New Title');
+  });
+
+  it('AC10: --story overrides dst story in meta', async () => {
+    await mergeVpr('my-item/src-feature', { into: 'my-item/dst-feature', story: 'New story text' });
+    const meta = await loadMeta();
+    const dst = meta.items['my-item'].vprs['my-item/dst-feature'];
+    assert.equal(dst.story, 'New story text');
+  });
+
   it('AC3: refuses non-adjacent merge with clear error', async () => {
     // Setup: 3 VPRs in order: vpr-a, vpr-b, vpr-c
     // Merging vpr-a into vpr-c should fail (not adjacent)
