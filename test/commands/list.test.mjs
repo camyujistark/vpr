@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,13 +24,6 @@ function setupRepo() {
   sh('git init', tmpDir);
   sh('git config user.email "test@example.com"', tmpDir);
   sh('git config user.name "Test"', tmpDir);
-  sh('jj git init --colocate', tmpDir);
-
-  // Create a described commit so @ is described
-  writeFileSync(join(tmpDir, 'init.txt'), 'init\n');
-  sh('jj describe -m "chore: init"');
-  sh('jj new');
-
   mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
   process.chdir(tmpDir);
 }

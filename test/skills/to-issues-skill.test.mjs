@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const skillPath = join(homedir(), '.claude/skills/to-issues/SKILL.md');
+const SKILL_EXISTS = existsSync(skillPath);
 
-test('to-issues SKILL.md captures parentWi on vpr items and integrates with /to-prd', () => {
+test('to-issues SKILL.md captures parentWi on vpr items and integrates with /to-prd', { skip: !SKILL_EXISTS }, () => {
   const body = readFileSync(skillPath, 'utf8');
 
   // AC: to-issues SKILL.md updated to capture parentWi when creating vpr items

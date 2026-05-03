@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const JJ_AVAILABLE = (() => { try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
+
 // We need to import the module under test. Since it caches hasJj(), we import fresh each test
 // by using dynamic import with a cache-busting query string isn't supported in Node ESM.
 // Instead we test in a single suite, resetting cwd as needed.
@@ -27,7 +29,7 @@ function teardown() {
   }
 }
 
-describe('jj core helpers', () => {
+describe('jj core helpers', { skip: !JJ_AVAILABLE }, () => {
   before(() => {
     setup();
     // Change process cwd so jj commands run in the temp repo

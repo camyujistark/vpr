@@ -20,7 +20,6 @@ function setupRepo() {
   execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
-  execSync('jj git init --colocate', { cwd: tmpDir, stdio: 'pipe' });
   mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
   process.chdir(tmpDir);
 }

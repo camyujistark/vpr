@@ -9,6 +9,8 @@ import { join, basename } from 'node:path';
 
 import { init } from '../../src/commands/init.mjs';
 
+const JJ_AVAILABLE = (() => { try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -25,13 +27,14 @@ describe('init() — fresh git repo with no flags', () => {
   let tmpDir;
   let originalCwd;
 
-  before(() => {
+  before(async () => {
     originalCwd = process.cwd();
     tmpDir = mkdtempSync(join(tmpdir(), 'vpr-init-test-'));
     sh('git init', tmpDir);
     sh('git config user.email "test@example.com"', tmpDir);
     sh('git config user.name "Test"', tmpDir);
     process.chdir(tmpDir);
+    await init({});
   });
 
   after(() => {
@@ -39,19 +42,18 @@ describe('init() — fresh git repo with no flags', () => {
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('creates .jj directory (runs jj git init --colocate)', async () => {
-    await init({});
+  it('creates .jj directory (runs jj git init --colocate)', { skip: !JJ_AVAILABLE }, () => {
     assert.ok(existsSync(join(tmpDir, '.jj')), '.jj directory should exist');
   });
 
-  it('creates .vpr/config.json with provider "none"', async () => {
+  it('creates .vpr/config.json with provider "none"', () => {
     const configPath = join(tmpDir, '.vpr', 'config.json');
     assert.ok(existsSync(configPath), '.vpr/config.json should exist');
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     assert.strictEqual(config.provider, 'none');
   });
 
-  it('creates .vpr/meta.json with empty structure', async () => {
+  it('creates .vpr/meta.json with empty structure', () => {
     const metaPath = join(tmpDir, '.vpr', 'meta.json');
     assert.ok(existsSync(metaPath), '.vpr/meta.json should exist');
     const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
@@ -61,7 +63,7 @@ describe('init() — fresh git repo with no flags', () => {
     assert.deepStrictEqual(meta.eventLog, []);
   });
 
-  it('adds .vpr/ and .jj/ to .git/info/exclude', async () => {
+  it('adds .vpr/ and .jj/ to .git/info/exclude', () => {
     const excludePath = join(tmpDir, '.git', 'info', 'exclude');
     assert.ok(existsSync(excludePath), '.git/info/exclude should exist');
     const content = readFileSync(excludePath, 'utf-8');
@@ -69,7 +71,7 @@ describe('init() — fresh git repo with no flags', () => {
     assert.ok(content.includes('.jj/'), 'exclude should contain .jj/');
   });
 
-  it('configures jj snapshot.auto-track to exclude .vpr', async () => {
+  it('configures jj snapshot.auto-track to exclude .vpr', { skip: !JJ_AVAILABLE }, () => {
     const output = sh('jj config get snapshot.auto-track', tmpDir);
     assert.ok(output.includes('.vpr'), 'snapshot.auto-track should mention .vpr');
     assert.ok(output.includes('~'), 'snapshot.auto-track should use negation ~');
@@ -130,8 +132,9 @@ describe('init() — idempotent re-run', () => {
     sh('git init', tmpDir);
     sh('git config user.email "test@example.com"', tmpDir);
     sh('git config user.name "Test"', tmpDir);
-    // pre-init jj so .jj already exists
-    sh('jj git init --colocate', tmpDir);
+    if (JJ_AVAILABLE) {
+      sh('jj git init --colocate', tmpDir);
+    }
     process.chdir(tmpDir);
   });
 

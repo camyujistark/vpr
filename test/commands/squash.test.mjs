@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+
+const JJ_AVAILABLE = (() => { try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
 import { join } from 'node:path';
 
 import {
@@ -29,10 +31,9 @@ function setupRepo() {
   execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'pipe' });
-  // Create initial commit so git has a HEAD
   writeFileSync(join(tmpDir, 'README.md'), 'init');
   execSync('git add . && git commit -m "init"', { cwd: tmpDir, stdio: 'pipe' });
-  execSync('jj git init --colocate', { cwd: tmpDir, stdio: 'pipe' });
+  if (JJ_AVAILABLE) execSync('jj git init --colocate', { cwd: tmpDir, stdio: 'pipe' });
   mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
   process.chdir(tmpDir);
 }
@@ -112,7 +113,7 @@ describe('buildSquashContent() and parseSquashContent()', () => {
 // Integration tests — real jj repo
 // ---------------------------------------------------------------------------
 
-describe('squash integration', () => {
+describe('squash integration', { skip: !JJ_AVAILABLE }, () => {
   before(() => {
     originalCwd = process.cwd();
   });

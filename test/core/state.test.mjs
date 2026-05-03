@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { buildState } from '../../src/core/state.mjs';
 import { saveMeta } from '../../src/core/meta.mjs';
 
+const JJ_AVAILABLE = (() => { try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -69,7 +71,7 @@ function teardownRepo() {
 // Suite
 // ---------------------------------------------------------------------------
 
-describe('buildState()', () => {
+describe('buildState()', { skip: !JJ_AVAILABLE }, () => {
   before(() => {
     originalCwd = process.cwd();
   });

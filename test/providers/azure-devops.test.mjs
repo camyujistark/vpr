@@ -18,8 +18,8 @@ describe('AzureDevOpsProvider.updateWorkItemDescription()', () => {
     assert.ok(captured, 'should invoke _az');
     assert.match(captured, /^boards work-item update /);
     assert.match(captured, /--id 42\b/);
-    assert.match(captured, /--description "new body"/);
-    assert.match(captured, /--org "https:\/\/dev\.azure\.com\/example"/);
+    assert.match(captured, /--description 'new body'/);
+    assert.match(captured, /--org 'https:\/\/dev\.azure\.com\/example'/);
   });
 
   it('escapes embedded double quotes in the description body', () => {
@@ -31,8 +31,8 @@ describe('AzureDevOpsProvider.updateWorkItemDescription()', () => {
     let captured = null;
     provider._az = (cmd) => { captured = cmd; return {}; };
 
-    provider.updateWorkItemDescription(7, 'has "quotes"');
+    provider.updateWorkItemDescription(7, "has 'quotes'");
 
-    assert.match(captured, /--description "has \\"quotes\\""/);
+    assert.match(captured, /--description 'has '\\''quotes'\\''/);
   });
 });

@@ -8,6 +8,8 @@ import { join } from 'node:path';
 import { ticketHold } from '../../src/commands/ticket.mjs';
 import { saveMeta } from '../../src/core/meta.mjs';
 
+const JJ_AVAILABLE = (() => { try { execSync('which jj', { stdio: 'pipe' }); return true; } catch { return false; } })();
+
 let tmpDir;
 let originalCwd;
 
@@ -33,7 +35,7 @@ function teardownRepo() {
   }
 }
 
-describe('ticketHold() — detach-on-hold', () => {
+describe('ticketHold() — detach-on-hold', { skip: !JJ_AVAILABLE }, () => {
   before(() => {
     originalCwd = process.cwd();
   });
