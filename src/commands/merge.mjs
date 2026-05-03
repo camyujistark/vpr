@@ -25,6 +25,12 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
   const dstEntry = findVprEntry(meta, dst);
   if (!dstEntry) throw new Error(`VPR not found: ${dst}`);
 
+  if (srcEntry.itemName !== dstEntry.itemName) {
+    throw new Error(
+      `merge requires same item: src=${srcEntry.itemName}, dst=${dstEntry.itemName}`
+    );
+  }
+
   const srcMeta = srcEntry.vprMeta;
   const dstMeta = dstEntry.vprMeta;
   const srcClaims = srcMeta.claims ?? [];

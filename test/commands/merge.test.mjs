@@ -55,6 +55,15 @@ describe('mergeVpr()', () => {
             },
           },
         },
+        'other-item': {
+          wi: 2, wiTitle: 'Other Item',
+          vprs: {
+            'other-item/some-vpr': {
+              title: 'Some VPR', story: '', acceptance: '', output: null,
+              claims: [],
+            },
+          },
+        },
       },
       hold: [], sent: {}, eventLog: [],
     });
@@ -103,5 +112,12 @@ describe('mergeVpr()', () => {
     const dst = meta.items['my-item'].vprs['my-item/dst-feature'];
     assert.ok(dst, 'dst exists');
     assert.ok((dst.claims ?? []).includes('abc123'), 'src claims transferred');
+  });
+
+  it('AC2: refuses cross-item merge with clear error', async () => {
+    await assert.rejects(
+      () => mergeVpr('my-item/src-feature', { into: 'other-item/some-vpr' }),
+      /merge requires same item: src=my-item, dst=other-item/
+    );
   });
 });
