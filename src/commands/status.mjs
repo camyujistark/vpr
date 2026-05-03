@@ -21,36 +21,29 @@ function cyan(s) { return `${c.cyan}${s}${c.reset}`; }
 function gray(s) { return `${c.gray}${s}${c.reset}`; }
 
 /**
- * Print human-readable colored VPR status to console.
+ * Format state as a human-readable string (no color-stripping needed for tests).
+ * Exported for testability.
  *
- * Format:
- *   ITEM  wi#N  Title
- *     ✓  bookmark  "VPR Title"  (N commits)
- *     ·  bookmark  "VPR Title"  (N commits)
- *     !  bookmark  "VPR Title"  (N commits, conflict)
- *
- * Ungrouped and held commits are shown at the bottom.
- *
- * @returns {Promise<void>}
+ * @param {object} state - result of buildState()
+ * @returns {string}
  */
-export async function status() {
-  const state = await buildState();
+export function formatStatus(state) {
+  const lines = [];
 
   if (state.items.length === 0 && state.ungrouped.length === 0 && state.hold.length === 0) {
-    console.log(dim('No VPRs yet. Run `vpr add` to create one.'));
-    return;
+    lines.push(dim('No VPRs yet. Run `vpr add` to create one.'));
+    return lines.join('\n');
   }
 
-  // Active items first; held items rendered at the bottom (after ungrouped/hold).
   const activeItems = state.items.filter(i => !i.held);
   const heldItems = state.items.filter(i => i.held);
 
   for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
-    console.log(`${bold(cyan(item.name))}  ${wiLabel}  ${dim(item.wiTitle)}`);
+    lines.push(`${bold(cyan(item.name))}  ${wiLabel}  ${dim(item.wiTitle)}`);
 
     if (item.vprs.length === 0) {
-      console.log(`  ${dim('(no VPRs)')}`);
+      lines.push(`  ${dim('(no VPRs)')}`);
     }
 
     for (const vpr of item.vprs) {
@@ -64,43 +57,54 @@ export async function status() {
       }
 
       const count = vpr.commits.length;
-      const countStr = count === 1 ? '1 commit' : `${count} commits`;
+      const statusStr = count === 0
+        ? 'planned, no work yet'
+        : count === 1 ? '1 commit' : `${count} commits`;
       const conflictNote = vpr.conflict ? red(' conflict') : '';
       const sentNote = vpr.sent ? green(' sent') : '';
 
-      console.log(`  ${indicator}  ${bold(vpr.bookmark)}  ${dim(`"${vpr.title}"`)}  ${gray(`(${countStr}${conflictNote || sentNote})`)}`);
+      lines.push(`  ${indicator}  ${bold(vpr.bookmark)}  ${dim(`"${vpr.title}"`)}  ${gray(`(${statusStr}${conflictNote || sentNote})`)}`);
     }
 
-    console.log();
+    lines.push('');
   }
 
-  // Ungrouped commits (newest first for easy access)
   if (state.ungrouped.length > 0) {
-    console.log(bold(yellow('ungrouped')));
+    lines.push(bold(yellow('ungrouped')));
     for (const commit of [...state.ungrouped].reverse()) {
-      console.log(`  ${gray(commit.changeId)}  ${commit.subject}`);
+      lines.push(`  ${gray(commit.changeId)}  ${commit.subject}`);
     }
-    console.log();
+    lines.push('');
   }
 
-  // Held commits
   if (state.hold.length > 0) {
-    console.log(bold(gray('on hold')));
+    lines.push(bold(gray('on hold')));
     for (const commit of state.hold) {
-      console.log(`  ${gray(commit.changeId)}  ${dim(commit.subject)}`);
+      lines.push(`  ${gray(commit.changeId)}  ${dim(commit.subject)}`);
     }
-    console.log();
+    lines.push('');
   }
 
-  // Held items (parked tickets — at the bottom for visibility without focus)
   if (heldItems.length > 0) {
-    console.log(bold(gray('held tickets')));
+    lines.push(bold(gray('held tickets')));
     for (const item of heldItems) {
       const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
       const vprCount = item.vprs.length;
       const note = vprCount > 0 ? gray(` (${vprCount} VPR${vprCount === 1 ? '' : 's'})`) : '';
-      console.log(`  ${gray(item.name)}  ${wiLabel}  ${dim(item.wiTitle)}${note}`);
+      lines.push(`  ${gray(item.name)}  ${wiLabel}  ${dim(item.wiTitle)}${note}`);
     }
-    console.log();
+    lines.push('');
   }
+
+  return lines.join('\n');
+}
+
+/**
+ * Print human-readable colored VPR status to console.
+ *
+ * @returns {Promise<void>}
+ */
+export async function status() {
+  const state = await buildState();
+  console.log(formatStatus(state));
 }
