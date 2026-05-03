@@ -459,6 +459,29 @@ a slice's content has been folded into another (e.g. a squash).`);
     }
 
     // -----------------------------------------------------------------------
+    // vpr merge <src> --into <dst>  — fold one VPR into another
+    // -----------------------------------------------------------------------
+    case 'merge': {
+      const src = args[0];
+      const intoIdx = args.indexOf('--into');
+      const dst = intoIdx >= 0 ? args[intoIdx + 1] : undefined;
+      if (!src || !dst || src === '--help' || src === '-h') {
+        const stream = (!src || src === '--help' || src === '-h') ? console.log : console.error;
+        stream(`vpr merge <src> --into <dst>  — fold one VPR into another
+
+  vpr merge my-item/old-slice --into my-item/new-slice
+
+Transfers commits (claims) from src into dst. If jj is available, also
+runs jj squash to physically merge commits. src is removed from meta.`);
+        process.exit(src === '--help' || src === '-h' ? 0 : 1);
+      }
+      const { mergeVpr } = await import('../src/commands/merge.mjs');
+      await mergeVpr(src, dst);
+      console.log(`Merged ${src} → ${dst}`);
+      break;
+    }
+
+    // -----------------------------------------------------------------------
     // vpr clear --yes  — remove every VPR and item
     // -----------------------------------------------------------------------
     case 'clear': {
