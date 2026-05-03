@@ -257,6 +257,16 @@ describe('ticket commands', () => {
       assert.strictEqual(ev.action, 'ticket.done');
     });
 
+    it('AC9: event detail includes name, wi, force, checkMerged', async () => {
+      await ticketDone('scaffold-app');
+      const meta = await loadMeta();
+      const ev = meta.eventLog[meta.eventLog.length - 1];
+      assert.strictEqual(ev.detail.name, 'scaffold-app');
+      assert.strictEqual(ev.detail.wi, 10);
+      assert.strictEqual(ev.detail.force, false);
+      assert.strictEqual(ev.detail.checkMerged, false);
+    });
+
     it('refuses with clear error when item has unsent VPRs', async () => {
       await saveMeta({
         items: {

@@ -345,5 +345,5 @@ export async function ticketDone(name, opts = {}) {
     await provider.updateWorkItem(wi, { state: 'Done' });
   }
 
-  await appendEvent('cli', 'ticket.done', { name });
+  await appendEvent('cli', 'ticket.done', { name, wi, force, checkMerged });
 }
