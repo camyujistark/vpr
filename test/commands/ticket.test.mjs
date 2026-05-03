@@ -408,6 +408,42 @@ describe('ticket commands', () => {
 
       await assert.doesNotReject(() => ticketDone('scaffold-app'));
     });
+
+    it('AC7: stamps itemDone on all sent records for the item', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10-a': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+          'feat/10-b': { itemName: 'scaffold-app', prId: 2, sentAt: '2025-01-03T00:00:00Z', mergedAt: '2025-01-04T00:00:00Z' },
+          'feat/11-other': { itemName: 'other-item', prId: 3, sentAt: '2025-01-05T00:00:00Z', mergedAt: '2025-01-06T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      await ticketDone('scaffold-app');
+
+      const meta = await loadMeta();
+      assert.strictEqual(meta.sent['feat/10-a'].itemDone, true, 'feat/10-a should have itemDone');
+      assert.strictEqual(meta.sent['feat/10-b'].itemDone, true, 'feat/10-b should have itemDone');
+      assert.ok(!meta.sent['feat/11-other'].itemDone, 'other-item record untouched');
+    });
+
+    it('AC7: sent records NOT deleted', async () => {
+      await saveMeta({
+        items: { 'scaffold-app': { wi: 10, wiTitle: 'Scaffold App', vprs: {} } },
+        hold: [],
+        sent: {
+          'feat/10': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z', mergedAt: '2025-01-02T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      await ticketDone('scaffold-app');
+
+      const meta = await loadMeta();
+      assert.ok(meta.sent['feat/10'], 'sent record must not be deleted');
+    });
   });
 
   // -------------------------------------------------------------------------

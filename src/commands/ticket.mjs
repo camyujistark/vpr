@@ -334,6 +334,10 @@ export async function ticketDone(name, opts = {}) {
 
   const wi = meta.items[name].wi;
 
+  for (const rec of Object.values(meta.sent ?? {})) {
+    if (rec.itemName === name) rec.itemDone = true;
+  }
+
   delete meta.items[name];
   await saveMeta(meta);
 
