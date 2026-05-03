@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ const repoRoot = resolve(fileURLToPath(import.meta.url), '../../../');
 const vprBin = join(repoRoot, 'bin/vpr.mjs');
 
 function runVpr(args, cwd) {
-  return execSync(`node ${vprBin} ${args}`, { cwd, encoding: 'utf8' });
+  return execSync(`node ${vprBin} ${args}`, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 // ---------------------------------------------------------------------------
@@ -204,5 +204,116 @@ describe('vpr next CLI', () => {
     );
     const out = runVpr('next', cliTmpDir).trim();
     assert.strictEqual(out, 'alpha  wi#7  (depth=0, vprs=2)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: vpr next + vpr ticket edit --depends-on / --remove-depends-on
+// ---------------------------------------------------------------------------
+
+describe('integration: vpr next and ticket edit deps', () => {
+  let intTmpDir;
+  let intOriginalCwd;
+
+  before(() => {
+    intOriginalCwd = process.cwd();
+  });
+
+  after(() => {
+    process.chdir(intOriginalCwd);
+    if (intTmpDir) rmSync(intTmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    if (intTmpDir) rmSync(intTmpDir, { recursive: true, force: true });
+    intTmpDir = mkdtempSync(join(tmpdir(), 'vpr-int-'));
+    mkdirSync(join(intTmpDir, '.vpr'), { recursive: true });
+    // 3-item DAG: alpha (depth 0), beta depends on alpha (depth 1), gamma (depth 0)
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [],        vprs: { 'alpha/v1': {} } },
+          beta:  { wi: 2, wiTitle: 'Beta',  dependsOn: ['alpha'], vprs: {} },
+          gamma: { wi: 3, wiTitle: 'Gamma', dependsOn: [],        vprs: {} },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      })
+    );
+  });
+
+  it('(a) vpr next lists sorted unblocked items in 3-item DAG', () => {
+    const lines = runVpr('next', intTmpDir).trim().split('\n');
+    // alpha and gamma are ready (depth 0); beta is blocked
+    assert.strictEqual(lines.length, 2);
+    assert.ok(lines[0].startsWith('alpha'), `expected alpha first, got: ${lines[0]}`);
+    assert.ok(lines[1].startsWith('gamma'), `expected gamma second, got: ${lines[1]}`);
+  });
+
+  it('(b) --depends-on adds dep successfully', () => {
+    // Remove existing dep from beta, then re-add via CLI
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: [], vprs: {} },
+          beta:  { wi: 2, wiTitle: 'Beta',  dependsOn: [], vprs: {} },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      })
+    );
+    runVpr('ticket edit beta --depends-on alpha', intTmpDir);
+    const meta = JSON.parse(readFileSync(join(intTmpDir, '.vpr/meta.json'), 'utf8'));
+    assert.deepStrictEqual(meta.items.beta.dependsOn, ['alpha']);
+  });
+
+  it('(c) --depends-on cycle case exits non-zero with cycle message', () => {
+    // alpha already depends on nothing; gamma depends on nothing
+    // Set gamma to depend on alpha, then try to make alpha depend on gamma
+    writeFileSync(
+      join(intTmpDir, '.vpr/meta.json'),
+      JSON.stringify({
+        items: {
+          alpha: { wi: 1, wiTitle: 'Alpha', dependsOn: ['gamma'], vprs: {} },
+          gamma: { wi: 3, wiTitle: 'Gamma', dependsOn: [],        vprs: {} },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      })
+    );
+    try {
+      runVpr('ticket edit gamma --depends-on alpha', intTmpDir);
+      assert.fail('expected non-zero exit');
+    } catch (err) {
+      assert.ok(err.stderr?.includes('cycle') || err.stdout?.includes('cycle'),
+        `expected cycle in output, got: ${err.stderr}`);
+    }
+  });
+
+  it('(d) --depends-on unknown name exits non-zero with error message', () => {
+    try {
+      runVpr('ticket edit alpha --depends-on nonexistent', intTmpDir);
+      assert.fail('expected non-zero exit');
+    } catch (err) {
+      assert.ok(
+        err.stderr?.includes('nonexistent') || err.stdout?.includes('nonexistent'),
+        `expected name in error output, got: stderr=${err.stderr}`
+      );
+    }
+  });
+
+  it('(e) --remove-depends-on removes dep', () => {
+    const lines = runVpr('next', intTmpDir).trim().split('\n');
+    // beta is blocked by alpha initially
+    assert.ok(!lines.some(l => l.startsWith('beta')), 'beta should be blocked initially');
+
+    runVpr('ticket edit beta --remove-depends-on alpha', intTmpDir);
+    const lines2 = runVpr('next', intTmpDir).trim().split('\n');
+    assert.ok(lines2.some(l => l.startsWith('beta')), 'beta should be ready after dep removed');
   });
 });
