@@ -444,6 +444,35 @@ describe('ticket commands', () => {
       const meta = await loadMeta();
       assert.ok(meta.sent['feat/10'], 'sent record must not be deleted');
     });
+
+    it('AC5: --force bypasses preconditions but still stamps itemDone and calls provider', async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 10,
+            wiTitle: 'Scaffold App',
+            vprs: { 'scaffold-app/feat': { title: 'F', story: '' } },
+          },
+        },
+        hold: [],
+        sent: {
+          'feat/10-open': { itemName: 'scaffold-app', prId: 1, sentAt: '2025-01-01T00:00:00Z' },
+        },
+        eventLog: [],
+      });
+
+      let updateCalled = false;
+      const provider = {
+        updateWorkItem: async () => { updateCalled = true; },
+      };
+
+      await ticketDone('scaffold-app', { force: true, provider });
+
+      const meta = await loadMeta();
+      assert.ok(!meta.items['scaffold-app'], 'item removed');
+      assert.strictEqual(meta.sent['feat/10-open'].itemDone, true, 'itemDone stamped');
+      assert.ok(updateCalled, 'updateWorkItem called');
+    });
   });
 
   // -------------------------------------------------------------------------
