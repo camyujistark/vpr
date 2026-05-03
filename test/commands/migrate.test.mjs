@@ -82,4 +82,23 @@ describe('migrateVprs()', () => {
     const result = await migrateVprs({ dryRun: true });
     assert.strictEqual(result.dryRun, true);
   });
+
+  it('does not touch meta.sent records', async () => {
+    // Add a sent record that shares a name pattern with a VPR bookmark
+    await saveMeta({
+      items: {
+        'my-item': {
+          wi: 1, wiTitle: 'My Item',
+          vprs: { 'my-item/my-feature': { title: 'My Feature', story: '', acceptance: '', output: null } },
+        },
+      },
+      hold: [],
+      sent: { 'my-item/my-feature': { prId: 1, itemName: 'my-item', sentAt: '2026-01-01T00:00:00.000Z' } },
+      eventLog: [],
+    });
+    await migrateVprs({ dryRun: false });
+    const meta = await loadMeta();
+    assert.ok(meta.sent['my-item/my-feature'], 'sent record should be untouched');
+    assert.strictEqual(meta.sent['my-item/my-feature'].prId, 1, 'sent prId should be unchanged');
+  });
 });
