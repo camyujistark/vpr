@@ -1,4 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
+import { jjExportIfAvailable } from '../core/jj-detect.mjs';
 
 /**
  * Convert a title to a slug (lowercase, non-alphanum → hyphen, max 4 words).
@@ -73,6 +74,7 @@ export async function addVpr(title, { item, model, manual } = {}) {
   };
   await saveMeta(meta);
   await appendEvent('cli', 'vpr.add', { bookmark, item, title, manual: !!manual });
+  jjExportIfAvailable();
 
   return manual ? { bookmark, item, title, manual: true } : { bookmark, item, title };
 }

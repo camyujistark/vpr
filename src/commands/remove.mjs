@@ -1,5 +1,6 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { jjSafe } from '../core/jj.mjs';
+import { jjExportIfAvailable } from '../core/jj-detect.mjs';
 import { findVpr } from './edit.mjs';
 
 /**
@@ -39,6 +40,7 @@ export async function removeVpr(query) {
 
   await saveMeta(meta);
   await appendEvent('cli', 'vpr.remove', { bookmark, itemName });
+  jjExportIfAvailable();
 
   return { bookmark, itemName };
 }
