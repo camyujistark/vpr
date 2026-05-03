@@ -71,7 +71,10 @@ export function formatStatus(state, dagView = null, opts = {}) {
     const dagNode = dagView?.nodes?.get(item.name);
     const depthLabel = dagNode != null ? gray(` depth=${dagNode.depth}`) : '';
     const readyMarker = dagNode?.ready ? green(' ▶') : '';
-    lines.push(`${bold(cyan(item.name))}${readyMarker}  ${wiLabel}${depthLabel}  ${dim(item.wiTitle)}`);
+    const openPrs = Object.values(state.sent ?? {})
+      .filter(r => r.itemName === item.name && r.abandoned !== true && r.itemDone !== true).length;
+    const inFlightLabel = openPrs > 0 ? cyan(` (${openPrs} open)`) : '';
+    lines.push(`${bold(cyan(item.name))}${readyMarker}  ${wiLabel}${depthLabel}${inFlightLabel}  ${dim(item.wiTitle)}`);
 
     if (dagNode?.blockers?.length > 0) {
       lines.push(`  ${red('blocked by:')} ${dagNode.blockers.join(', ')}`);

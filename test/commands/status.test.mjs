@@ -140,6 +140,28 @@ describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
     assert.ok(output.includes('depth=1'), `leaf-item must show depth=1: ${output}`);
   });
 
+  it('shows in-flight indicator with open PR count for released items — AC3', () => {
+    const state = {
+      items: [{ name: 'in-flight-item', wi: 5, wiTitle: 'In Flight', held: false, vprs: [] }],
+      ungrouped: [],
+      hold: [],
+      conflicts: new Set(),
+      sent: {
+        'in-flight-item/pr-1': { itemName: 'in-flight-item', abandoned: false, itemDone: false },
+        'in-flight-item/pr-2': { itemName: 'in-flight-item', abandoned: false, itemDone: false },
+      },
+      eventLog: [],
+    };
+    const dagView = makeDagView({
+      'in-flight-item': makeItemView('in-flight-item', { released: true, ready: false, done: false }),
+    });
+    const output = formatStatus(state, dagView);
+    // Strip ANSI for content check
+    const stripped = output.replace(/\x1b\[[0-9;]*m/g, '');
+    // Should show "2 open" PRs indicator on the header line
+    assert.ok(stripped.includes('2 open'), `In-flight item must show "2 open": ${stripped}`);
+  });
+
   it('shows a visual ready marker on items where ready is true — AC2', () => {
     const state = makeTwoItemState('ready-item', 'blocked-item');
     const dagView = makeDagView({
