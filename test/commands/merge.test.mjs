@@ -205,3 +205,82 @@ describe('mergeVpr()', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Integration tests (AC13-16)
+// ---------------------------------------------------------------------------
+
+describe('integration: vpr merge', () => {
+  let intDir;
+  let intOrigCwd;
+
+  before(() => { intOrigCwd = process.cwd(); });
+  after(() => {
+    process.chdir(intOrigCwd);
+    if (intDir) rmSync(intDir, { recursive: true, force: true });
+  });
+  beforeEach(async () => {
+    if (intDir) rmSync(intDir, { recursive: true, force: true });
+    intDir = mkdtempSync(join(tmpdir(), 'vpr-merge-int-'));
+    mkdirSync(join(intDir, '.vpr'), { recursive: true });
+    process.chdir(intDir);
+    await saveMeta({
+      items: {
+        'item-a': {
+          wi: 1, wiTitle: 'A', dependsOn: [],
+          vprs: {
+            'item-a/vpr-1': { title: 'VPR 1', story: '', acceptance: '', output: null, claims: ['ch1', 'ch2'] },
+            'item-a/vpr-2': { title: 'VPR 2', story: '', acceptance: '', output: null, claims: ['ch3'] },
+          },
+        },
+        'item-b': {
+          wi: 2, wiTitle: 'B', dependsOn: [],
+          vprs: {
+            'item-b/vpr-x': { title: 'VPR X', story: '', acceptance: '', output: null, claims: [] },
+          },
+        },
+      },
+      hold: [], sent: {}, eventLog: [],
+    });
+  });
+
+  it('AC14: git fallback produces correct meta state (src removed, claims merged)', async () => {
+    // jj is not available in this env, so this always uses the git/meta-only path
+    await mergeVpr('item-a/vpr-1', { into: 'item-a/vpr-2' });
+    const meta = await loadMeta();
+    assert.ok(!meta.items['item-a'].vprs['item-a/vpr-1'], 'src record gone');
+    const dst = meta.items['item-a'].vprs['item-a/vpr-2'];
+    assert.ok(dst, 'dst exists');
+    const claims = dst.claims ?? [];
+    assert.ok(claims.includes('ch1'), 'ch1 transferred');
+    assert.ok(claims.includes('ch2'), 'ch2 transferred');
+    assert.ok(claims.includes('ch3'), 'ch3 preserved');
+  });
+
+  it('AC15: integration — refuses cross-item merge via CLI', () => {
+    const res = runVprResult('merge item-a/vpr-1 --into item-b/vpr-x', intDir);
+    assert.notStrictEqual(res.code, 0, 'should exit non-zero');
+    const combined = res.stdout + res.stderr;
+    assert.ok(combined.match(/merge requires same item/i), `expected cross-item error, got: ${combined}`);
+  });
+
+  it('AC16: integration — refuses non-adjacent merge via CLI', async () => {
+    await saveMeta({
+      items: {
+        'item-c': {
+          wi: 3, wiTitle: 'C', dependsOn: [],
+          vprs: {
+            'item-c/vpr-x': { title: 'X', story: '', acceptance: '', output: null, claims: [] },
+            'item-c/vpr-y': { title: 'Y', story: '', acceptance: '', output: null, claims: [] },
+            'item-c/vpr-z': { title: 'Z', story: '', acceptance: '', output: null, claims: [] },
+          },
+        },
+      },
+      hold: [], sent: {}, eventLog: [],
+    });
+    const res = runVprResult('merge item-c/vpr-x --into item-c/vpr-z', intDir);
+    assert.notStrictEqual(res.code, 0, 'should exit non-zero');
+    const combined = res.stdout + res.stderr;
+    assert.ok(combined.match(/adjacent/i), `expected adjacency error, got: ${combined}`);
+  });
+});
