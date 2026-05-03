@@ -162,6 +162,31 @@ describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
     assert.ok(stripped.includes('2 open'), `In-flight item must show "2 open": ${stripped}`);
   });
 
+  it('held items appear after sent (in-flight) items but before done items with showAll — AC4', () => {
+    const state = {
+      items: [
+        { name: 'done-item', wi: 1, wiTitle: 'Done', held: false, vprs: [] },
+        { name: 'held-item', wi: 2, wiTitle: 'Held', held: true, vprs: [] },
+        { name: 'in-flight-item', wi: 3, wiTitle: 'In Flight', held: false, vprs: [] },
+      ],
+      ungrouped: [], hold: [], conflicts: new Set(), sent: {}, eventLog: [],
+    };
+    const dagView = makeDagView({
+      'done-item': makeItemView('done-item', { done: true, ready: false }),
+      'held-item': makeItemView('held-item', { ready: false }),
+      'in-flight-item': makeItemView('in-flight-item', { released: true, ready: false }),
+    });
+    const output = formatStatus(state, dagView, { showAll: true });
+    const inFlightPos = output.indexOf('in-flight-item');
+    const heldPos = output.indexOf('held-item');
+    const donePos = output.indexOf('done-item');
+    assert.ok(inFlightPos !== -1, `in-flight-item must appear: ${output}`);
+    assert.ok(heldPos !== -1, `held-item must appear: ${output}`);
+    assert.ok(donePos !== -1, `done-item must appear (showAll): ${output}`);
+    assert.ok(inFlightPos < heldPos, `in-flight (${inFlightPos}) must come before held (${heldPos})`);
+    assert.ok(heldPos < donePos, `held (${heldPos}) must come before done (${donePos})`);
+  });
+
   it('shows a visual ready marker on items where ready is true — AC2', () => {
     const state = makeTwoItemState('ready-item', 'blocked-item');
     const dagView = makeDagView({

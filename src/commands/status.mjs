@@ -56,15 +56,15 @@ export function formatStatus(state, dagView = null, opts = {}) {
   const nonHeld = state.items.filter(i => !i.held);
   const heldItems = state.items.filter(i => i.held);
 
-  // Hide done items unless showAll requested
-  const visibleNonHeld = (dagView && !showAll)
-    ? nonHeld.filter(i => !dagView.nodes?.get(i.name)?.done)
-    : nonHeld;
+  // Separate done items so they render after held items (AC4: ready→in-flight→hold→done)
+  const isDoneItem = (i) => dagView?.nodes?.get(i.name)?.done === true;
+  const activeNonDone = nonHeld.filter(i => !isDoneItem(i));
+  const doneItems = showAll ? nonHeld.filter(isDoneItem) : [];
 
-  // Sort non-held items by lifecycle group when dagView available
+  // Sort active items by lifecycle group when dagView available
   const activeItems = dagView
-    ? [...visibleNonHeld].sort((a, b) => lifecycleRank(dagView, a.name) - lifecycleRank(dagView, b.name))
-    : visibleNonHeld;
+    ? [...activeNonDone].sort((a, b) => lifecycleRank(dagView, a.name) - lifecycleRank(dagView, b.name))
+    : activeNonDone;
 
   for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
@@ -130,6 +130,15 @@ export function formatStatus(state, dagView = null, opts = {}) {
       const vprCount = item.vprs.length;
       const note = vprCount > 0 ? gray(` (${vprCount} VPR${vprCount === 1 ? '' : 's'})`) : '';
       lines.push(`  ${gray(item.name)}  ${wiLabel}  ${dim(item.wiTitle)}${note}`);
+    }
+    lines.push('');
+  }
+
+  if (doneItems.length > 0) {
+    lines.push(bold(gray('done')));
+    for (const item of doneItems) {
+      const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
+      lines.push(`  ${gray(item.name)}  ${wiLabel}  ${dim(item.wiTitle)}`);
     }
     lines.push('');
   }
