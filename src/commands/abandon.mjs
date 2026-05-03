@@ -1,5 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
-import { analyze, downstream, status as dagStatus } from '../core/dag.mjs';
+import { analyze, downstream } from '../core/dag.mjs';
 import { isReleased } from '../core/lifecycle.mjs';
 
 /**
@@ -24,22 +24,23 @@ export async function abandonVpr(branchName) {
 
   const itemName = sentRecord.itemName;
 
-  // Snapshot released state before abandonment
-  const downstreamNames = downstream(itemName, meta);
-  const releasedBefore = new Set(
-    downstreamNames.filter(n => isReleased(n, meta.sent))
-  );
+  // Snapshot: was itemName released before this abandonment?
+  const wasReleased = isReleased(itemName, meta.sent);
 
-  // Mark abandoned
+  // Mark abandoned (audit trail preserved — record stays in meta.sent)
   sentRecord.abandoned = true;
   sentRecord.abandonedAt = new Date().toISOString();
 
-  // Compute newly-blocked: downstream items that were released and are now not
-  const view = analyze(meta);
-  const newlyBlocked = downstreamNames
-    .filter(n => releasedBefore.has(n) && !view.nodes.get(n)?.released)
-    .map(n => view.nodes.get(n))
-    .filter(Boolean);
+  // Compute newly-blocked: only possible if itemName flipped released → not-released
+  let newlyBlocked = [];
+  if (wasReleased && !isReleased(itemName, meta.sent)) {
+    const downstreamNames = downstream(itemName, meta);
+    const view = analyze(meta);
+    newlyBlocked = downstreamNames
+      .filter(n => view.nodes.get(n)?.blockers.includes(itemName))
+      .map(n => view.nodes.get(n))
+      .filter(Boolean);
+  }
 
   await saveMeta(meta);
   await appendEvent('cli', 'vpr.abandon', { branchName, itemName });
