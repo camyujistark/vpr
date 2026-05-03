@@ -36,6 +36,57 @@ function teardownRepo() {
   }
 }
 
+describe('addVpr() — duplicate rejection', () => {
+  before(() => { originalCwd = process.cwd(); });
+  after(() => { process.chdir(originalCwd); teardownRepo(); });
+
+  beforeEach(async () => {
+    if (originalCwd) process.chdir(originalCwd);
+    teardownRepo();
+    setupGitOnlyRepo();
+  });
+
+  it('rejects a VPR whose bookmark already exists in meta.items', async () => {
+    await saveMeta({
+      items: {
+        'my-item': {
+          wi: 1, wiTitle: 'My Item',
+          vprs: { 'my-item/my-feature': { title: 'My Feature', story: '', acceptance: '', output: null } },
+        },
+      },
+      hold: [], sent: {}, eventLog: [],
+    });
+    await assert.rejects(
+      () => addVpr('My Feature', { item: 'my-item' }),
+      /already exists/i
+    );
+  });
+
+  it('rejects a VPR whose bookmark already exists in meta.sent', async () => {
+    await saveMeta({
+      items: { 'my-item': { wi: 1, wiTitle: 'My Item', vprs: {} } },
+      hold: [],
+      sent: { 'my-item/my-feature': { prId: 1, itemName: 'my-item', sentAt: '2026-01-01T00:00:00.000Z' } },
+      eventLog: [],
+    });
+    await assert.rejects(
+      () => addVpr('My Feature', { item: 'my-item' }),
+      /already exists/i
+    );
+  });
+
+  it('succeeds when the bookmark name is unique across items and sent', async () => {
+    await saveMeta({
+      items: { 'my-item': { wi: 1, wiTitle: 'My Item', vprs: {} } },
+      hold: [],
+      sent: { 'my-item/other-feature': { prId: 1, itemName: 'my-item', sentAt: '2026-01-01T00:00:00.000Z' } },
+      eventLog: [],
+    });
+    const result = await addVpr('My Feature', { item: 'my-item' });
+    assert.strictEqual(result.bookmark, 'my-item/my-feature');
+  });
+});
+
 describe('addVpr() — git-first (no jj)', () => {
   before(() => {
     originalCwd = process.cwd();

@@ -45,6 +45,16 @@ export async function addVpr(title, { item, model, manual } = {}) {
   const slug = slugify(title);
   const bookmark = `${item}/${slug}`;
 
+  // Reject if the bookmark name is already in use (items or sent)
+  for (const itemData of Object.values(meta.items)) {
+    if (Object.prototype.hasOwnProperty.call(itemData.vprs ?? {}, bookmark)) {
+      throw new Error(`VPR '${bookmark}' already exists in meta.items`);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(meta.sent ?? {}, bookmark)) {
+    throw new Error(`VPR '${bookmark}' already exists in meta.sent`);
+  }
+
   // Register in meta
   meta.items[item].vprs[bookmark] = {
     title,
