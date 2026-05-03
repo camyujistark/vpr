@@ -290,13 +290,26 @@ export async function ticketUpdate(name, { provider }) {
 }
 
 /**
- * Delete an item from meta.
+ * Mark an item as done — validates preconditions then stamps sent records and
+ * removes the item from meta.items.
+ *
  * @param {string} name
+ * @param {{ provider?: object, force?: boolean, checkMerged?: boolean }} [opts]
  * @returns {Promise<void>}
  */
-export async function ticketDone(name) {
+export async function ticketDone(name, opts = {}) {
+  const { force = false } = opts;
   const meta = await loadMeta();
   if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+
+  if (!force) {
+    const unsentBookmarks = Object.keys(meta.items[name].vprs ?? {});
+    if (unsentBookmarks.length > 0) {
+      throw new Error(
+        `Cannot mark done — unsent VPRs still in items.vprs: ${unsentBookmarks.join(', ')}`
+      );
+    }
+  }
 
   delete meta.items[name];
   await saveMeta(meta);

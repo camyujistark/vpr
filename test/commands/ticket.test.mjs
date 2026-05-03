@@ -256,6 +256,50 @@ describe('ticket commands', () => {
       const ev = meta.eventLog[meta.eventLog.length - 1];
       assert.strictEqual(ev.action, 'ticket.done');
     });
+
+    it('refuses with clear error when item has unsent VPRs', async () => {
+      await saveMeta({
+        items: {
+          'scaffold-app': {
+            wi: 10,
+            wiTitle: 'Scaffold App',
+            vprs: {
+              'scaffold-app/feature-a': { title: 'Feature A', story: '' },
+              'scaffold-app/feature-b': { title: 'Feature B', story: '' },
+            },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      });
+
+      await assert.rejects(
+        () => ticketDone('scaffold-app'),
+        /scaffold-app\/feature-a.*scaffold-app\/feature-b|scaffold-app\/feature-b.*scaffold-app\/feature-a/
+      );
+    });
+
+    it('does not mutate meta when refusing due to unsent VPRs', async () => {
+      const initial = {
+        items: {
+          'scaffold-app': {
+            wi: 10,
+            wiTitle: 'Scaffold App',
+            vprs: { 'scaffold-app/feat': { title: 'F', story: '' } },
+          },
+        },
+        hold: [],
+        sent: {},
+        eventLog: [],
+      };
+      await saveMeta(initial);
+
+      await assert.rejects(() => ticketDone('scaffold-app'), /unsent/i);
+
+      const meta = await loadMeta();
+      assert.ok(meta.items['scaffold-app'], 'item should still exist');
+    });
   });
 
   // -------------------------------------------------------------------------
