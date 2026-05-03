@@ -68,7 +68,13 @@ export function formatStatus(state, dagView = null, opts = {}) {
 
   for (const item of activeItems) {
     const wiLabel = item.wi ? gray(`wi#${item.wi}`) : '';
-    lines.push(`${bold(cyan(item.name))}  ${wiLabel}  ${dim(item.wiTitle)}`);
+    const dagNode = dagView?.nodes?.get(item.name);
+    const depthLabel = dagNode != null ? gray(` depth=${dagNode.depth}`) : '';
+    lines.push(`${bold(cyan(item.name))}  ${wiLabel}${depthLabel}  ${dim(item.wiTitle)}`);
+
+    if (dagNode?.blockers?.length > 0) {
+      lines.push(`  ${red('blocked by:')} ${dagNode.blockers.join(', ')}`);
+    }
 
     if (item.vprs.length === 0) {
       lines.push(`  ${dim('(no VPRs)')}`);

@@ -116,6 +116,29 @@ describe('formatStatus lifecycle grouping (tui-state-viz)', () => {
     assert.ok(output.includes('done-item'), `Done items must appear with showAll: ${output}`);
     assert.ok(output.includes('ready-item'), `Ready items must still appear: ${output}`);
   });
+
+  it('shows blocker names on items with unmet dependencies — AC6', () => {
+    const state = makeTwoItemState('blocking-item', 'blocked-item');
+    const dagView = makeDagView({
+      'blocking-item': makeItemView('blocking-item', { ready: true, released: false }),
+      'blocked-item': makeItemView('blocked-item', { ready: false, blockers: ['blocking-item'] }),
+    });
+    const output = formatStatus(state, dagView);
+    // The blocked item should list its blocker
+    const blockedItemSection = output.slice(output.indexOf('blocked-item'));
+    assert.ok(blockedItemSection.includes('blocking-item'), `Blocker name must appear near blocked item: ${output}`);
+  });
+
+  it('shows chain depth on items — AC7', () => {
+    const state = makeTwoItemState('root-item', 'leaf-item');
+    const dagView = makeDagView({
+      'root-item': makeItemView('root-item', { depth: 0, ready: true }),
+      'leaf-item': makeItemView('leaf-item', { depth: 1, ready: true }),
+    });
+    const output = formatStatus(state, dagView);
+    assert.ok(output.includes('depth=0'), `root-item must show depth=0: ${output}`);
+    assert.ok(output.includes('depth=1'), `leaf-item must show depth=1: ${output}`);
+  });
 });
 
 // ---------------------------------------------------------------------------
