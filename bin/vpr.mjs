@@ -118,6 +118,7 @@ VPR v2 — Virtual Pull Request Manager
     vpr send --dry-run              Preview
     vpr abandon <branchName>        Mark a sent VPR as abandoned (audit trail preserved)
     vpr merge <src> --into <dst>    Squash src VPR into adjacent dst VPR
+    vpr move <changeId> --to <vpr>  Surgically re-parent a commit to another VPR (requires jj)
 
   Ralph:
     vpr ralph <item> <max-iter>     TDD loop. Default: Docker sandbox via
@@ -457,16 +458,52 @@ a slice's content has been folded into another (e.g. a squash).`);
     }
 
     // -----------------------------------------------------------------------
-    // vpr move <commit>  — surgically re-parent a commit (requires jj)
+    // vpr move <changeId> --to <vpr>  — surgically re-parent a commit (requires jj)
     // -----------------------------------------------------------------------
     case 'move': {
-      const { hasJj } = await import('../src/core/jj-detect.mjs');
-      if (!hasJj()) {
+      const { hasJj: hasJjMove } = await import('../src/core/jj-detect.mjs');
+      if (!hasJjMove()) {
         console.error('Install jj for surgical commit moves');
         process.exit(1);
       }
-      console.error('vpr move: not yet implemented');
-      process.exit(1);
+      if (args[0] === '--help' || args[0] === '-h') {
+        console.log(`vpr move <changeId> --to <vpr>  — surgically re-parent a commit
+
+  vpr move <changeId> --to <vpr>   Move commit to a different VPR in the same item.
+                                   Rolls back atomically if rebase produces conflicts.
+                                   Requires jj.`);
+        process.exit(0);
+      }
+      const changeId = args[0];
+      if (!changeId) {
+        console.error('Usage: vpr move <changeId> --to <vpr>');
+        process.exit(1);
+      }
+      const flags = parseFlags(args.slice(1));
+      const toVpr = flags['to'];
+      if (!toVpr) {
+        console.error('Usage: vpr move <changeId> --to <vpr>');
+        process.exit(1);
+      }
+      const { moveCommit } = await import('../src/commands/move.mjs');
+      const result = await moveCommit(changeId, { toVpr });
+      if (result.moved) {
+        console.log(`Moved ${changeId} → ${toVpr}`);
+      } else {
+        console.error(`Conflict: could not move ${changeId} to ${toVpr}`);
+        if (result.conflicts.length > 0) {
+          console.error('Conflicting files:');
+          for (const f of result.conflicts) console.error(`  ${f}`);
+        }
+        if (result.suggestions.length > 0) {
+          console.error('Clean alternative targets:');
+          for (const s of result.suggestions) console.error(`  ${s}`);
+        } else {
+          console.error('No clean alternative targets found.');
+        }
+        process.exit(1);
+      }
+      break;
     }
 
     // -----------------------------------------------------------------------

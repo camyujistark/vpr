@@ -54,10 +54,8 @@ describe('vpr move — requires jj', () => {
   after(teardown);
 
   it('exits with "Install jj for surgical commit moves" when jj is not in PATH', () => {
-    // Since jj is not installed in this test environment, vpr move should exit
-    // with the expected message.
     try {
-      execSync(`node ${vprBin} move abc123`, {
+      execSync(`node ${vprBin} move abc123 --to my-vpr`, {
         cwd: tmpDir, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
       });
       assert.fail('Expected vpr move to exit non-zero');
@@ -69,5 +67,12 @@ describe('vpr move — requires jj', () => {
       );
       assert.notStrictEqual(err.status, 0, 'Expected non-zero exit code');
     }
+  });
+
+  it('vpr --help includes vpr move (AC9)', () => {
+    const out = execSync(`node ${vprBin} --help`, {
+      encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    assert.ok(out.includes('vpr move'), `--help missing "vpr move": ${out}`);
   });
 });
