@@ -939,6 +939,11 @@ Faster startup, no isolation. Use when you trust the slice + want speed.`);
     // vpr recover — restore jj from the pre-ralph snapshot
     // -----------------------------------------------------------------------
     case 'recover': {
+      const { hasJj: hasJjRecover } = await import('../src/core/jj-detect.mjs');
+      if (!hasJjRecover()) {
+        console.error('Install jj for surgical commit moves');
+        process.exit(1);
+      }
       const flags = parseFlags(args);
       const { readSnapshot, restoreFromSnapshot } = await import('../src/core/jj-snapshot.mjs');
       const snap = readSnapshot();
