@@ -78,6 +78,8 @@ VPR v2 — Virtual Pull Request Manager
     vpr ticket list                 List items
     vpr ticket edit <name>          Edit item
     vpr ticket done <name>          Close item
+    vpr ticket done <name> --check-merged  Poll provider for merge status first
+    vpr ticket done <name> --force         Bypass preconditions
     vpr ticket hold <name>          Park item — moves to bottom of vpr status
     vpr ticket unhold <name>        Restore a held item
     vpr ticket stories <name> --prd <path>   Extract "## User Stories" from
@@ -193,6 +195,8 @@ try {
   vpr ticket list                        List items (JSON)
   vpr ticket edit <name>                 Edit item interactively
   vpr ticket done <name>                 Close item
+  vpr ticket done <name> --check-merged  Poll provider for merge status first
+  vpr ticket done <name> --force         Bypass preconditions
   vpr ticket hold <name>                 Park item — drops to bottom of status
   vpr ticket unhold <name>               Restore a held item
 
@@ -258,10 +262,16 @@ Pass --help to any subcommand for its own usage.`);
         case 'done': {
           const name = ticketArgs[0];
           if (!name) {
-            console.error('Usage: vpr ticket done <name>');
+            console.error('Usage: vpr ticket done <name> [--check-merged] [--force]');
             process.exit(1);
           }
-          await ticketDone(name);
+          const doneFlags = parseFlags(ticketArgs.slice(1));
+          await ticketDone(name, {
+            provider,
+            force: Boolean(doneFlags['force']),
+            checkMerged: Boolean(doneFlags['check-merged']),
+          });
+          console.log(`Done: ${name}`);
           break;
         }
 
