@@ -120,4 +120,26 @@ describe('mergeVpr()', () => {
       /merge requires same item: src=my-item, dst=other-item/
     );
   });
+
+  it('AC3: refuses non-adjacent merge with clear error', async () => {
+    // Setup: 3 VPRs in order: vpr-a, vpr-b, vpr-c
+    // Merging vpr-a into vpr-c should fail (not adjacent)
+    await saveMeta({
+      items: {
+        'chain-item': {
+          wi: 3, wiTitle: 'Chain Item',
+          vprs: {
+            'chain-item/vpr-a': { title: 'A', story: '', acceptance: '', output: null, claims: [] },
+            'chain-item/vpr-b': { title: 'B', story: '', acceptance: '', output: null, claims: [] },
+            'chain-item/vpr-c': { title: 'C', story: '', acceptance: '', output: null, claims: [] },
+          },
+        },
+      },
+      hold: [], sent: {}, eventLog: [],
+    });
+    await assert.rejects(
+      () => mergeVpr('chain-item/vpr-a', { into: 'chain-item/vpr-c' }),
+      /src and dst must be adjacent VPRs/
+    );
+  });
 });

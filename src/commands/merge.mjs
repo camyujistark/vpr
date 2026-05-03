@@ -31,6 +31,13 @@ export async function mergeVpr(src, { into: dst, title, story } = {}) {
     );
   }
 
+  const vprKeys = Object.keys(meta.items[srcEntry.itemName].vprs ?? {});
+  const srcIdx = vprKeys.indexOf(src);
+  const dstIdx = vprKeys.indexOf(dst);
+  if (Math.abs(srcIdx - dstIdx) !== 1) {
+    throw new Error('src and dst must be adjacent VPRs');
+  }
+
   const srcMeta = srcEntry.vprMeta;
   const dstMeta = dstEntry.vprMeta;
   const srcClaims = srcMeta.claims ?? [];
