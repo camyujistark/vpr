@@ -1,11 +1,12 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { moveCommit } from '../../src/commands/move.mjs';
+import { hasJj } from '../../src/core/jj-detect.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../');
 const vprBin = join(repoRoot, 'bin/vpr.mjs');
@@ -41,6 +42,38 @@ describe('moveCommit — module export', () => {
       (err) => {
         assert.ok(
           err.message.includes('Install jj for surgical commit moves'),
+          `unexpected message: ${err.message}`
+        );
+        return true;
+      }
+    );
+  });
+});
+
+describe('moveCommit — AC14: non-existent target VPR', () => {
+  before(() => { originalCwd = process.cwd(); setup(); });
+  after(teardown);
+
+  it('throws "No such VPR: <name>" when target VPR not in meta (AC14)', { skip: !hasJj() }, async () => {
+    // Write a meta with a known VPR so the jj check passes first
+    const meta = {
+      items: {
+        'my-item': {
+          wi: 1,
+          vprs: { 'real-vpr': { title: 'Real VPR', claims: [] } },
+          dependsOn: [],
+        },
+      },
+      hold: [],
+      sent: {},
+      eventLog: [],
+    };
+    writeFileSync(join(tmpDir, '.vpr', 'meta.json'), JSON.stringify(meta));
+    await assert.rejects(
+      () => moveCommit('abc123', { toVpr: 'nonexistent-vpr' }),
+      (err) => {
+        assert.ok(
+          err.message.includes('No such VPR: nonexistent-vpr'),
           `unexpected message: ${err.message}`
         );
         return true;
