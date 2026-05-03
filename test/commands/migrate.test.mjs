@@ -83,6 +83,13 @@ describe('migrateVprs()', () => {
     assert.strictEqual(result.dryRun, true);
   });
 
+  it('result includes refused array', async () => {
+    // In no-jj environment there are no anchors to inspect, so refused is always empty.
+    // The structure test verifies the contract for the jj env where it would throw.
+    const result = await migrateVprs({ dryRun: false });
+    assert.ok(Array.isArray(result.refused), 'refused should be an array');
+  });
+
   it('does not touch meta.sent records', async () => {
     // Add a sent record that shares a name pattern with a VPR bookmark
     await saveMeta({

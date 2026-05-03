@@ -28,15 +28,17 @@ import { jjExportIfAvailable } from '../core/jj-detect.mjs';
  * Writes a timestamped backup before any mutation.
  *
  * @param {{ dryRun?: boolean }} opts
- * @returns {Promise<{ converted: string[], skipped: string[], dryRun: boolean }>}
+ * @returns {Promise<{ converted: string[], skipped: string[], refused: string[], dryRun: boolean }>}
+ * @throws {Error} if any anchor commit has a non-empty diff
  */
 export async function migrateVprs({ dryRun = false } = {}) {
   const meta = await loadMeta();
   const converted = [];
   const skipped = [];
+  const refused = [];
 
   if (!hasJj()) {
-    return { converted, skipped, dryRun };
+    return { converted, skipped, refused, dryRun };
   }
 
   // Collect all VPR bookmark names from meta.items (exclude meta.sent)
@@ -47,40 +49,51 @@ export async function migrateVprs({ dryRun = false } = {}) {
     }
   }
 
+  // First pass: classify each bookmark. Refuse before any mutation if any
+  // anchor has real work (non-empty diff).
   for (const bookmark of vprBookmarks) {
-    // Check if this bookmark exists in jj as a local bookmark
     const bookmarkRef = jjSafe(`log -r '${bookmark}' --no-graph --template 'commit_id.short()'`);
     if (!bookmarkRef) {
-      // No jj bookmark — already new-shape, skip
       skipped.push(`${bookmark} (no jj bookmark)`);
       continue;
     }
 
-    // Check if the commit is empty (no diff)
     const diff = jjSafe(`diff -r '${bookmark}' --summary`);
     const isEmpty = !diff || diff.trim() === '';
     if (!isEmpty) {
-      // Non-empty anchor — refuse to touch it (handled by caller for error)
-      skipped.push(`${bookmark} (non-empty diff, skipped)`);
+      // Non-empty: get change_id and subject for the error message
+      const subject = jjSafe(`log -r '${bookmark}' --no-graph --template 'change_id.short() ++ " " ++ description.first_line()'`) ?? bookmark;
+      refused.push(subject);
       continue;
     }
 
-    if (!dryRun) {
-      // Write backup before first mutation
-      if (converted.length === 0) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = join(process.cwd(), `.vpr/meta.json.pre-migrate-${ts}`);
-        writeFileSync(backupPath, JSON.stringify(meta, null, 2), 'utf-8');
-      }
-      jjSafe(`bookmark delete ${bookmark}`);
-    }
     converted.push(bookmark);
   }
 
-  if (!dryRun && converted.length > 0) {
-    await appendEvent('cli', 'vpr.migrate', { converted, skipped });
-    jjExportIfAvailable();
+  // Refuse if any non-empty anchors found — don't mutate anything
+  if (refused.length > 0) {
+    throw new Error(
+      `vpr migrate refused: anchor commits with real work detected:\n` +
+      refused.map(r => `  ${r}`).join('\n') +
+      `\nCommit those changes to a named VPR before migrating.`
+    );
   }
 
-  return { converted, skipped, dryRun };
+  if (!dryRun) {
+    // Write backup before first mutation
+    if (converted.length > 0) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(process.cwd(), `.vpr/meta.json.pre-migrate-${ts}`);
+      writeFileSync(backupPath, JSON.stringify(meta, null, 2), 'utf-8');
+    }
+    for (const bookmark of converted) {
+      jjSafe(`bookmark delete ${bookmark}`);
+    }
+    if (converted.length > 0) {
+      await appendEvent('cli', 'vpr.migrate', { converted, skipped });
+      jjExportIfAvailable();
+    }
+  }
+
+  return { converted, skipped, refused, dryRun };
 }
