@@ -955,10 +955,27 @@ Faster startup, no isolation. Use when you trust the slice + want speed.`);
           if (opId) console.log(`→ jj op snapshot: ${opId} (recover with: vpr recover)`);
         } catch { /* not jj-colocated — skip */ }
 
+        // Resolve model: use VPR slice's `model` field (first non-empty among
+        // the item's slices) unless the caller already set SANDCASTLE_MODEL.
+        let ralphModel = process.env.SANDCASTLE_MODEL;
+        if (!ralphModel) {
+          try {
+            const metaPath = join(process.cwd(), '.vpr', 'meta.json');
+            if (existsSync(metaPath)) {
+              const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+              const vprs = Object.values(meta?.items?.[item]?.vprs ?? {});
+              const found = vprs.find(v => v.model && v.model.trim());
+              if (found) ralphModel = found.model.trim();
+            }
+          } catch { /* meta unreadable — fall through to template default */ }
+        }
+
         const childArgs = ['tsx', sandcastleMain, item];
+        const spawnEnv = { ...process.env, SANDCASTLE_MAX_ITER: maxIter };
+        if (ralphModel) spawnEnv.SANDCASTLE_MODEL = ralphModel;
         const result = spawnSync('npx', childArgs, {
           stdio: 'inherit',
-          env: { ...process.env, SANDCASTLE_MAX_ITER: maxIter },
+          env: spawnEnv,
         });
 
         // Post-ralph: auto-advance slice bookmarks based on Ralph-Slice

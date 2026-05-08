@@ -16,10 +16,6 @@ Working item: !`cat .vpr/current-item.txt`
 
 !`cat ".vpr/progress.$(cat .vpr/current-item.txt).txt" 2>/dev/null || echo "(empty)"`
 
-## Current test state
-
-!`npm test 2>&1 | tail -30`
-
 ## Recent Ralph commits (last 10)
 
 !`git log --oneline --grep="Ralph-Slice:" -10`
@@ -47,7 +43,7 @@ As your VERY FIRST line of output, print:
 1. **Explore** — read the picked slice's `acceptance` carefully. Pull in the Parent PRD section above. Read relevant source files + tests before writing any code.
 2. **Plan** — pick ONE unmet acceptance criterion. Keep the change minimal.
 3. **Execute** — Red → Green → Refactor. Failing test first, then minimal impl.
-4. **Verify** — `npx tsc --noEmit` and `npm test` BEFORE committing. ALL tests pass. Treat unrelated failures as regressions — fix them.
+4. **Verify** — `npx tsc --noEmit` and `$SANDCASTLE_TEST_CMD` (default: `npm test`) BEFORE committing. ALL tests pass. Treat unrelated failures as regressions — fix them.
 5. **Commit** — single git commit. Conventional Commits format:
    ```
    <type>(<scope>): <description>
@@ -100,7 +96,7 @@ Any single source file stays under 400 lines. Push past 400, split before contin
 # Done criteria for a slice
 
 - All acceptance criteria green
-- `npm test` passes
+- `$SANDCASTLE_TEST_CMD` (default: `npm test`) passes
 - `npx tsc --noEmit` clean
 - `npm run lint` clean (if configured)
 - No edits outside declared scope

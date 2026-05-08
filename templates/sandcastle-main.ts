@@ -1,8 +1,24 @@
 import { run, claudeCode } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+
+// Load .sandcastle/.env into process.env so repos can set per-project defaults
+// (e.g. SANDCASTLE_TEST_CMD, SANDCASTLE_IDLE_TIMEOUT) without modifying this template.
+const sandcastleEnvPath = join(process.cwd(), ".sandcastle", ".env");
+if (existsSync(sandcastleEnvPath)) {
+  const lines = readFileSync(sandcastleEnvPath, "utf-8").split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (!(key in process.env)) process.env[key] = val; // env wins over file
+  }
+}
 
 // Drives VPR slices to completion via TDD inside a docker sandbox.
 //
@@ -26,6 +42,11 @@ const envItems = (process.env.VPR_ITEMS ?? process.env.VPR_ITEM ?? "")
   .filter(Boolean);
 
 const items = cliItems.length > 0 ? cliItems : envItems;
+
+const maxIterations = parseInt(process.env.SANDCASTLE_MAX_ITER ?? "30", 10);
+const idleTimeoutSeconds = parseInt(process.env.SANDCASTLE_IDLE_TIMEOUT ?? "1800", 10);
+const testCmd = process.env.SANDCASTLE_TEST_CMD ?? "npm test";
+const model = process.env.SANDCASTLE_MODEL ?? "claude-sonnet-4-6";
 
 if (items.length === 0) {
   console.error("Usage: npx tsx .sandcastle/main.ts <item> [<item> ...]");
@@ -114,7 +135,7 @@ const writeJjSnapshot = () => {
 // Requires jj; silently skips if jj is absent or sync finds nothing to do.
 const syncAfterRun = (VPR_ITEM: string) => {
   try {
-    execSync(`node bin/vpr.mjs sync ${VPR_ITEM}`, { stdio: "inherit" });
+    execSync(`vpr sync ${VPR_ITEM}`, { stdio: "inherit" });
   } catch {
     console.error(`⚠ vpr sync ${VPR_ITEM} failed (non-fatal) — run manually if needed`);
   }
@@ -126,8 +147,9 @@ const runOne = async (VPR_ITEM: string) => {
     // Prefix in log output. Distinguishes parallel agents.
     name: `ralph-${VPR_ITEM}`,
 
-    // Forward VPR_ITEM into the sandbox so prompt.md shell expressions resolve it.
-    env: { VPR_ITEM },
+    // Forward VPR_ITEM + test command into the sandbox.
+    // SANDCASTLE_TEST_CMD lets repos override `npm test` (e.g. limit vitest workers).
+    env: { VPR_ITEM, SANDCASTLE_TEST_CMD: testCmd },
 
     // Sandbox provider — Docker. Mount host ~/.claude into the agent's home
     // so Claude Code is already logged in inside the container.
@@ -135,10 +157,10 @@ const runOne = async (VPR_ITEM: string) => {
       mounts: [{ hostPath: "~/.claude", sandboxPath: "/home/agent/.claude" }],
     }),
 
-    // Agent provider. claude-sonnet-4-6 = balance (default).
-    // Swap to claude-haiku-4-5-20251001 for speed, claude-opus-4-7 for
-    // cross-cutting refactors / unfamiliar-codebase exploration.
-    agent: claudeCode("claude-sonnet-4-6"),
+    // Agent provider. Override via SANDCASTLE_MODEL env var or .sandcastle/.env.
+    // claude-sonnet-4-6 = balance (default), claude-opus-4-7 = most capable,
+    // claude-haiku-4-5-20251001 = fastest/cheapest.
+    agent: claudeCode(model),
 
     // Prompt file. Shell expressions inside (`!`...``) evaluate inside the
     // sandbox at the start of each iteration, so the agent always sees fresh
@@ -146,9 +168,13 @@ const runOne = async (VPR_ITEM: string) => {
     promptFile: "./.sandcastle/prompt.md",
 
     // Iterations per run. Each iteration handles one acceptance criterion
-    // (per prompt.md constraints). Sized for multi-slice items where each
-    // slice has 3-5 criteria.
-    maxIterations: 30,
+    // (per prompt.md constraints). Override via SANDCASTLE_MAX_ITER env var
+    // (vpr ralph <item> <max-iter> sets this automatically).
+    maxIterations,
+
+    // Idle timeout — seconds with no agent output before failure.
+    // Default 1800 (30 min); override via SANDCASTLE_IDLE_TIMEOUT env var.
+    idleTimeoutSeconds,
 
     // merge-to-head: each agent works on a temp branch, commits get merged
     // back to host HEAD on completion. Required for parallel — keeps branches
