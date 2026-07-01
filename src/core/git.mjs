@@ -245,4 +245,28 @@ export const gitBackend = {
   deleteBookmark(name) {
     return gitSafe(`branch -D ${name}`) !== null;
   },
+
+  hasBookmark(name) {
+    return gitSafe(`show-ref --verify --quiet refs/heads/${name} && echo yes`) === 'yes';
+  },
+
+  moveBookmark(name, rev) {
+    // branch -f is create-or-move and allows moving backwards.
+    git(`branch --force ${name} ${tip(rev)}`);
+  },
+
+  renameBookmark(from, to) {
+    git(`branch -m ${from} ${to}`);
+  },
+
+  // Reordering a single commit with automatic descendant reparenting is jj's
+  // model; git has no one-shot equivalent (§ migration report 2.4). In git mode
+  // the developer reorders with `git rebase -i`.
+  moveCommitAfter() {
+    throw new Error('reorder commits with `git rebase -i` in git mode');
+  },
+
+  rebaseOnto(newBase, upstream) {
+    git(`rebase --onto ${tip(newBase)} ${tip(upstream)}`);
+  },
 };

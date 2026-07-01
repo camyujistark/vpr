@@ -46,6 +46,11 @@ import { gitBackend } from './git.mjs';
  * @property {(ids: string[]) => string[]} getVprFiles  merged file lines across commits
  * @property {(name: string, existing: Set<string>) => void} addBookmark  anchor a new VPR at the working tip
  * @property {(name: string) => boolean} deleteBookmark  best-effort delete; true if it succeeded
+ * @property {(name: string) => boolean} hasBookmark  true if the branch/bookmark exists locally
+ * @property {(name: string, rev: string) => void} moveBookmark  create-or-move a branch/bookmark (backwards allowed)
+ * @property {(from: string, to: string) => void} renameBookmark  rename a branch/bookmark
+ * @property {(commitId: string, afterId: string) => void} moveCommitAfter  reorder a commit to sit after another
+ * @property {(newBase: string, upstream: string) => void} rebaseOnto  restack upstream..HEAD onto newBase
  */
 
 /**
@@ -134,6 +139,33 @@ const jjBackend = {
 
   deleteBookmark(name) {
     return jjSafe(`bookmark delete ${name}`) !== null;
+  },
+
+  hasBookmark(name) {
+    const out = jjSafe(`bookmark list ${name} --template 'self.name()'`);
+    return Boolean(out && out.trim());
+  },
+
+  moveBookmark(name, rev) {
+    jj(`bookmark set ${name} -r ${rev} --allow-backwards`);
+  },
+
+  renameBookmark(from, to) {
+    const renamed = jjSafe(`bookmark rename ${from} ${to}`);
+    if (!renamed && renamed !== '') {
+      // rename failed — fall back to create + delete
+      jj(`bookmark create ${to} -r ${from}`);
+      jj(`bookmark delete ${from}`);
+    }
+  },
+
+  moveCommitAfter(commitId, afterId) {
+    jj(`rebase -r ${commitId} -A ${afterId}`);
+  },
+
+  rebaseOnto(newBase, upstream) {
+    // jj auto-reparents descendants; move the range upstream..@ onto newBase.
+    jj(`rebase -s 'roots(${upstream}..@)' -d ${newBase}`);
   },
 };
 
