@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { mergeFileLines } from './file-lines.mjs';
 
 const EXEC_OPTS = { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] };
 
@@ -139,37 +140,9 @@ export function getFiles(changeId) {
   return output.split('\n').map(s => s.trim()).filter(Boolean);
 }
 
-const STATUS_PRECEDENCE = { A: 5, D: 4, M: 3, R: 2, C: 1 };
-
-/**
- * Merge multiple file-summary line arrays into a deduped, sorted list.
- * When the same path appears with different statuses, the strongest wins
- * (A > D > M > R > C). Rename lines ("R old -> new") are keyed by their
- * full "old -> new" string and never collide with regular paths.
- *
- * Pure function — exported separately so it's testable without jj.
- *
- * @param {string[][]} linesArrays
- * @returns {string[]}
- */
-export function mergeFileLines(linesArrays) {
-  const map = new Map(); // key -> status
-  for (const lines of linesArrays) {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const m = trimmed.match(/^(\S+)\s+(.+)$/);
-      if (!m) continue;
-      const [, status, key] = m;
-      const existingRank = STATUS_PRECEDENCE[map.get(key)] ?? -1;
-      const newRank = STATUS_PRECEDENCE[status] ?? 0;
-      if (newRank > existingRank) map.set(key, status);
-    }
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, status]) => `${status} ${key}`);
-}
+// mergeFileLines is backend-agnostic; it lives in ./file-lines.mjs. Re-export
+// it here to preserve the existing import surface.
+export { mergeFileLines };
 
 /**
  * Aggregate file changes across all commits in a VPR.

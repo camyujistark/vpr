@@ -9,6 +9,7 @@ import {
   getFiles as jjGetFiles,
   getVprFiles as jjGetVprFiles,
 } from './jj.mjs';
+import { gitBackend } from './git.mjs';
 
 /**
  * A raw commit row, oldest-first, as produced by a backend's chain query.
@@ -144,7 +145,7 @@ export function createVcs({ kind } = {}) {
     case 'jj':
       return jjBackend;
     case 'git':
-      throw new Error('git backend not yet implemented — set "vcs":"jj" (default) for now');
+      return gitBackend;
     default:
       throw new Error(`Unknown vcs backend: ${resolved}`);
   }

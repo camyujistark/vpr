@@ -73,8 +73,16 @@ describe('createVcs', () => {
     }
   });
 
-  it('throws for the git backend until it is implemented', () => {
-    assert.throws(() => createVcs({ kind: 'git' }), /not yet implemented/);
+  it('returns the git backend with the same read-side interface', () => {
+    const vcs = createVcs({ kind: 'git' });
+    assert.equal(vcs.kind, 'git');
+    for (const method of [
+      'getBase', 'getBaseBranch', 'getConflicts',
+      'listChain', 'getRemoteTop', 'listChangeIds',
+      'getDiff', 'getFiles', 'getVprFiles',
+    ]) {
+      assert.equal(typeof vcs[method], 'function', `git backend must implement ${method}`);
+    }
   });
 
   it('throws for an unknown backend', () => {
