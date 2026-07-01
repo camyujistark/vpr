@@ -187,4 +187,18 @@ export const gitBackend = {
     }
     return mergeFileLines(all);
   },
+
+  // "Create as you go" in git: the new VPR's branch is anchored at HEAD. Unlike
+  // jj there is no auto-snapshotted working copy and no empty-commit dance —
+  // if HEAD already carries another VPR branch, the new branch simply starts
+  // empty and advances when the developer commits work and moves it. Two
+  // branches can share a commit; the partition walk attributes the commit to
+  // the earlier-declared VPR, leaving the new one empty until it advances.
+  addBookmark(name /* , existing */) {
+    git(`branch --force ${name} HEAD`);
+  },
+
+  deleteBookmark(name) {
+    return gitSafe(`branch -D ${name}`) !== null;
+  },
 };

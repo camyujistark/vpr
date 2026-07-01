@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  jj,
   jjSafe,
   getBase as jjGetBase,
   getBaseBranch as jjGetBaseBranch,
@@ -41,6 +42,8 @@ import { gitBackend } from './git.mjs';
  * @property {(id: string) => string} getDiff       git-format diff for one commit
  * @property {(id: string) => string[]} getFiles    file-summary lines for one commit
  * @property {(ids: string[]) => string[]} getVprFiles  merged file lines across commits
+ * @property {(name: string, existing: Set<string>) => void} addBookmark  anchor a new VPR at the working tip
+ * @property {(name: string) => boolean} deleteBookmark  best-effort delete; true if it succeeded
  */
 
 /**
@@ -103,6 +106,28 @@ const jjBackend = {
     );
     if (!output) return new Set();
     return new Set(output.split('\n').map(s => s.trim()).filter(Boolean));
+  },
+
+  addBookmark(name, existing) {
+    // Anchor at @ if the working copy is described, else at @-. If the target
+    // already carries a VPR bookmark, `jj new` first so the new VPR gets its
+    // own empty anchor (otherwise the partition walk gives one VPR all the
+    // commits and the other none).
+    const desc = jjSafe('log -r @ --no-graph --template "description.first_line()"');
+    let target = desc && desc.trim().length > 0 ? '@' : '@-';
+    const targetBmsRaw = jjSafe(`log -r ${target} --no-graph --template 'bookmarks'`);
+    const targetBms = targetBmsRaw
+      ? targetBmsRaw.split(/\s+/).filter(Boolean).filter(b => !b.includes('@'))
+      : [];
+    if (targetBms.some(bm => existing.has(bm))) {
+      jj('new');
+      target = '@';
+    }
+    jj(`bookmark set ${name} -r ${target}`);
+  },
+
+  deleteBookmark(name) {
+    return jjSafe(`bookmark delete ${name}`) !== null;
   },
 };
 

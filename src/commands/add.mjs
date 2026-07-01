@@ -1,5 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
-import { jj, jjSafe } from '../core/jj.mjs';
+import { createVcs } from '../core/vcs.mjs';
 
 /**
  * Convert a title to a slug (lowercase, non-alphanum → hyphen, max 4 words).
@@ -53,27 +53,11 @@ export async function addVpr(title, { item } = {}) {
     }
   }
 
-  // Determine whether @ has a description (non-empty commit) or is empty.
-  // An empty working-copy commit has no description in jj.
-  const desc = jjSafe('log -r @ --no-graph --template "description.first_line()"');
-  let target = desc && desc.trim().length > 0 ? '@' : '@-';
-
-  // If the target commit already carries a VPR bookmark, placing another
-  // bookmark on the same commit causes state.mjs to partition all pending
-  // commits to whichever bookmark jj emits first — one VPR wins, the other
-  // shows empty. Create a fresh empty commit so the new VPR gets its own
-  // anchor. The new VPR will start with zero commits, which is correct.
-  const targetBmsRaw = jjSafe(`log -r ${target} --no-graph --template 'bookmarks'`);
-  const targetBms = targetBmsRaw
-    ? targetBmsRaw.split(/\s+/).filter(Boolean).filter(b => !b.includes('@'))
-    : [];
-  const collision = targetBms.some(bm => existingBookmarks.has(bm));
-  if (collision) {
-    jj('new');
-    target = '@';
-  }
-
-  jj(`bookmark set ${bookmark} -r ${target}`);
+  // Anchor the new VPR at the working tip. The backend handles "create as you
+  // go": jj places a bookmark (creating an empty change on collision); git
+  // points a branch at HEAD.
+  const vcs = createVcs();
+  vcs.addBookmark(bookmark, existingBookmarks);
 
   // Register in meta
   meta.items[item].vprs[bookmark] = { title, story: '', output: null };

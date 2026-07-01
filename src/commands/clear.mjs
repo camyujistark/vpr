@@ -1,5 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
-import { jjSafe } from '../core/jj.mjs';
+import { createVcs } from '../core/vcs.mjs';
 
 /**
  * Remove every VPR and item from meta, and delete each VPR's jj bookmark
@@ -17,8 +17,9 @@ export async function clearAll({ actor = 'cli' } = {}) {
       bookmarks.push(bm);
     }
   }
+  const vcs = createVcs();
   for (const bm of bookmarks) {
-    jjSafe(`bookmark delete ${bm}`);
+    vcs.deleteBookmark(bm);
   }
   meta.items = {};
   await saveMeta(meta);

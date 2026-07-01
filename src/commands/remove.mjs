@@ -1,5 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
-import { jjSafe } from '../core/jj.mjs';
+import { createVcs } from '../core/vcs.mjs';
 import { findVpr } from './edit.mjs';
 
 /**
@@ -22,11 +22,11 @@ export async function removeVpr(query) {
 
   const { itemName, bookmark } = found;
 
-  // Delete jj bookmark (best-effort)
-  const result = jjSafe(`bookmark delete ${bookmark}`);
-  if (result === null) {
-    // Not a fatal error — bookmark may already be gone or never pushed
-    console.warn(`Warning: could not delete jj bookmark "${bookmark}" — it may not exist locally.`);
+  // Delete the branch/bookmark (best-effort)
+  const ok = createVcs().deleteBookmark(bookmark);
+  if (!ok) {
+    // Not a fatal error — the ref may already be gone or never created
+    console.warn(`Warning: could not delete branch "${bookmark}" — it may not exist locally.`);
   }
 
   // Remove VPR from meta
