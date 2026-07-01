@@ -208,7 +208,13 @@ const jjBackend = {
  *   1. explicit `kind` argument
  *   2. VPR_VCS environment variable
  *   3. `.vpr/config.json` "vcs" field
- *   4. default 'jj'
+ *   4. auto-detect: a jj-colocated repo (.jj/ present) → jj, else a git repo
+ *      (.git present) → git
+ *   5. default 'jj'
+ *
+ * The auto-detect step is the v1→v2 promotion: existing jj-colocated repos keep
+ * using jj untouched, while plain git repos default to the git (v2) backend.
+ * It is fully reversible — set "vcs" in .vpr/config.json (or VPR_VCS) to override.
  *
  * @param {string} [kind]
  * @returns {'jj'|'git'}
@@ -223,8 +229,11 @@ export function resolveVcsKind(kind) {
       if (cfg.vcs) return cfg.vcs;
     }
   } catch {
-    // fall through to default
+    // fall through to auto-detect
   }
+  const cwd = process.cwd();
+  if (existsSync(join(cwd, '.jj'))) return 'jj';
+  if (existsSync(join(cwd, '.git'))) return 'git';
   return 'jj';
 }
 

@@ -26,7 +26,23 @@ describe('resolveVcsKind', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('defaults to jj when nothing is set', () => {
+  it('defaults to jj when nothing is set and no repo is detected', () => {
+    assert.equal(resolveVcsKind(), 'jj');
+  });
+
+  it('auto-detects jj from a colocated .jj/ directory', () => {
+    mkdirSync(join(tmpDir, '.jj'), { recursive: true });
+    assert.equal(resolveVcsKind(), 'jj');
+  });
+
+  it('auto-detects git from a plain .git repo (the v2 promotion)', () => {
+    mkdirSync(join(tmpDir, '.git'), { recursive: true });
+    assert.equal(resolveVcsKind(), 'git');
+  });
+
+  it('prefers jj when both .jj/ and .git are present (colocated)', () => {
+    mkdirSync(join(tmpDir, '.jj'), { recursive: true });
+    mkdirSync(join(tmpDir, '.git'), { recursive: true });
     assert.equal(resolveVcsKind(), 'jj');
   });
 

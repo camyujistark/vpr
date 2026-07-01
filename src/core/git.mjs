@@ -243,6 +243,9 @@ export const gitBackend = {
   // branches can share a commit; the partition walk attributes the commit to
   // the earlier-declared VPR, leaving the new one empty until it advances.
   addBookmark(name /* , existing */) {
+    // If `name` is already the checked-out branch it sits at HEAD already —
+    // `git branch --force` refuses to touch the current branch, so no-op.
+    if (gitSafe('branch --show-current') === name) return;
     git(`branch --force ${name} HEAD`);
   },
 
@@ -255,7 +258,14 @@ export const gitBackend = {
   },
 
   moveBookmark(name, rev) {
-    // branch -f is create-or-move and allows moving backwards.
+    // branch -f is create-or-move and allows moving backwards, but git refuses
+    // to force-update the checked-out branch. If it's current and already at
+    // the target, no-op; otherwise the caller must check out another branch.
+    if (gitSafe('branch --show-current') === name) {
+      const target = gitSafe(`rev-parse ${tip(rev)}`);
+      if (target && target === gitSafe('rev-parse HEAD')) return;
+      throw new Error(`cannot move the checked-out branch "${name}" — check out another branch first`);
+    }
     git(`branch --force ${name} ${tip(rev)}`);
   },
 

@@ -62,6 +62,23 @@ describe('gitBackend restack primitives', () => {
     assert.equal(gitBackend.hasBookmark('new/name'), true);
   });
 
+  it('addBookmark no-ops when the target is the current branch', () => {
+    sh('git checkout -q -b on/me');
+    // must not throw ("cannot force update the branch used by worktree")
+    gitBackend.addBookmark('on/me', new Set());
+    assert.equal(gitBackend.hasBookmark('on/me'), true);
+    sh('git checkout -q main');
+  });
+
+  it('moveBookmark refuses to move the checked-out branch to a different rev', () => {
+    const head = sh('git rev-parse HEAD');
+    sh(`git checkout -q -b cur/branch ${head}`);
+    gitBackend.moveBookmark('cur/branch', 'HEAD'); // same rev -> no-op, no throw
+    const other = sh('git rev-parse HEAD~1');
+    assert.throws(() => gitBackend.moveBookmark('cur/branch', other), /check out another branch/);
+    sh('git checkout -q main');
+  });
+
   it('moveCommitAfter is unsupported in git mode', () => {
     assert.throws(() => gitBackend.moveCommitAfter('a', 'b'), /git rebase -i/);
   });

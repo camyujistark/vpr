@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — git backend (v2), opt-in
+
+VPR now runs on plain **git** as well as jj, behind a versioned, reversible
+backend selector (`src/core/vcs.mjs`). A VPR is a git branch; the chain is linear
+ancestry; restack is `git rebase --onto` (move) + `git reset --soft` (recompose,
+via `vpr recompose`); `vpr send` pushes with `--force-with-lease`.
+
+The backend is chosen by: explicit arg → `VPR_VCS` env → `.vpr/config.json`
+`"vcs"` → auto-detect (`.jj/` ⇒ jj, else `.git` ⇒ git) → `jj`. Existing
+jj-colocated repos are untouched; plain git repos get v2. Fully reversible via
+`.vpr/config.json`. `vpr init --git` bootstraps a git-only workspace. jj remains
+supported as v1 and is not removed.
+
+Some jj-only in-place restack conveniences (single-commit reorder with
+auto-reparent, split, interactive rebase, hold/detach) are not yet ported to git;
+in git mode use plain git plus `vpr recompose`.
+
 ## v2.0.0 — Parallel by default
 
 ### What changed

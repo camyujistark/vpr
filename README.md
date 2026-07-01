@@ -81,6 +81,32 @@ No indexes during development. No graph mirroring. No renumbering.
 
 VPR reads jj's graph, attaches metadata, and handles the push ceremony.
 
+## VCS backends (v1 jj / v2 git)
+
+VPR talks to version control through a pluggable backend selected by
+`createVcs()` (`src/core/vcs.mjs`). Two backends coexist:
+
+- **jj (v1)** — the original, described above.
+- **git (v2)** — plain git, no jj required. A VPR is a git branch; the chain is
+  linear ancestry; restack uses `git rebase --onto` (move) and `git reset --soft`
+  (recompose — collapse a slice's messy dev history into one clean commit,
+  working tree preserved). `vpr send` pushes with `--force-with-lease`.
+
+**Selecting a backend** (precedence): explicit arg → `VPR_VCS` env →
+`.vpr/config.json` `"vcs"` → **auto-detect** (`.jj/` present ⇒ jj, else `.git` ⇒
+git) → `jj`. So existing jj-colocated repos keep using jj untouched, while plain
+git repos get v2 automatically. The choice is fully reversible — set
+`"vcs": "jj"` (or `"git"`) in `.vpr/config.json` to pin it.
+
+```bash
+vpr init          # jj-colocated repo (v1)
+vpr init --git    # plain git repo (v2) — writes "vcs":"git", no jj
+```
+
+Some jj-idiomatic in-place restack conveniences (single-commit reorder with
+auto-reparent, split, interactive rebase, hold/detach) remain jj-only; in git
+mode you restack with plain git (`git rebase -i`) and `vpr recompose`.
+
 ## Workflow
 
 ### 1. Plan — create items
