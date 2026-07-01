@@ -1,4 +1,4 @@
-import { getBase, getConflicts, jjSafe } from './jj.mjs';
+import { createVcs } from './vcs.mjs';
 import { loadMeta } from './meta.mjs';
 
 /**
@@ -78,34 +78,7 @@ function latestSentBranchGlobal(sent) {
 }
 
 /**
- * Parse a single line from the jj log template into a raw commit object.
- * Template columns (tab-separated):
- *   change_id.short() \t commit_id.short() \t bookmarks \t description.first_line()
- *
- * Returns null if the line is malformed or has no description (skip working-copy tips).
- *
- * @param {string} line
- * @returns {{ changeId: string, sha: string, bookmarks: string[], subject: string } | null}
- */
-function parseLine(line) {
-  const parts = line.split('\t');
-  if (parts.length < 4) return null;
-
-  const [changeId, sha, bookmarksRaw, subject] = parts;
-  if (!changeId || !sha) return null;
-  if (!subject.trim()) return null; // skip undescribed commits (empty working-copy tips)
-
-  // bookmarksRaw may be empty string, space-separated, or contain remote suffixes like "name@remote"
-  // We only want the local bookmark names (no @suffix) that match VPR bookmark keys.
-  const allBookmarks = bookmarksRaw ? bookmarksRaw.split(' ').map(b => b.trim()).filter(Boolean) : [];
-  const bookmarks = allBookmarks.filter(b => !b.includes('@'));
-  const hasRemote = allBookmarks.some(b => b.includes('@'));
-
-  return { changeId, sha, bookmarks, hasRemote, subject: subject.trim() };
-}
-
-/**
- * Build a unified state object from the jj graph and meta.json.
+ * Build a unified state object from the VCS graph and meta.json.
  *
  * @returns {Promise<{
  *   items: Array,
@@ -117,40 +90,22 @@ function parseLine(line) {
  * }>}
  */
 export async function buildState() {
+  const vcs = createVcs();
+
   // 1. Determine the base commit
-  const base = getBase();
+  const base = vcs.getBase();
 
   // 2. Query all commits between base and visible heads (oldest first)
-  let rawCommits = [];
-  if (base) {
-    const range = `${base}..(visible_heads() & descendants(${base}))`;
-    const template = 'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"';
-    const output = jjSafe(`log -r '${range}' --reversed --no-graph --template '${template}'`);
-    if (output) {
-      rawCommits = output
-        .split('\n')
-        .map(l => l.trim())
-        .filter(Boolean)
-        .map(parseLine)
-        .filter(Boolean);
-    }
-  }
+  const rawCommits = base ? vcs.listChain(base) : [];
 
   // 3. Find the top of the remote stack (highest remote bookmark ancestor of @)
   //    and build the set of commits after it — only these are ungrouped candidates.
-  const remoteTop = jjSafe(
-    "log -r 'ancestors(@) & remote_bookmarks()' --no-graph --template 'commit_id.short()' -n 1"
-  );
+  const remoteTop = vcs.getRemoteTop();
   const ungroupedBase = remoteTop || base;
-  const afterRemoteOutput = ungroupedBase ? jjSafe(
-    `log -r '${ungroupedBase}..@' --no-graph --template 'change_id.short() ++ "\\n"'`
-  ) : null;
-  const afterRemote = new Set(
-    afterRemoteOutput ? afterRemoteOutput.split('\n').map(s => s.trim()).filter(Boolean) : []
-  );
+  const afterRemote = ungroupedBase ? vcs.listChangeIds(ungroupedBase, '@') : new Set();
 
   // 4. Get conflicts
-  const conflicts = getConflicts();
+  const conflicts = vcs.getConflicts();
 
   // 4. Load meta
   const meta = await loadMeta();
