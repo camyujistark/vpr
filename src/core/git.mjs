@@ -269,4 +269,21 @@ export const gitBackend = {
   rebaseOnto(newBase, upstream) {
     git(`rebase --onto ${tip(newBase)} ${tip(upstream)}`);
   },
+
+  parentOf(id) {
+    return gitSafe(`rev-parse ${id}^`);
+  },
+
+  headId() {
+    return gitSafe('rev-parse HEAD');
+  },
+
+  // The design's headline restack: collapse base..HEAD into one clean commit
+  // while preserving the working tree (git reset --soft). The messy dev history
+  // is dropped from git; its intent lives on in the vpr metadata/eventLog.
+  recompose(base, message) {
+    git(`reset --soft ${tip(base)}`);
+    const staged = gitSafe('diff --cached --name-only');
+    if (staged) git(`commit -m ${JSON.stringify(message)}`);
+  },
 };

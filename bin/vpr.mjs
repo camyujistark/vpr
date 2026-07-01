@@ -311,6 +311,23 @@ try {
     }
 
     // -----------------------------------------------------------------------
+    // vpr recompose <vpr> [--message "..."]  — collapse a slice's dev history
+    // into one clean commit (git reset --soft), worktree preserved.
+    // -----------------------------------------------------------------------
+    case 'recompose': {
+      const flags = parseFlags(args);
+      const query = args.find(a => !a.startsWith('--'));
+      if (!query) {
+        console.error('Usage: vpr recompose <vpr> [--message "..."]');
+        process.exit(1);
+      }
+      const { recompose } = await import('../src/commands/recompose.mjs');
+      const result = await recompose(query, { message: flags.message });
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+
+    // -----------------------------------------------------------------------
     // vpr clear --yes  — remove every VPR and item
     // -----------------------------------------------------------------------
     case 'clear': {

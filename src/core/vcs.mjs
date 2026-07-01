@@ -51,6 +51,9 @@ import { gitBackend } from './git.mjs';
  * @property {(from: string, to: string) => void} renameBookmark  rename a branch/bookmark
  * @property {(commitId: string, afterId: string) => void} moveCommitAfter  reorder a commit to sit after another
  * @property {(newBase: string, upstream: string) => void} rebaseOnto  restack upstream..HEAD onto newBase
+ * @property {(id: string) => string|null} parentOf  the parent commit id
+ * @property {() => string|null} headId  the current tip commit id
+ * @property {(base: string, message: string) => void} recompose  collapse base..HEAD into one clean commit (reset --soft)
  */
 
 /**
@@ -166,6 +169,18 @@ const jjBackend = {
   rebaseOnto(newBase, upstream) {
     // jj auto-reparents descendants; move the range upstream..@ onto newBase.
     jj(`rebase -s 'roots(${upstream}..@)' -d ${newBase}`);
+  },
+
+  parentOf(id) {
+    return jjSafe(`log -r ${id}- --no-graph --template 'commit_id.short()' -n 1`);
+  },
+
+  headId() {
+    return jjSafe("log -r @- --no-graph --template 'commit_id.short()' -n 1");
+  },
+
+  recompose() {
+    throw new Error('recompose is a git-mode operation — use `vpr squash` in jj mode');
   },
 };
 
