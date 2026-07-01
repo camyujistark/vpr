@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { mergeFileLines } from './file-lines.mjs';
 
 const EXEC_OPTS = { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe', 'pipe'] };
@@ -80,6 +82,20 @@ function remoteTop() {
 }
 
 /**
+ * Locate an in-progress rebase directory, if any.
+ * @returns {string|null} absolute path to the rebase state dir
+ */
+function rebaseStateDir() {
+  const gitDir = gitSafe('rev-parse --absolute-git-dir');
+  if (!gitDir) return null;
+  for (const sub of ['rebase-merge', 'rebase-apply']) {
+    const p = join(gitDir, sub);
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
  * Normalize a `git --name-status` line into the jj-style "<STATUS> <path>"
  * (or "R <old> -> <new>" for renames) that mergeFileLines expects.
  * @param {string} line
@@ -106,6 +122,19 @@ function normalizeNameStatus(line) {
 export const gitBackend = {
   kind: 'git',
 
+  // Git commit shas are NOT stable across rewrites, so vpr cannot pin a VPR to
+  // a commit by id the way jj does with change-ids. Consumers key VPR ownership
+  // off branch-boundary partitioning instead; stale sha "claims" in meta simply
+  // fail to match a commit and are ignored.
+  stableIdentity: false,
+
+  // Git halts a rebase on the first conflict rather than recording conflicts in
+  // commits. A "conflict" therefore only exists transiently while a rebase is
+  // paused with unmerged paths.
+  isRebaseInProgress() {
+    return rebaseStateDir() !== null;
+  },
+
   getBase() {
     return (
       remoteTop() ||
@@ -127,10 +156,25 @@ export const gitBackend = {
     return null;
   },
 
-  // Git has no conflict-carrying commits; conflicts only exist transiently
-  // during an in-progress rebase (handled by the restack slice). Empty here.
+  // Returns the set of commit shas currently conflicting in a paused rebase.
+  // Empty when no rebase is in progress or the paused rebase has no unmerged
+  // paths. The sha is the original commit that failed to apply (from
+  // rebase-merge/stopped-sha), letting callers surface "there is a conflict".
   getConflicts() {
-    return new Set();
+    const dir = rebaseStateDir();
+    if (!dir) return new Set();
+    const unmerged = gitSafe('diff --name-only --diff-filter=U');
+    if (!unmerged) return new Set();
+    const set = new Set();
+    const stoppedPath = join(dir, 'stopped-sha');
+    if (existsSync(stoppedPath)) {
+      const sha = readFileSync(stoppedPath, 'utf-8').trim();
+      if (sha) {
+        const full = gitSafe(`rev-parse ${sha}`);
+        if (full) set.add(full);
+      }
+    }
+    return set;
   },
 
   listChain(base) {

@@ -33,6 +33,8 @@ import { gitBackend } from './git.mjs';
  *
  * @typedef {Object} VcsBackend
  * @property {string} kind                          'jj' | 'git'
+ * @property {boolean} stableIdentity               true if commit ids survive rewrites (jj change-ids)
+ * @property {() => boolean} isRebaseInProgress      true if a rebase is paused (git conflict state)
  * @property {() => string|null} getBase            base commit id (nearest pushed ancestor)
  * @property {() => string|null} getBaseBranch      base branch name (no remote suffix)
  * @property {() => Set<string>} getConflicts       set of conflicted change ids
@@ -73,6 +75,10 @@ export function parseJjLine(line) {
 /** The jj (v1) backend. Wraps the low-level helpers in ./jj.mjs. */
 const jjBackend = {
   kind: 'jj',
+  // jj change-ids are stable across amend/rebase, and jj records conflicts in
+  // commits rather than pausing — so there is never an "in progress" rebase.
+  stableIdentity: true,
+  isRebaseInProgress: () => false,
   getBase: jjGetBase,
   getBaseBranch: jjGetBaseBranch,
   getConflicts: jjGetConflicts,
