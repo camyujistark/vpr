@@ -26,18 +26,24 @@ describe('resolveVcsKind', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('defaults to jj when nothing is set and no repo is detected', () => {
-    assert.equal(resolveVcsKind(), 'jj');
+  it('defaults to git (v2) when nothing is set', () => {
+    assert.equal(resolveVcsKind(), 'git');
   });
 
-  it('auto-detects jj from a colocated .jj/ directory', () => {
+  it('still uses jj (v1) for a colocated .jj/ repo', () => {
     mkdirSync(join(tmpDir, '.jj'), { recursive: true });
     assert.equal(resolveVcsKind(), 'jj');
   });
 
-  it('auto-detects git from a plain .git repo (the v2 promotion)', () => {
+  it('defaults to git for a plain .git repo', () => {
     mkdirSync(join(tmpDir, '.git'), { recursive: true });
     assert.equal(resolveVcsKind(), 'git');
+  });
+
+  it('reverts to jj (v1) with an explicit config pin even when nothing else is set', () => {
+    mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
+    writeFileSync(join(tmpDir, '.vpr', 'config.json'), JSON.stringify({ vcs: 'jj' }));
+    assert.equal(resolveVcsKind(), 'jj');
   });
 
   it('prefers jj when both .jj/ and .git are present (colocated)', () => {
@@ -69,10 +75,10 @@ describe('resolveVcsKind', () => {
     assert.equal(resolveVcsKind(), 'jj');
   });
 
-  it('falls back to jj on unreadable config', () => {
+  it('falls back to the default (git) on unreadable config', () => {
     mkdirSync(join(tmpDir, '.vpr'), { recursive: true });
     writeFileSync(join(tmpDir, '.vpr', 'config.json'), 'not json{');
-    assert.equal(resolveVcsKind(), 'jj');
+    assert.equal(resolveVcsKind(), 'git');
   });
 });
 

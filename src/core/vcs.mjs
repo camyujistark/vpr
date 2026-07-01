@@ -208,13 +208,13 @@ const jjBackend = {
  *   1. explicit `kind` argument
  *   2. VPR_VCS environment variable
  *   3. `.vpr/config.json` "vcs" field
- *   4. auto-detect: a jj-colocated repo (.jj/ present) → jj, else a git repo
- *      (.git present) → git
- *   5. default 'jj'
+ *   4. a jj-colocated repo (.jj/ present) → jj
+ *   5. default 'git'  (v2 is the active default)
  *
- * The auto-detect step is the v1→v2 promotion: existing jj-colocated repos keep
- * using jj untouched, while plain git repos default to the git (v2) backend.
- * It is fully reversible — set "vcs" in .vpr/config.json (or VPR_VCS) to override.
+ * **git (v2) is the live default.** jj (v1) is still fully supported but is now
+ * opt-in: it is used only for jj-colocated repos (auto-detected via .jj/) or
+ * when explicitly pinned. Reverting to jj is a one-liner — set "vcs":"jj" in
+ * .vpr/config.json, or run with VPR_VCS=jj.
  *
  * @param {string} [kind]
  * @returns {'jj'|'git'}
@@ -229,12 +229,12 @@ export function resolveVcsKind(kind) {
       if (cfg.vcs) return cfg.vcs;
     }
   } catch {
-    // fall through to auto-detect
+    // fall through to the default
   }
-  const cwd = process.cwd();
-  if (existsSync(join(cwd, '.jj'))) return 'jj';
-  if (existsSync(join(cwd, '.git'))) return 'git';
-  return 'jj';
+  // jj-colocated repos keep using jj (v1) untouched unless a user pins otherwise.
+  if (existsSync(join(process.cwd(), '.jj'))) return 'jj';
+  // Everything else defaults to git (v2).
+  return 'git';
 }
 
 /**

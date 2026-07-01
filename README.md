@@ -92,11 +92,17 @@ VPR talks to version control through a pluggable backend selected by
   (recompose — collapse a slice's messy dev history into one clean commit,
   working tree preserved). `vpr send` pushes with `--force-with-lease`.
 
-**Selecting a backend** (precedence): explicit arg → `VPR_VCS` env →
-`.vpr/config.json` `"vcs"` → **auto-detect** (`.jj/` present ⇒ jj, else `.git` ⇒
-git) → `jj`. So existing jj-colocated repos keep using jj untouched, while plain
-git repos get v2 automatically. The choice is fully reversible — set
-`"vcs": "jj"` (or `"git"`) in `.vpr/config.json` to pin it.
+**git (v2) is the active default.** Backend precedence: explicit arg → `VPR_VCS`
+env → `.vpr/config.json` `"vcs"` → jj-colocated repo (`.jj/` present) ⇒ jj →
+**default `git`**. So jj (v1) is now opt-in — used only for jj-colocated repos or
+when explicitly pinned; everything else runs v2.
+
+**Revert to jj (v1)** — one line, fully reversible:
+
+```bash
+VPR_VCS=jj vpr <cmd>                              # per-invocation / session (export to persist)
+# or pin per-repo:  add  "vcs": "jj"  to .vpr/config.json
+```
 
 ```bash
 vpr init          # jj-colocated repo (v1)
