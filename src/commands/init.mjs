@@ -26,9 +26,16 @@ const EXEC_OPTS = { encoding: 'utf-8', shell: '/bin/bash', stdio: ['pipe', 'pipe
 export async function init(opts = {}) {
   const cwd = process.cwd();
   const steps = [];
+  const vcs = opts.vcs || (opts.git ? 'git' : 'jj');
 
-  // 1. jj git init --colocate
-  if (!existsSync(join(cwd, '.jj'))) {
+  // 1. Bootstrap the VCS.
+  if (vcs === 'git') {
+    // git (v2): no jj colocation. Just ensure a git repo exists.
+    if (!existsSync(join(cwd, '.git'))) {
+      execSync('git init', { ...EXEC_OPTS, cwd });
+      steps.push('git init');
+    }
+  } else if (!existsSync(join(cwd, '.jj'))) {
     execSync('jj git init --colocate', { ...EXEC_OPTS, cwd });
     steps.push('jj git init --colocate');
   }
@@ -55,6 +62,7 @@ export async function init(opts = {}) {
       provider: opts.provider || 'none',
       repo: repoName,
     };
+    if (vcs !== 'jj') config.vcs = vcs;
     if (opts.org) config.org = opts.org;
     if (opts.project) config.project = opts.project;
     if (opts.wiType) config.wiType = opts.wiType;
@@ -99,21 +107,23 @@ export async function init(opts = {}) {
     steps.push(`added ${toAppend.join(', ')} to .git/info/exclude`);
   }
 
-  // 5. jj config — snapshot.auto-track should exclude .vpr/
-  let autoTrack = '';
-  try {
-    autoTrack = execSync('jj config get snapshot.auto-track', { ...EXEC_OPTS, cwd }).trim();
-  } catch {
-    // not set yet
-  }
+  // 5. jj config — snapshot.auto-track should exclude .vpr/ (jj mode only)
+  if (vcs === 'jj') {
+    let autoTrack = '';
+    try {
+      autoTrack = execSync('jj config get snapshot.auto-track', { ...EXEC_OPTS, cwd }).trim();
+    } catch {
+      // not set yet
+    }
 
-  if (!autoTrack.includes('.vpr')) {
-    // Default jj auto-track is "all()" — we want "all() & ~glob:'.vpr/**'"
-    const base = autoTrack || 'all()';
-    const newVal = `${base} & ~glob:'.vpr/**'`;
-    // The value must be wrapped in escaped double quotes so jj receives a valid TOML string
-    execSync(`jj config set --repo snapshot.auto-track "\\"${newVal}\\""`, { ...EXEC_OPTS, cwd });
-    steps.push('configured jj snapshot.auto-track');
+    if (!autoTrack.includes('.vpr')) {
+      // Default jj auto-track is "all()" — we want "all() & ~glob:'.vpr/**'"
+      const base = autoTrack || 'all()';
+      const newVal = `${base} & ~glob:'.vpr/**'`;
+      // The value must be wrapped in escaped double quotes so jj receives a valid TOML string
+      execSync(`jj config set --repo snapshot.auto-track "\\"${newVal}\\""`, { ...EXEC_OPTS, cwd });
+      steps.push('configured jj snapshot.auto-track');
+    }
   }
 
   return { steps };

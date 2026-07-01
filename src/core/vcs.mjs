@@ -54,6 +54,8 @@ import { gitBackend } from './git.mjs';
  * @property {(id: string) => string|null} parentOf  the parent commit id
  * @property {() => string|null} headId  the current tip commit id
  * @property {(base: string, message: string) => void} recompose  collapse base..HEAD into one clean commit (reset --soft)
+ * @property {(from: string, to: string) => RawCommit[]} listRange  commits in from..to, oldest-first
+ * @property {(name: string) => void} pushBookmark  push a branch/bookmark to the remote
  */
 
 /**
@@ -181,6 +183,23 @@ const jjBackend = {
 
   recompose() {
     throw new Error('recompose is a git-mode operation — use `vpr squash` in jj mode');
+  },
+
+  listRange(from, to) {
+    const template =
+      'change_id.short() ++ "\\t" ++ commit_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"';
+    const output = jjSafe(`log -r '${from}..${to}' --reversed --no-graph --template '${template}'`);
+    if (!output) return [];
+    return output
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(parseJjLine)
+      .filter(Boolean);
+  },
+
+  pushBookmark(name) {
+    jj(`git push --bookmark ${name}`);
   },
 };
 

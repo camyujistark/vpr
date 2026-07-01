@@ -1,4 +1,4 @@
-import { jj, jjSafe, getBaseBranch } from '../core/jj.mjs';
+import { createVcs } from '../core/vcs.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState, computeChainState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
@@ -111,6 +111,7 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
 
   const { itemName, bookmark, vpr } = found;
   const item = meta.items[itemName];
+  const vcs = createVcs();
 
   // Sequential refusal: walk the chain and refuse if this VPR has an earlier
   // unsent sibling. The agent and CLI parse this single-line error to discover
@@ -120,7 +121,7 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     const chainState = await buildState();
     const enriched = computeChainState(chainState.items, {
       sent: chainState.sent,
-      baseBranch: getBaseBranch() ?? 'main',
+      baseBranch: vcs.getBaseBranch() ?? 'main',
     });
     const enrichedItem = enriched.find(i => i.name === itemName);
     const enrichedVpr = enrichedItem?.vprs.find(v => v.bookmark === bookmark);
@@ -141,7 +142,7 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   if (provider && tpIndex === undefined) {
     tpIndex = (provider.getLatestPRIndex?.() ?? 0) + 1;
   }
-  targetBranch = targetBranch ?? getBaseBranch() ?? 'main';
+  targetBranch = targetBranch ?? vcs.getBaseBranch() ?? 'main';
   tpIndex = tpIndex ?? 1;
 
   console.log(`Target: ${targetBranch}`);
@@ -175,29 +176,21 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     for (const sentBranch of Object.keys(meta.sent ?? {})) {
       if (sentBranch !== bookmark) siblingBookmarks.add(sentBranch);
     }
-    const rangeOutput = jjSafe(
-      `log -r '${targetBranch}..${bookmark}' --no-graph --template 'change_id.short() ++ "\\t" ++ bookmarks ++ "\\t" ++ description.first_line() ++ "\\n"'`,
-    );
-    const rangeLines = rangeOutput ? rangeOutput.split('\n').map(l => l.trim()).filter(Boolean) : [];
+    const rangeCommits = vcs.listRange(targetBranch, bookmark);
     const stowaways = [];
-    for (const line of rangeLines) {
-      const parts = line.split('\t');
-      if (parts.length < 3) continue;
-      const [cid, bookmarksRaw, subject] = parts;
-      const commitBookmarks = bookmarksRaw
-        .split(' ')
-        .map(b => b.trim())
-        .filter(b => b && !b.includes('@'));
+    for (const commit of rangeCommits) {
       // Stowaway iff this commit carries a bookmark of a different VPR
-      const owningSibling = commitBookmarks.find(b => siblingBookmarks.has(b));
-      if (owningSibling) stowaways.push({ cid, subject, ownedBy: owningSibling });
+      const owningSibling = commit.bookmarks.find(b => siblingBookmarks.has(b));
+      if (owningSibling) {
+        stowaways.push({ cid: commit.changeId, subject: commit.subject, ownedBy: owningSibling });
+      }
     }
     if (stowaways.length > 0) {
       const lines = stowaways.map(s => `  ${s.cid} ${s.subject} — owned by ${s.ownedBy}`).join('\n');
       const msg =
         `Send blocked: ${stowaways.length} commit(s) between ${targetBranch} and ${bookmark} belong to other VPRs.\n` +
         `These would be pushed as part of "${vpr.title}" PR:\n${lines}\n` +
-        `Reorder commits in jj so this VPR sits before them, OR add them to this VPR's scope, OR re-run with --force to ignore.`;
+        `Reorder commits so this VPR sits before them, OR add them to this VPR's scope, OR re-run with --force to ignore.`;
       const err = new Error(msg);
       err.code = 'CHAIN_STOWAWAYS';
       err.stowaways = stowaways;
@@ -233,29 +226,24 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   //     the rename would fail and the push would be ambiguous. Caller must
   //     re-run with { force: true } to delete it.
   if (branchName !== bookmark) {
-    const existing = jjSafe(`bookmark list ${branchName} --template 'self.name() ++ "\\n"'`);
-    const hasCollision = Boolean(existing && existing.trim());
-    if (hasCollision) {
+    if (vcs.hasBookmark(branchName)) {
       if (!force) {
-        const err = new Error(`Branch "${branchName}" already exists as a jj bookmark. Delete it and retry, or run with --force.`);
+        const err = new Error(`Branch "${branchName}" already exists. Delete it and retry, or run with --force.`);
         err.code = 'BRANCH_COLLISION';
         err.branchName = branchName;
         throw err;
       }
-      jjSafe(`bookmark delete ${branchName}`);
+      vcs.deleteBookmark(branchName);
     }
   }
 
-  // 6. Rename jj bookmark: try rename, fallback to create + delete
-  const renamed = jjSafe(`bookmark rename ${bookmark} ${branchName}`);
-  if (!renamed && renamed !== '') {
-    // rename returned null (failed) — try create + delete fallback
-    jj(`bookmark create ${branchName} -r ${bookmark}`);
-    jj(`bookmark delete ${bookmark}`);
+  // 6. Rename the branch/bookmark to the send name
+  if (branchName !== bookmark) {
+    vcs.renameBookmark(bookmark, branchName);
   }
 
   // 7. Push
-  jj(`git push --bookmark ${branchName}`);
+  vcs.pushBookmark(branchName);
 
   // 8. Create PR via provider if available
   let prId = null;

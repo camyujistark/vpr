@@ -178,9 +178,13 @@ export const gitBackend = {
   },
 
   listChain(base) {
+    return this.listRange(base, 'HEAD');
+  },
+
+  listRange(from, to) {
     const branches = localBranchMap();
     const remotes = remoteShaSet();
-    const out = gitSafe(`log --reverse --format='%H%x09%h%x09%s' ${base}..HEAD`);
+    const out = gitSafe(`log --reverse --format='%H%x09%h%x09%s' ${tip(from)}..${tip(to)}`);
     if (!out) return [];
     const rows = [];
     for (const line of out.split('\n')) {
@@ -285,5 +289,12 @@ export const gitBackend = {
     git(`reset --soft ${tip(base)}`);
     const staged = gitSafe('diff --cached --name-only');
     if (staged) git(`commit -m ${JSON.stringify(message)}`);
+  },
+
+  // Restacked slice branches diverge from what was previously pushed, so a
+  // lease-guarded force keeps updates safe without clobbering others' work.
+  // A never-pushed branch has no remote ref, so the lease is a no-op there.
+  pushBookmark(name) {
+    git(`push --force-with-lease origin ${name}`);
   },
 };
