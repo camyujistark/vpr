@@ -2,6 +2,7 @@ import { createVcs } from '../core/vcs.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
 import { buildState, computeChainState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
+import { resolveWorkItemId } from './plan-lock.mjs';
 
 /**
  * Resolve the bookmark of the next sendable VPR by walking the chain state.
@@ -111,7 +112,7 @@ export async function sendChecks(query) {
  *   targetBranch: string
  * }>}
  */
-export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false } = {}) {
+export async function send(query, { provider = null, dryRun = false, tpIndex, targetBranch, force = false, workItemModel = 'per-slice' } = {}) {
   if (!query) {
     const nextUp = await resolveNextUpBookmark();
     if (!nextUp) throw new Error('No sendable VPRs — chain is empty or fully sent');
@@ -256,10 +257,13 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   // 7. Push
   vcs.pushBookmark(branchName);
 
-  // 8. Create PR via provider if available
+  // 8. Create PR via provider if available. The work item linked is resolved
+  //    from the locked workItemModel (§ plan lock): 'one-pbi' links the feature
+  //    PBI on every slice; 'per-slice' links the slice's own work item.
   let prId = null;
+  const workItemId = resolveWorkItemId(item, vpr, workItemModel);
   if (provider && typeof provider.createPR === 'function') {
-    const pr = await provider.createPR(branchName, targetBranch, prTitle, prBody, item.wi);
+    const pr = await provider.createPR(branchName, targetBranch, prTitle, prBody, workItemId);
     prId = pr?.id ?? null;
   }
 
@@ -322,7 +326,7 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
  * }} [opts]
  * @returns {Promise<{ sent: object[], previews?: object[], blocked: null | { bookmark: string, error: string } }>}
  */
-export async function sendAll({ provider = null, force = false, dryRun = false, onSlice } = {}) {
+export async function sendAll({ provider = null, force = false, dryRun = false, onSlice, workItemModel = 'per-slice' } = {}) {
   const vcs = createVcs();
 
   if (dryRun) {
@@ -355,7 +359,7 @@ export async function sendAll({ provider = null, force = false, dryRun = false, 
     if (!next) break;
     let result;
     try {
-      result = await send(next, { provider, force });
+      result = await send(next, { provider, force, workItemModel });
     } catch (err) {
       return { sent, blocked: { bookmark: next, error: err.message } };
     }

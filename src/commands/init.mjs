@@ -66,6 +66,11 @@ export async function init(opts = {}) {
     if (opts.org) config.org = opts.org;
     if (opts.project) config.project = opts.project;
     if (opts.wiType) config.wiType = opts.wiType;
+    // Load-bearing send decisions, lockable at bootstrap (also via `vpr plan lock`).
+    const workItemModel = opts['work-item-model'] || opts.workItemModel;
+    const storySource = opts['story-source'] || opts.storySource;
+    if (workItemModel) config.workItemModel = workItemModel;
+    if (storySource) config.storySource = storySource;
 
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
     steps.push('created .vpr/config.json');

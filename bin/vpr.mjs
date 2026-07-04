@@ -69,6 +69,12 @@ VPR v2 — Virtual Pull Request Manager
     vpr init --provider azure-devops    With provider config
       --org <url> --project <name>
       --repo <name> --wiType <type>
+      --work-item-model <one-pbi|per-slice>   Lock at planning
+      --story-source <pablo-doc|prd|inline>   Lock at planning
+    vpr plan lock                       Lock send decisions at planning time
+      --provider <name>
+      --work-item-model <one-pbi|per-slice>
+      --story-source <src>
 
   Items:
     vpr ticket new "title"          Create item + work item
@@ -271,9 +277,23 @@ try {
         break;
       }
 
+      // vpr plan lock --provider X --work-item-model Y --story-source Z
+      // Lock the load-bearing send decisions at planning time.
+      if (sub === 'lock') {
+        const flags = parseFlags(args.slice(1));
+        const { planLock } = await import('../src/commands/plan-lock.mjs');
+        const result = await planLock({
+          provider: typeof flags.provider === 'string' ? flags.provider : undefined,
+          workItemModel: typeof flags['work-item-model'] === 'string' ? flags['work-item-model'] : undefined,
+          storySource: typeof flags['story-source'] === 'string' ? flags['story-source'] : undefined,
+        });
+        console.log(JSON.stringify(result, null, 2));
+        break;
+      }
+
       if (sub !== 'pull') {
         console.error(`Unknown plan sub-command: ${sub ?? '(none)'}`);
-        console.error('Usage: vpr plan pull <parent-wi-id> | vpr plan slices "Title" ...');
+        console.error('Usage: vpr plan pull <parent-wi-id> | vpr plan slices "Title" ... | vpr plan lock --provider ... --work-item-model ... --story-source ...');
         process.exit(1);
       }
       const raw = args[1];
@@ -505,6 +525,7 @@ try {
         const { sent, blocked } = await sendAll({
           provider,
           force: Boolean(flags.force),
+          workItemModel: config.workItemModel,
           onSlice: (r) => console.log(`  ✓ sent ${r.branchName} → ${r.targetBranch}${r.prId ? ` (PR ${r.prId})` : ''}`),
         });
         console.log(`\nSent ${sent.length} slice${sent.length === 1 ? '' : 's'}.`);
@@ -547,7 +568,7 @@ try {
       const provider = createProvider({ provider: 'none', ...config });
 
       try {
-        const result = await send(query, { provider, force: Boolean(flags.force) });
+        const result = await send(query, { provider, force: Boolean(flags.force), workItemModel: config.workItemModel });
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
         if (err.code === 'BRANCH_COLLISION') {
