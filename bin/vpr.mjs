@@ -80,6 +80,8 @@ VPR v2 — Virtual Pull Request Manager
     vpr ticket hold <name>          Park item — moves to bottom of vpr status
     vpr ticket unhold <name>        Restore a held item
     vpr plan pull 17148             Pull a parent WI; create one item per child Task
+    vpr plan slices "A" "B" ...     Materialize approved slices as branch
+                                    pointers (no scaffold commits) in one call
 
   VPRs:
     vpr add "title"                 Create VPR in current item
@@ -241,9 +243,35 @@ try {
     // -----------------------------------------------------------------------
     case 'plan': {
       const sub = args[0];
+
+      // vpr plan slices "Title A" "Title B" ...  — materialize approved slices
+      // as branch POINTERS (no scaffold commits) in one call.
+      if (sub === 'slices') {
+        const rest = args.slice(1);
+        const flags = parseFlags(rest);
+        // Positional titles = everything that isn't a --flag or a flag's value.
+        const titles = [];
+        for (let i = 0; i < rest.length; i++) {
+          if (rest[i].startsWith('--')) {
+            const next = rest[i + 1];
+            if (next !== undefined && !next.startsWith('--')) i++; // skip the value
+            continue;
+          }
+          titles.push(rest[i]);
+        }
+        if (titles.length === 0) {
+          console.error('Usage: vpr plan slices "Title A" "Title B" ... [--item <name>]');
+          process.exit(1);
+        }
+        const { planSlices } = await import('../src/commands/plan-slices.mjs');
+        const result = await planSlices(titles, { item: flags.item || undefined });
+        console.log(JSON.stringify(result, null, 2));
+        break;
+      }
+
       if (sub !== 'pull') {
         console.error(`Unknown plan sub-command: ${sub ?? '(none)'}`);
-        console.error('Usage: vpr plan pull <parent-wi-id>');
+        console.error('Usage: vpr plan pull <parent-wi-id> | vpr plan slices "Title" ...');
         process.exit(1);
       }
       const raw = args[1];
