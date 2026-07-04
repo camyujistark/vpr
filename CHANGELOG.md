@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — vpr-flow improvements (map-url-facets send retro)
+
+Three bake-ins from the map-url-facets send retro (PBI 17570), removing real
+friction from the plan → send flow:
+
+- **Pointer-based slice materialization.** `vpr plan slices "A" "B" ...`
+  create-or-moves one branch pointer per approved slice in a single call,
+  anchored at the chain base — a pure ref update that never writes a commit.
+  Previously slices were anchored with empty scaffold commits that rode in every
+  PR's commit list and couldn't be stripped once a branch was checked out in its
+  own worktree. Idempotent.
+- **Batch send.** `vpr send --all` loops the chain oldest-first and, per slice,
+  gates → pushes `feat/<wi>-<slug>` → creates the PR with the work item linked →
+  chains onto the previous slice's branch → records in meta. Stops at the first
+  failing gate and skips already-sent slices on re-run. `--all --dry-run`
+  previews the plan. Automates the hand-cranked sequential send.
+- **Lock decisions at planning.** `vpr plan lock` (and `vpr init` flags) persist
+  `provider`, `workItemModel` (`one-pbi` | `per-slice`), and `storySource` into
+  `.vpr/config.json` at to-prd/to-issues time so send is mechanical. `one-pbi`
+  links the feature PBI (item.parentWi) on every slice's PR; `per-slice`
+  (default) links each slice's own work item.
+
 ## Unreleased — git backend (v2) is now the default
 
 VPR now runs on plain **git** by default, behind a versioned, reversible backend
