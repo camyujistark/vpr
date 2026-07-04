@@ -108,8 +108,10 @@ VPR v2 — Virtual Pull Request Manager
   Push:
     vpr send <vpr>                  Send one VPR
     vpr send <vpr> --force          Delete stale branch bookmark if it exists
-    vpr send --all                  Send all
-    vpr send --dry-run              Preview
+    vpr send --all                  Batch-send the whole chain, oldest-first
+                                    (gate → push → PR → chain → record per slice)
+    vpr send --all --dry-run        Preview the batch plan without pushing
+    vpr send --dry-run              Preview one VPR
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -479,11 +481,38 @@ try {
     // vpr send <vpr>  |  vpr send --dry-run  |  vpr send --all
     // -----------------------------------------------------------------------
     case 'send': {
-      const { send, sendChecks } = await import('../src/commands/send.mjs');
+      const { send, sendChecks, sendAll } = await import('../src/commands/send.mjs');
       const flags = parseFlags(args);
 
       if (flags.all) {
-        console.log('not yet implemented');
+        const config = loadConfig() ?? {};
+        const { createProvider } = await import('../src/providers/index.mjs');
+        const provider = createProvider({ provider: 'none', ...config });
+
+        if (flags['dry-run']) {
+          const { previews } = await sendAll({ provider, dryRun: true });
+          if (previews.length === 0) {
+            console.log('No sendable VPRs — chain is empty or fully sent.');
+            break;
+          }
+          console.log(`Batch send plan (${previews.length} slice${previews.length === 1 ? '' : 's'}, oldest-first):`);
+          for (const p of previews) {
+            console.log(`  ${p.branchName} → ${p.targetBranch}   ${p.title}`);
+          }
+          break;
+        }
+
+        const { sent, blocked } = await sendAll({
+          provider,
+          force: Boolean(flags.force),
+          onSlice: (r) => console.log(`  ✓ sent ${r.branchName} → ${r.targetBranch}${r.prId ? ` (PR ${r.prId})` : ''}`),
+        });
+        console.log(`\nSent ${sent.length} slice${sent.length === 1 ? '' : 's'}.`);
+        if (blocked) {
+          console.error(`\nStopped at ${blocked.bookmark}: ${blocked.error}`);
+          console.error('Fix that slice, then re-run `vpr send --all` — already-sent slices are skipped.');
+          process.exit(1);
+        }
         break;
       }
 

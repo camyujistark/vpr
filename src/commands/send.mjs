@@ -19,6 +19,18 @@ async function resolveNextUpBookmark() {
 }
 
 /**
+ * The branch a VPR is pushed under at send time: `feat/<wi>-<slug>` so the
+ * provider links the PR branch to its work item. Single source of truth so the
+ * real send and the batch dry-run preview never drift.
+ * @param {string|number} wi
+ * @param {string} bookmark
+ * @returns {string}
+ */
+export function sliceBranchName(wi, bookmark) {
+  return `feat/${wi}-${bookmark.replace(/\//g, '-')}`;
+}
+
+/**
  * Generate a URL-safe slug from a string.
  * @param {string} str
  * @returns {string}
@@ -199,8 +211,7 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
   }
 
   // 2. Generate branch name: feat/{wi}-{slug}
-  const slug = bookmark.replace(/\//g, '-');
-  const branchName = `feat/${item.wi}-${slug}`;
+  const branchName = sliceBranchName(item.wi, bookmark);
 
   // 3. Generate PR title
   const prefix = provider?.config?.prefix;
@@ -283,4 +294,73 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
 
   // 12. Return result
   return { branchName, prTitle, prId, targetBranch };
+}
+
+/**
+ * Batch send: automate the sequential per-slice send we otherwise hand-crank.
+ *
+ * Given the configured provider, loop the chain oldest-unsent-first and send
+ * each slice: gate (sendChecks, enforced inside `send`) → push `feat/<wi>-<slug>`
+ * → create the PR with the work item linked → chain onto the previous slice's
+ * branch (the `cascadeTarget` resolved live per slice) → record in meta.sent.
+ * Each `send` moves its VPR to `sent`, so the next `resolveNextUpBookmark`
+ * surfaces the following slice — the base resolves itself as the stack grows.
+ *
+ * Stops at the first slice that fails a gate or errors, returning everything
+ * sent so far plus the blocker, so the caller can fix one slice and re-run —
+ * already-sent slices are skipped on the next pass (never re-pushed).
+ *
+ * Dry-run walks the same chain and previews each slice's branch/target/title
+ * from meta + chain state WITHOUT pushing (it can't call `send` per slice,
+ * since later slices are blocked until their predecessor is actually sent).
+ *
+ * @param {{
+ *   provider?: object|null,
+ *   force?: boolean,
+ *   dryRun?: boolean,
+ *   onSlice?: (result: object) => void,
+ * }} [opts]
+ * @returns {Promise<{ sent: object[], previews?: object[], blocked: null | { bookmark: string, error: string } }>}
+ */
+export async function sendAll({ provider = null, force = false, dryRun = false, onSlice } = {}) {
+  const vcs = createVcs();
+
+  if (dryRun) {
+    const meta = await loadMeta();
+    const state = await buildState();
+    const enriched = computeChainState(state.items, {
+      sent: state.sent,
+      baseBranch: vcs.getBaseBranch() ?? 'main',
+    });
+    const previews = [];
+    for (const item of enriched) {
+      const wi = meta.items[item.name]?.wi;
+      for (const vpr of item.vprs) {
+        if (vpr.sent || vpr.held) continue;
+        previews.push({
+          bookmark: vpr.bookmark,
+          branchName: sliceBranchName(wi, vpr.bookmark),
+          targetBranch: vpr.cascadeTarget,
+          title: meta.items[item.name]?.vprs?.[vpr.bookmark]?.title ?? vpr.bookmark,
+        });
+      }
+    }
+    return { sent: [], previews, blocked: null };
+  }
+
+  const sent = [];
+  // Guard against a pathological loop where a VPR never leaves the unsent set.
+  for (let guard = 0; guard < 1000; guard++) {
+    const next = await resolveNextUpBookmark();
+    if (!next) break;
+    let result;
+    try {
+      result = await send(next, { provider, force });
+    } catch (err) {
+      return { sent, blocked: { bookmark: next, error: err.message } };
+    }
+    sent.push(result);
+    if (onSlice) onSlice(result);
+  }
+  return { sent, blocked: null };
 }
