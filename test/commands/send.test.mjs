@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { sendChecks, send } from '../../src/commands/send.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
+import { getArchive } from '../../src/core/archive.mjs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -511,11 +512,15 @@ describe('send()', () => {
         assert.strictEqual(result.prId, null);
         assert.strictEqual(result.targetBranch, 'main');
 
-        // Meta: VPR moved from items to sent
+        // Meta: VPR removed from items; the sent record lives in the archive.
         const meta = await loadMeta();
         assert.ok(!meta.items['my-feature'], 'item should be removed when all VPRs sent');
-        assert.ok(meta.sent['feat/99-my-feature-nav-bar'], 'VPR should appear in sent');
-        assert.strictEqual(meta.sent['feat/99-my-feature-nav-bar'].prTitle, '5: Nav Bar');
+        assert.deepStrictEqual(meta.sent, {}, 'sent must not pile into meta.json');
+        const archived = getArchive('feat/99-my-feature-nav-bar');
+        assert.ok(archived, 'VPR should appear in the archive');
+        assert.strictEqual(archived.status, 'sent');
+        assert.strictEqual(archived.title, '5: Nav Bar');
+        assert.strictEqual(archived.itemName, 'my-feature');
 
         // Event log
         const ev = meta.eventLog[meta.eventLog.length - 1];
@@ -559,7 +564,8 @@ describe('send()', () => {
         assert.ok(meta.items['my-feature'], 'item should remain when other VPRs exist');
         assert.ok(!meta.items['my-feature'].vprs['my-feature/nav-bar'], 'sent VPR removed from items');
         assert.ok(meta.items['my-feature'].vprs['my-feature/footer'], 'other VPR still in items');
-        assert.ok(meta.sent['feat/99-my-feature-nav-bar'], 'sent VPR in meta.sent');
+        assert.deepStrictEqual(meta.sent, {}, 'sent must not pile into meta.json');
+        assert.ok(getArchive('feat/99-my-feature-nav-bar'), 'sent VPR in archive');
       } finally {
         rmSync(remotePath, { recursive: true, force: true });
       }

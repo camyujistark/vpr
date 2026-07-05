@@ -1,5 +1,6 @@
 import { createVcs } from '../core/vcs.mjs';
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
+import { archiveTerminal, archiveSentMap } from '../core/archive.mjs';
 import { buildState, computeChainState } from '../core/state.mjs';
 import { findVpr } from './edit.mjs';
 import { resolveWorkItemId } from './plan-lock.mjs';
@@ -186,7 +187,9 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
         if (bm !== bookmark) siblingBookmarks.add(bm);
       }
     }
-    for (const sentBranch of Object.keys(meta.sent ?? {})) {
+    // Sent VPRs live in the archive now; union any legacy meta.sent too.
+    const sentBranches = { ...archiveSentMap(), ...(meta.sent ?? {}) };
+    for (const sentBranch of Object.keys(sentBranches)) {
       if (sentBranch !== bookmark) siblingBookmarks.add(sentBranch);
     }
     const rangeCommits = vcs.listRange(targetBranch, bookmark);
@@ -267,21 +270,31 @@ export async function send(query, { provider = null, dryRun = false, tpIndex, ta
     prId = pr?.id ?? null;
   }
 
-  // 9. Move VPR from items to sent in meta
+  // 9. Move VPR out of the active pool into the SQLite archive. The sent VPR is
+  //    terminal — it no longer belongs in meta.json's `items` (and never piles
+  //    into a `sent{}` map). buildState reconstructs the chain-anchoring `sent`
+  //    view from the archive, so cascade targeting still works.
   const freshMeta = await loadMeta();
   const vprData = freshMeta.items[itemName]?.vprs[bookmark];
   if (vprData) {
     delete freshMeta.items[itemName].vprs[bookmark];
-    freshMeta.sent = freshMeta.sent ?? {};
-    freshMeta.sent[branchName] = {
-      prId,
-      prTitle,
-      targetBranch,
+    const sentAt = new Date().toISOString();
+    archiveTerminal({
+      name: branchName,
+      kind: 'vpr',
+      status: 'sent',
       itemName,
       wi: item.wi,
+      provider: provider?.config?.provider ?? null,
+      ticket: prId != null ? String(prId) : null,
+      title: prTitle,
+      story: vprData.story ?? '',
+      acceptance: vprData.output ?? '',
+      targetBranch,
       originalBookmark: bookmark,
-      sentAt: new Date().toISOString(),
-    };
+      sentAt,
+      raw: { prId, prTitle, targetBranch, itemName, wi: item.wi, originalBookmark: bookmark, story: vprData.story ?? '', output: vprData.output ?? null },
+    });
   }
 
   // 10. Clean up empty items (if all VPRs sent)

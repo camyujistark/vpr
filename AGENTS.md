@@ -18,11 +18,23 @@ build, test, architecture, and sharp-edge notes that travel with the code.
   (jj-colocated repos auto-detect via `.jj/`, or pin with `VPR_VCS=jj` /
   `.vpr/config.json` `"vcs":"jj"`).
 - **State split:** the backend owns the commit graph; `.vpr/meta.json` owns
-  metadata (items, VPR stories/output, `sent` map, event log). Bookmark/branch
-  name is the join key. `.vpr/` is gitignored via `.git/info/exclude`.
+  *active* metadata (in-flight items, VPR stories/output, hold, event log).
+  Bookmark/branch name is the join key. `.vpr/` is gitignored.
+- **Terminal archive** (`src/core/archive.mjs`): sent VPRs and done items leave
+  the active pool for a SQLite store at **`.vpr/archive.db`** (Node's built-in
+  `node:sqlite`, no dep). One row per terminal record keyed by `name` (branch
+  for sent, item name for done). Keeps `meta.json` lean — `meta.sent` is retired
+  as a growth vector. `archive.mjs` opens a **fresh handle per call** (so
+  `process.chdir` in tests never targets a stale dir) and the read path returns
+  empty **without creating** the db file. `src/commands/archive.mjs` is the CLI
+  glue: `migrateArchive()` + `vpr archive ls|get|stats|migrate`.
 - **Chain ordering** lives in `src/core/state.mjs` `computeChainState()` — it
   decorates each VPR with `blocked`/`nextUp`/`cascadeTarget`. `send` reads
   `cascadeTarget` to target each PR at the branch below it in the stack.
+  `buildState()` reconstructs the chain-anchoring `sent` view by **unioning**
+  `archiveSentMap()` (from the archive) with any legacy `meta.sent` — so sent
+  VPRs still anchor cascade targeting + the sent-bookmark barrier without living
+  in `meta.json`. Tests that seed `meta.sent` directly still work via the union.
 
 ## Sharp edges
 
@@ -45,8 +57,10 @@ build, test, architecture, and sharp-edge notes that travel with the code.
 ## Send flow (send.mjs)
 
 - `send(query)` — one slice: gate → rename to `feat/<wi>-<slug>` → push →
-  `provider.createPR(...)` → move VPR to `meta.sent`. Branch name via
-  `sliceBranchName()` (single source of truth).
+  `provider.createPR(...)` → **archive the VPR** (`archiveTerminal`, status
+  `sent`) and drop it from `meta.items`. Branch name via `sliceBranchName()`
+  (single source of truth). `ticketDone(name)` likewise archives (status `done`)
+  instead of just deleting the item.
 - `sendAll({...})` — batch: loop `resolveNextUpBookmark` → `send` oldest-first;
   stop at first blocker, skip already-sent on re-run. `dryRun` previews only.
 - Locked planning decisions in `.vpr/config.json` (`vpr plan lock` /

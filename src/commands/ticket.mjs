@@ -1,4 +1,5 @@
 import { loadMeta, saveMeta, appendEvent } from '../core/meta.mjs';
+import { archiveTerminal } from '../core/archive.mjs';
 import { hasJj, jj, jjSafe } from '../core/jj.mjs';
 import { computeTicketSync } from './ticket-sync.mjs';
 
@@ -250,13 +251,31 @@ export async function ticketUpdate(name, { provider }) {
 }
 
 /**
- * Delete an item from meta.
+ * Close an item: archive it into the SQLite store (terminal, queryable later),
+ * then drop it from the active pool. Previously this just deleted the item and
+ * left only an eventLog line — now the full record survives in the archive.
  * @param {string} name
  * @returns {Promise<void>}
  */
 export async function ticketDone(name) {
   const meta = await loadMeta();
   if (!meta.items[name]) throw new Error(`Item not found: ${name}`);
+
+  const item = meta.items[name];
+  archiveTerminal({
+    name,
+    kind: 'item',
+    status: 'done',
+    itemName: name,
+    wi: item.wi ?? null,
+    provider: item.provider ?? null,
+    ticket: item.wi != null ? String(item.wi) : null,
+    title: item.wiTitle ?? '',
+    story: item.wiDescription ?? '',
+    acceptance: item.acceptanceCriteria ?? '',
+    doneAt: new Date().toISOString(),
+    raw: item,
+  });
 
   delete meta.items[name];
   await saveMeta(meta);

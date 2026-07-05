@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { send } from '../../src/commands/send.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
+import { getArchive } from '../../src/core/archive.mjs';
 
 let tmpDir;
 let repoDir;
@@ -77,10 +78,13 @@ describe('send under the git backend', () => {
     // Branch is on the remote.
     assert.ok(sh('git ls-remote --heads origin feat/1-myitem-one').includes('feat/1-myitem-one'));
 
-    // Meta moved the VPR into sent and pruned the emptied item.
+    // The VPR is archived and the emptied item is pruned from the active pool.
     const meta = await loadMeta();
-    assert.ok(meta.sent['feat/1-myitem-one'], 'sent should record the branch');
-    assert.equal(meta.sent['feat/1-myitem-one'].itemName, 'myitem');
+    assert.deepEqual(meta.sent, {}, 'sent must not pile into meta.json');
+    const archived = getArchive('feat/1-myitem-one');
+    assert.ok(archived, 'archive should record the branch');
+    assert.equal(archived.itemName, 'myitem');
+    assert.equal(archived.status, 'sent');
     assert.ok(!meta.items.myitem, 'emptied item should be pruned');
   });
 });

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { sendAll } from '../../src/commands/send.mjs';
 import { loadMeta, saveMeta } from '../../src/core/meta.mjs';
+import { countArchive } from '../../src/core/archive.mjs';
 
 let tmpDir;
 let repoDir;
@@ -132,9 +133,10 @@ describe('sendAll() — batch per-slice send', () => {
       assert.ok(sh(`git ls-remote --heads origin ${b}`).includes(b), `${b} pushed`);
     }
 
-    // Meta recorded all three as sent and pruned the emptied item.
+    // All three archived as sent; meta stays lean and the emptied item pruned.
     const meta = await loadMeta();
-    assert.equal(Object.keys(meta.sent).length, 3);
+    assert.deepEqual(meta.sent, {}, 'sent must not pile into meta.json');
+    assert.equal(countArchive({ status: 'sent' }), 3);
     assert.ok(!meta.items.myitem, 'emptied item pruned');
   });
 

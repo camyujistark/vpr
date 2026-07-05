@@ -118,6 +118,14 @@ VPR v2 — Virtual Pull Request Manager
                                     (gate → push → PR → chain → record per slice)
     vpr send --all --dry-run        Preview the batch plan without pushing
     vpr send --dry-run              Preview one VPR
+
+  Archive (terminal work — sent + done, in SQLite, out of the active pool):
+    vpr archive ls                  List archived records (JSON)
+    vpr archive ls --status sent    Filter by status (sent | done)
+    vpr archive ls --name <substr>  Filter by name substring
+    vpr archive get <name>          Show one archived record
+    vpr archive stats               Counts by status
+    vpr archive migrate             Drain meta.sent + eventLog done → archive
 `.trim();
 
 // ---------------------------------------------------------------------------
@@ -577,6 +585,65 @@ try {
           process.exit(1);
         }
         throw err;
+      }
+      break;
+    }
+
+    // -----------------------------------------------------------------------
+    // vpr archive <sub> [...]  — query/manage the terminal-work SQLite store
+    // -----------------------------------------------------------------------
+    case 'archive': {
+      const [sub, ...archiveArgs] = args;
+      const { migrateArchive, archiveLs, archiveGet, archiveStats } = await import('../src/commands/archive.mjs');
+
+      switch (sub) {
+        case 'ls':
+        case 'list': {
+          const flags = parseFlags(archiveArgs);
+          const filter = {};
+          if (typeof flags.status === 'string') filter.status = flags.status;
+          if (typeof flags.name === 'string') filter.name = flags.name;
+          const rows = archiveLs(filter);
+          console.log(JSON.stringify(rows, null, 2));
+          break;
+        }
+
+        case 'get':
+        case 'show': {
+          const name = archiveArgs.find(a => !a.startsWith('--'));
+          if (!name) {
+            console.error('Usage: vpr archive get <name>');
+            process.exit(1);
+          }
+          const row = archiveGet(name);
+          if (!row) {
+            console.error(`Not archived: ${name}`);
+            process.exit(1);
+          }
+          console.log(JSON.stringify(row, null, 2));
+          break;
+        }
+
+        case 'stats': {
+          console.log(JSON.stringify(archiveStats(), null, 2));
+          break;
+        }
+
+        case 'migrate': {
+          const result = await migrateArchive();
+          console.log(JSON.stringify(result, null, 2));
+          console.log(
+            `\nMigrated ${result.sentMigrated} sent VPR(s), recovered ${result.doneRecovered} done item(s). ` +
+            `meta.json: ${result.metaBytesBefore} → ${result.metaBytesAfter} bytes.`,
+          );
+          break;
+        }
+
+        default: {
+          console.error(`Unknown archive sub-command: ${sub ?? '(none)'}`);
+          console.error('Available: ls, get, stats, migrate');
+          process.exit(1);
+        }
       }
       break;
     }

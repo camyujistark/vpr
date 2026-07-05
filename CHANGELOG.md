@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — SQLite archive for terminal VPR work
+
+Terminal work (sent VPRs + done items) now leaves the active pool for a
+queryable SQLite archive, so `.vpr/meta.json` stays lean instead of growing
+unbounded.
+
+- **Archive store** (`src/core/archive.mjs`): a `node:sqlite` database at
+  `.vpr/archive.db` (no new dependency). One row per terminal record — name,
+  kind (`vpr`/`item`), status (`sent`/`done`), item, wi, provider, ticket,
+  title, story, acceptance, target branch, timestamps, plus a raw JSON blob.
+  Read path never creates the file; writes create it lazily.
+- **`send()` and `ticketDone()` archive instead of piling up.** A sent VPR is
+  written to the archive (status `sent`) and dropped from `meta.items` — it no
+  longer accumulates in an unbounded `meta.sent` map. A done item is archived
+  (status `done`) rather than deleted outright. `buildState()` reconstructs the
+  chain-anchoring `sent` view by unioning the archive with any legacy
+  `meta.sent`, so cascade targeting and the sent-bookmark barrier are unaffected.
+- **One-time migration.** `vpr archive migrate` drains existing `meta.sent`
+  entries and recovers `ticket.done` items from the eventLog into the archive,
+  then shrinks `meta.json`. Idempotent.
+- **Query CLI.** `vpr archive ls [--status sent|done] [--name <substr>]`,
+  `vpr archive get <name>`, `vpr archive stats`.
+
 ## Unreleased — vpr-flow improvements (map-url-facets send retro)
 
 Three bake-ins from the map-url-facets send retro (PBI 17570), removing real

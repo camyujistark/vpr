@@ -1,5 +1,6 @@
 import { createVcs } from './vcs.mjs';
 import { loadMeta } from './meta.mjs';
+import { archiveSentMap } from './archive.mjs';
 
 /**
  * Pure decorator: enrich each item's VPRs with chain-state fields
@@ -111,7 +112,11 @@ export async function buildState() {
   const meta = await loadMeta();
   const metaItems = meta.items ?? {};
   const holdIds = new Set(meta.hold ?? []);
-  const sent = meta.sent ?? {};
+  // Sent VPRs live in the SQLite archive (drained out of meta to keep it lean).
+  // Union any legacy `meta.sent` entries (pre-migration, or seeded directly in
+  // tests) so both sources anchor the active chain — cascade targeting and the
+  // sent-bookmark barrier read this combined map.
+  const sent = { ...archiveSentMap(), ...(meta.sent ?? {}) };
   const eventLog = meta.eventLog ?? [];
 
   // 5. Build lookups: bookmark → item, and changeId → vprBookmark (from claims)
